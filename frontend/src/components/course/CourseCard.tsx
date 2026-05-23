@@ -19,6 +19,7 @@ import { StudentPolicyModal } from "@/app/pages/student/components/policies/Stud
 
 
 import { EnrollmentDetailsDialog } from "@/components/course/EnrollmentDetailsDialog";
+import { Pagination } from "../ui/Pagination";
 
 const StudentTimeslotModal = lazy(() =>
   import("@/components/course/StudentTimeslotModal").then(mod => ({
