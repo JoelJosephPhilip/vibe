@@ -208,6 +208,56 @@ describe('SlotBookingService.bookSlot', () => {
     expect(slotBookingRepo.createBooking).toHaveBeenCalledOnce();
   });
 
+  // --- Phase 3 bonus allowance (bonusOnFulfillment) ---
+
+  // A booking made today that consumes the base allowance, plus a window the
+  // student already FULFILLED today (fulfilledAt = 08:00 IST on 2026-06-20).
+  const bonusBookings = [
+    {date: TODAY, bookedOnDate: TODAY, from: '09:00', to: '10:00'},
+    {
+      date: TODAY,
+      from: '11:00',
+      to: '12:00',
+      status: SlotBookingStatus.FULFILLED,
+      fulfilledAt: new Date(FROZEN_UTC),
+    },
+  ];
+
+  it('grants a bonus booking for a window fulfilled today (kind=BONUS)', async () => {
+    const {svc, slotBookingRepo} = makeService({
+      timeslots: {
+        isActive: true,
+        slots: [{from: '13:00', to: '15:00', studentIds: [], maxStudents: 2}],
+        dailyBaseAllowance: 1,
+        bonusOnFulfillment: true,
+      },
+      myBookings: bonusBookings,
+    });
+
+    await svc.bookSlot(USER, COURSE, VERSION, SLOT);
+
+    expect(slotBookingRepo.createBooking).toHaveBeenCalledOnce();
+    expect(slotBookingRepo.createBooking.mock.calls[0][0].kind).toBe(
+      SlotBookingKind.BONUS,
+    );
+  });
+
+  it('does not grant a bonus when bonusOnFulfillment is off', async () => {
+    const {svc} = makeService({
+      timeslots: {
+        isActive: true,
+        slots: [{from: '13:00', to: '15:00', studentIds: [], maxStudents: 2}],
+        dailyBaseAllowance: 1,
+        // bonusOnFulfillment omitted (off)
+      },
+      myBookings: bonusBookings,
+    });
+
+    await expect(
+      svc.bookSlot(USER, COURSE, VERSION, SLOT),
+    ).rejects.toThrowError(/booking\(s\) for today/i);
+  });
+
   // --- per-course hours budget (SLOT is 13:00–15:00 = 2h) ---
 
   const budgetSlots = [{from: '13:00', to: '15:00', studentIds: []}];

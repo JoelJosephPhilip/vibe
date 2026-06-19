@@ -653,8 +653,17 @@ export interface ISettings {
     isActive: boolean;
     slots: ITimeSlot[];
     // How many base bookings a student gets per day (default 1). Bonuses add on
-    // top via fulfillment in later phases.
+    // top via fulfillment (Phase 3) when bonusOnFulfillment is enabled.
     dailyBaseAllowance?: number;
+    // Phase 3 (fulfillment): the share of a booked window a student must be
+    // active for the booking to count as FULFILLED (default 90). Evaluated at
+    // the window's end from watchTime pings.
+    fulfillmentThresholdPct?: number;
+    // Phase 3 (bonus): when true, each window the student FULFILLS today raises
+    // that calendar day's booking allowance by one (a BONUS booking). Bonuses
+    // expire daily because the allowance is recomputed per booking-day. Default
+    // false — fulfillment is still recorded, but grants no extra bookings.
+    bonusOnFulfillment?: boolean;
     // Total committed hours a student may book across this course (their hours
     // budget). Bookings consume their `hoursReserved` against it; undefined =
     // unlimited. Equals the sum of categoryBudgetHours × hoursFactor.

@@ -214,17 +214,35 @@ export class SlotBookingService extends BaseService {
 
       // Allowance is per CALENDAR DAY the booking is made (not per study day):
       // every booking a student creates today shares one daily allowance.
-      const allowance = timeslots.dailyBaseAllowance ?? 1;
+      const baseAllowance = timeslots.dailyBaseAllowance ?? 1;
       const madeToday = allBookings.filter(
         b =>
           (b.bookedOnDate ??
             (b.createdAt ? this.istDateOf(b.createdAt) : undefined)) === today,
       );
-      if (madeToday.length >= allowance) {
+      // Phase 3 bonus: when enabled, each window the student FULFILLED today
+      // grants one extra booking for today. Bonuses expire daily because this
+      // is recomputed from today's fulfillments each time.
+      const bonusesToday = timeslots.bonusOnFulfillment
+        ? allBookings.filter(
+            b =>
+              b.status === SlotBookingStatus.FULFILLED &&
+              b.fulfilledAt &&
+              this.istDateOf(b.fulfilledAt) === today,
+          ).length
+        : 0;
+      const effectiveAllowance = baseAllowance + bonusesToday;
+      if (madeToday.length >= effectiveAllowance) {
+        const earned = bonusesToday > 0 ? ` (+${bonusesToday} bonus)` : '';
         throw new BadRequestError(
-          `You have used your ${allowance} booking(s) for today.`,
+          `You have used your ${effectiveAllowance} booking(s) for today${earned}.`,
         );
       }
+      // A booking beyond the base allowance is a bonus booking.
+      const kind =
+        madeToday.length >= baseAllowance
+          ? SlotBookingKind.BONUS
+          : SlotBookingKind.BASE;
 
       // Hard capacity cap — the per-window concurrency ceiling.
       if (configured.maxStudents) {
@@ -282,7 +300,7 @@ export class SlotBookingService extends BaseService {
         from: slot.from,
         to: slot.to,
         overnight: this.isOvernight(slot.from, slot.to),
-        kind: SlotBookingKind.BASE,
+        kind,
         status: SlotBookingStatus.BOOKED,
         hoursReserved,
         createdAt: now,
