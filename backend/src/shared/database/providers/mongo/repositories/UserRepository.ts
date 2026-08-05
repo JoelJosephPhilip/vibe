@@ -11,7 +11,11 @@ import admin from 'firebase-admin';
 import {appConfig} from '#root/config/app.js';
 
 if (!admin.apps.length) {
-  if (appConfig.isDevelopment) {
+  // Use the explicit service account whenever one is configured (self-hosted
+  // deploys like Render); applicationDefault() only resolves on real GCP
+  // infra (Cloud Run's metadata service or a GOOGLE_APPLICATION_CREDENTIALS
+  // file), which isn't gated on NODE_ENV.
+  if (appConfig.firebase.clientEmail && appConfig.firebase.privateKey) {
     admin.initializeApp({
       credential: admin.credential.cert({
         clientEmail: appConfig.firebase.clientEmail,
