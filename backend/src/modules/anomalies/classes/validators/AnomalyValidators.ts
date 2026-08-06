@@ -3,8 +3,11 @@ import {
   IsEnum,
   IsMongoId,
   IsNotEmpty,
+  IsNumber,
   IsOptional,
   IsString,
+  Max,
+  Min,
 } from 'class-validator';
 import {JSONSchema} from 'class-validator-jsonschema';
 // Import directly from the defining transformer rather than the module barrel
@@ -61,6 +64,17 @@ export class NewAnomalyData {
   @IsMongoId()
   @IsString()
   cohortId?: string | ObjectId;
+
+  @JSONSchema({
+    description:
+      'Average per-face detection confidence (0-1) for the frame that triggered this anomaly, when the client-side detector provides one (optional, #1222)',
+    type: 'number',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(1)
+  confidence?: number;
 }
 
 export class AnomalyData extends NewAnomalyData implements IAnomalyData {
