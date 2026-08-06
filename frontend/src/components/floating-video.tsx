@@ -322,12 +322,25 @@ const lastCalledRef = useRef<number>(0);
 
 
         try {
+          // Per-face detection confidence, when the detector provides one (#1222).
+          // @tensorflow-models/face-detection@1.0.3's `Face` type has no `score`
+          // field today, so this is always undefined/omitted in practice — kept
+          // as a defensive read so it starts working automatically if a future
+          // detector version/model exposes it.
+          const scores = faces
+            .map((face) => (face as { score?: number }).score)
+            .filter((score): score is number => typeof score === "number");
+          const confidence = scores.length
+            ? scores.reduce((sum, score) => sum + score, 0) / scores.length
+            : undefined;
+
           const response = await reportImage.mutateAsync({
             body: {
               type: reportAnomalyType as AnomalyType,
               courseId: courseStore.currentCourse?.courseId || "",
               versionId: courseStore.currentCourse?.versionId || "",
               itemId: courseStore.currentCourse?.itemId || "",
+              ...(confidence !== undefined ? { confidence } : {}),
             },
             file: imageFile,
           });
