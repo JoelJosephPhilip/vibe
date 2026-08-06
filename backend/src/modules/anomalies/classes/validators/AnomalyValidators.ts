@@ -10,6 +10,7 @@ import {
   Min,
 } from 'class-validator';
 import {JSONSchema} from 'class-validator-jsonschema';
+import {Type} from 'class-transformer';
 // Import directly from the defining transformer rather than the module barrel
 // to avoid a circular dependency (the barrel re-exports controllers that pull
 // these validators back in, leaving AnomalyType undefined at eval time).
@@ -71,6 +72,11 @@ export class NewAnomalyData {
     type: 'number',
   })
   @IsOptional()
+  // This endpoint is multipart/form-data (image upload), so numeric fields
+  // arrive as strings - without this, class-validator's @IsNumber() rejects
+  // a perfectly valid "0.91" (confirmed live: real 400 against a temporary
+  // Render deploy of this branch before this fix was added).
+  @Type(() => Number)
   @IsNumber()
   @Min(0)
   @Max(1)
