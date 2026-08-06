@@ -1,0 +1,13 @@
+frame_id,filename,ground_truth_face_count,condition_tags
+seed_001,empty_desk_01.png,0,empty_desk|good_lighting
+seed_002,empty_desk_02.png,0,empty_desk|poor_lighting
+seed_003,empty_desk_03.png,0,empty_desk|good_lighting
+seed_004,blank_wall_01.png,0,normal|good_lighting
+seed_005,blank_wall_02.png,0,normal|side_angle
+seed_006,one_face_placeholder_01.png,1,normal|good_lighting|placeholder_no_real_face
+seed_007,one_face_placeholder_02.png,1,mask|placeholder_no_real_face
+seed_008,one_face_placeholder_03.png,1,side_angle|placeholder_no_real_face
+seed_009,two_people_placeholder_01.png,2,two_people|placeholder_no_real_face
+seed_010,two_people_placeholder_02.png,2,two_people|poor_lighting|placeholder_no_real_face
+seed_011,partial_occlusion_placeholder_01.png,1,partial_occlusion|placeholder_no_real_face
+seed_012,poor_lighting_placeholder_01.png,1,poor_lighting|placeholder_no_real_face

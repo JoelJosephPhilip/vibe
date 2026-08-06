@@ -96,3 +96,17 @@ backend/html/
 
 # Firebase hosting cache
 .firebase/
+
+# Face-count eval (#1222): keep the tiny synthetic seed frames tracked,
+# exclude any real frames added locally (privacy/consent - see
+# scripts/face-count-eval/data/README.md)
+scripts/face-count-eval/data/frames/*
+!scripts/face-count-eval/data/frames/empty_desk_*.png
+!scripts/face-count-eval/data/frames/blank_wall_*.png
+!scripts/face-count-eval/data/frames/one_face_placeholder_*.png
+!scripts/face-count-eval/data/frames/two_people_placeholder_*.png
+!scripts/face-count-eval/data/frames/partial_occlusion_placeholder_*.png
+!scripts/face-count-eval/data/frames/poor_lighting_placeholder_*.png
+scripts/face-count-eval/.venv/
+scripts/face-count-eval/reports/*.json
+scripts/face-count-eval/models/
