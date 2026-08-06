@@ -38,6 +38,35 @@ a real accuracy measurement.
 
 ## Adding real labeled frames
 
+### Option A: interactive capture tool (recommended)
+
+```bash
+python data/capture_frames.py
+```
+
+Opens your webcam in a live preview window. Press `c` to capture the current
+frame - you'll be prompted right in the terminal for the ground-truth face
+count and condition tags, and both the image and the `labels.csv` row are
+saved automatically (no manual filename/frame_id bookkeeping). Press `q` to
+quit. Re-run it as many times as you like across different sessions/lighting/
+angles - it picks up numbering where it left off.
+
+**Consent**: only capture yourself, or others who have explicitly agreed to
+be in this dataset. For a `two_people`/multi-face frame, get verbal
+agreement from whoever else is in frame before pressing `c`.
+
+Practical way to hit the condition variety in one or two sitting(s):
+- **normal** (~40% of frames): just look at the camera normally, vary
+  lighting a bit between captures (near a window vs. dim room)
+  - **empty_desk / 0 faces** (~20%): step out of frame or turn the camera away, then capture
+- **two_people** (~20%): have a friend/family member (who's agreed) join
+  briefly for a batch of captures, then leave
+- **edge cases** (~20%): put on a mask, turn to a side angle, cover part of
+  your face with your hand (`partial_occlusion`), dim the lights
+  (`poor_lighting`)
+
+### Option B: manual
+
 1. Capture frames from real exam sessions (with consent) or record your own
    test sessions covering the conditions above.
 2. Save each frame as a `.jpg`/`.png` under `data/frames/`.
