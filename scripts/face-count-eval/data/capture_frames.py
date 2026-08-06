@@ -62,7 +62,8 @@ def main():
     os.makedirs(FRAMES_DIR, exist_ok=True)
     labels_exists = os.path.exists(LABELS_PATH)
 
-    cap = cv2.VideoCapture(args.camera)
+    # CAP_DSHOW avoids a common MSMF backend grab-frame failure on Windows.
+    cap = cv2.VideoCapture(args.camera, cv2.CAP_DSHOW)
     if not cap.isOpened():
         raise RuntimeError(
             f"Could not open camera index {args.camera}. Try a different --camera value, "
