@@ -57,7 +57,7 @@ export class IAnomalyData {
   createdAt: Date;
   cohortId?: string | ObjectId;
   cohortName?: string;
-  /** See NewAnomalyData.confidence (#1222) — optional, not yet populated by any detector in production. */
+  /** See NewAnomalyData.confidence (#1222) — populated by the frontend's FaceDetectorWorker.ts (@mediapipe/tasks-vision). */
   confidence?: number;
 
   constructor(data: Partial<IAnomalyData>, userId: string) {
