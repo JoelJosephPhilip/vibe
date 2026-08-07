@@ -103,3 +103,4 @@ backend/html/
 scripts/face-count-eval/data/frames/*
 scripts/face-count-eval/.venv/
 scripts/face-count-eval/reports/*.json
+scripts/face-count-eval/models/

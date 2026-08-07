@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head><title>face-count-eval harness</title></head>
+<body>
+<script type="module">
+  import { FaceDetector, FilesetResolver } from "/node_modules/@mediapipe/tasks-vision/vision_bundle.mjs";
+
+  let detectorPromise = null;
+
+  function getDetector() {
+    if (!detectorPromise) {
+      detectorPromise = (async () => {
+        const fileset = await FilesetResolver.forVisionTasks("/node_modules/@mediapipe/tasks-vision/wasm");
+        return FaceDetector.createFromOptions(fileset, {
+          baseOptions: {
+            modelAssetPath: "/models/blaze_face_short_range.tflite",
+            delegate: "CPU",
+          },
+          runningMode: "IMAGE",
+          minDetectionConfidence: 0.5,
+        });
+      })();
+    }
+    return detectorPromise;
+  }
+
+  // Same production config as frontend/src/components/ai/FaceDetectorWorker.ts
+  // (#1222). Exposed for eval.mjs to call via page.evaluate().
+  window.detectFrame = async (filename) => {
+    const detector = await getDetector();
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    await new Promise((resolve, reject) => {
+      img.onload = resolve;
+      img.onerror = reject;
+      img.src = `/data/frames/${filename}`;
+    });
+    const result = detector.detect(img);
+    return {
+      count: result.detections.length,
+      scores: result.detections.map((d) => d.categories[0]?.score ?? null),
+    };
+  };
+
+  window.harnessReady = true;
+</script>
+</body>
+</html>

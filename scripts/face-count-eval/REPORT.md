@@ -10,21 +10,23 @@
 ## Method
 
 - **Model**: the actual production config from
-  `frontend/src/components/ai/FaceDetectorWorker.ts` —
-  `@tensorflow-models/face-detection`, `SupportedModels.MediaPipeFaceDetector`,
-  `runtime: "tfjs"`, `modelType: "full"`, `maxFaces: 10`.
-- **Runtime**: `@tensorflow/tfjs-backend-wasm` (Node) — the same npm package
-  and version as production, running on the WASM CPU backend (the Node
-  equivalent of the browser's CPU-fallback path when WebGL is unavailable).
-  This is true runtime parity, not a different detector standing in for the
-  real one. (An earlier version of this report used Python + MediaPipe's
-  Tasks API instead — a different wrapper around the same model family, not
-  the actual production dependency. See git history if that comparison is
-  useful; this version replaces it.)
-- **Confidence**: like the browser, this model's `Face` output has no
-  `score` field in the installed version (`1.0.3`, latest) — so, like
-  production, this eval cannot report per-face confidence. That's a genuine
-  shared library limitation, not an eval-script gap.
+  `frontend/src/components/ai/FaceDetectorWorker.ts` — `@mediapipe/tasks-vision`'s
+  `FaceDetector`, `blaze_face_short_range.tflite`, `minDetectionConfidence: 0.5`.
+- **Runtime**: a real headless Chromium via Playwright (see `eval.mjs` /
+  `harness.html`) — same npm package, same pinned version, same options as
+  production. This is genuine runtime parity, not an approximation: unlike
+  the previous library, `@mediapipe/tasks-vision` requires a real DOM
+  (confirmed empirically — its WASM init hangs indefinitely in plain Node,
+  even with `jsdom` polyfilling `document`), so a real browser is the only
+  environment that reliably runs it.
+- **Confidence**: unlike the library this replaced, `@mediapipe/tasks-vision`
+  genuinely exposes a per-detection confidence (`categories[0].score`) — see
+  the `scores` field in `reports/face-count-eval-results.json`.
+
+(Two earlier versions of this report used, respectively, Python + MediaPipe's
+Tasks API and Node + `@tensorflow-models/face-detection`. Both tested a
+library production no longer uses after #1222's browser detector swap; this
+version measures what's actually running today.)
 
 ## Dataset composition (N=8)
 
@@ -67,14 +69,18 @@ By condition tag:
 | harsh_lighting | 2/2 |
 | normal | 8/8 |
 
+Per-frame confidence (all 8, single face each): 0.950–0.987 — consistently
+high on these easy, well-lit, face-forward frames. Not yet informative for
+threshold tuning (see below) since nothing in the dataset is borderline yet.
+
 ## Interpretation
 
 The model correctly detected exactly 1 face in all 8 real single-face
-frames, including 2 under harsher lighting — a good sign for the easy case,
-but this dataset doesn't yet test anything the model might actually get
-wrong. It has no empty-desk frames, no multi-person frames, and none of the
-harder conditions (masks, side angles, occlusion) that are exactly where
-face detectors typically struggle.
+frames, with high confidence (0.95+) even under harsher lighting — a good
+sign for the easy case, but this dataset doesn't yet test anything the model
+might actually get wrong. It has no empty-desk frames, no multi-person
+frames, and none of the harder conditions (masks, side angles, occlusion)
+that are exactly where face detectors typically struggle.
 
 **No conclusion about real-world accuracy can be drawn from this run** — not
 because the numbers are bad, but because the dataset hasn't tested the hard
@@ -82,17 +88,20 @@ cases yet.
 
 ### Context from independent work on the same issue
 
-A colleague's independent evaluation of this same model
-(`fix/face-detection-accuracy-eval-1222` on a separate fork, 426 real
-frames from WIDER FACE + the MSU Online Exam Proctoring dataset) found
-**NO_FACE precision of 0.06 on real exam-webcam footage** — i.e. roughly
-94% of frames the model would flag as "no face" actually had a face present,
+A colleague's independent evaluation of a *different* model (the previous
+`@tensorflow-models/face-detection` library, before this repo's #1222 branch
+switched detectors) found **NO_FACE precision of 0.06 on real exam-webcam
+footage** (`fix/face-detection-accuracy-eval-1222` on a separate fork, 426
+frames from WIDER FACE + the MSU Online Exam Proctoring dataset) — i.e.
+roughly 94% of frames flagged "no face" actually had a face present,
 typically because the person was looking down, wearing a cap, or resting a
-hand near their face. That result isn't reproduced here (different, not
-fully open-licensed dataset — see below), but it's a concrete, credible
-signal that the hard cases matter a lot, and this dataset should prioritize
-similar conditions (looking down, hand near face, hat/cap, side angle)
-once it moves past single "look straight at the camera" frames.
+hand near their face. Since the detector has since changed, that exact
+number may not transfer directly, but the underlying finding (real
+webcam/exam conditions are much harder than face-forward, well-lit frames)
+almost certainly still applies to whatever model is running, and this
+dataset should prioritize similar conditions (looking down, hand near face,
+hat/cap, side angle) once it moves past single "look straight at the
+camera" frames.
 
 We're not redistributing that colleague's dataset here: it includes frames
 extracted from the MSU OEP dataset (Kaggle license listed as "Unknown") and
@@ -108,18 +117,23 @@ dataset hasn't included any case the model could plausibly get wrong yet.
 
 ## Threshold recommendations
 
-Not applicable yet — no confidence signal is available from this model
-(see Method), and the dataset doesn't yet include borderline cases where a
-threshold would matter.
+Not meaningful yet with real data — `minDetectionConfidence` is currently
+0.5 (production default) and every detection so far scored 0.95+, so there's
+no borderline case in this dataset to tune against. Once harder conditions
+(poor lighting, occlusion, side angle) are added, re-run and check whether
+any true positives score close to 0.5 - if so, that's the signal to consider
+raising the threshold to trade recall for precision (fewer false NO_FACE
+triggers from momentary low-confidence blips).
 
 ## Decision: is current accuracy acceptable for proctoring?
 
 **Not yet determined — insufficient data.** 8 easy, single-face frames
-can't answer this. Based on the colleague's independent finding above,
-there's real reason to expect NO_FACE performs much worse than this
-snapshot suggests once harder conditions are included — this needs to be
-verified directly against our own dataset, not assumed from their numbers,
-before any decision is made here.
+can't answer this. Based on the colleague's independent finding above
+(different detector, same underlying real-world-conditions problem), there's
+real reason to expect NO_FACE performs much worse than this snapshot
+suggests once harder conditions are included — this needs to be verified
+directly against our own dataset and detector, not assumed from their
+numbers, before any decision is made here.
 
 ## Gaps / next steps
 
@@ -133,8 +147,5 @@ before any decision is made here.
 4. Re-run `node eval.mjs` and replace every number in this report with the
    real results; remove the PRELIMINARY banner only once all three buckets
    have meaningful coverage.
-5. Once a browser-side detector that exposes real per-face confidence is
-   identified (tracked separately from #1222's confidence-persistence
-   plumbing, which ships the field but can't populate it with the current
-   library), re-evaluate whether confidence-based filtering measurably
-   improves precision.
+5. Once the dataset has borderline-confidence examples, revisit the
+   `minDetectionConfidence` threshold (see Threshold recommendations above).

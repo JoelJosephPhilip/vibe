@@ -8,7 +8,8 @@ and `REPORT.md` for the current results and their status.
 
 ```bash
 cd scripts/face-count-eval
-npm install
+npm install              # also downloads the .tflite model via postinstall
+npx playwright install chromium   # one-time: downloads a headless Chromium
 ```
 
 ## Run
@@ -37,30 +38,29 @@ above, used only to build `data/frames/` + `data/labels.csv`. See
 `data/README.md` for how to use them. You do not need Python to run the
 eval itself, only to capture new frames.
 
-## Runtime: this runs the actual production model
+## Runtime: this runs the actual production model, in a real browser
 
-`eval.mjs` uses `@tensorflow-models/face-detection` (MediaPipeFaceDetector,
-**tfjs runtime**, `modelType: "full"`, `maxFaces: 10`) via
-`@tensorflow/tfjs-backend-wasm` - the exact same npm package, version, and
-model config as `frontend/src/components/ai/FaceDetectorWorker.ts`, running
-on the WASM CPU backend (the Node equivalent of the browser's CPU-fallback
-path when WebGL is unavailable). This is true runtime parity: the eval
-measures what the browser's model actually does, not a proxy for it.
+`eval.mjs` starts a local static file server, launches a real headless
+Chromium via Playwright, and runs `@mediapipe/tasks-vision`'s `FaceDetector`
+(see `harness.html`) with the exact same config as
+`frontend/src/components/ai/FaceDetectorWorker.ts` - same npm package,
+same pinned version, same options. This is genuine runtime parity: the eval
+measures what the browser's model actually does, not an approximation of it.
 
-(An earlier version of this harness used Python + MediaPipe's Tasks API
-instead - a different wrapper around the same underlying model family, not
-the actual production dependency. This version replaces that gap entirely.)
+**Why a real browser instead of plain Node:** `@mediapipe/tasks-vision`
+requires a real DOM. Confirmed empirically - even with `jsdom` polyfilling
+`document`, the detector's WASM initialization promise never resolves in
+plain Node (hangs indefinitely rather than erroring). A real browser is the
+only environment this library reliably works in, so that's what this eval
+uses, via Playwright + headless Chromium.
 
-`@tensorflow/tfjs-node` would technically also work and run faster, but
-needs a native addon - either a prebuilt binary for your Node version or a
-local MSVC/Python build toolchain to compile one. Neither was available in
-the environment this was built in, so WASM is the default. If you have a
-working `tfjs-node` build, swapping the backend in `eval.mjs` (replace the
-`tfjs-backend-wasm` import/`setBackend('wasm')` with
-`require('@tensorflow/tfjs-node')`) should run faster without changing
-results.
+(Two earlier versions of this harness tested different libraries: a Python +
+MediaPipe Tasks API version, then a Node + `@tensorflow-models/face-detection`
++ `tfjs-backend-wasm` version. Both predate the browser's own detector swap
+to `@mediapipe/tasks-vision` for real confidence scores (#1222) and were
+therefore testing a library production no longer uses. This version closes
+that gap.)
 
-Per-face confidence: like the browser, this model's `Face` output has no
-`score` field in the installed version (`1.0.3`, latest) - so this eval
-cannot report per-face confidence either. That's a genuine model/library
-limitation shared by both, not something specific to this eval script.
+Per-face confidence: unlike the previous library, `@mediapipe/tasks-vision`
+does expose a real per-detection confidence (`categories[0].score`) - see
+the `scores` field in each `reports/face-count-eval-results.json` entry.
