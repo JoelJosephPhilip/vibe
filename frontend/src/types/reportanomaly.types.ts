@@ -35,11 +35,9 @@ export interface NewAnomalyData {
   cohortId?: string;
   /**
    * Average per-face detection confidence (0-1) for the frame that triggered
-   * this report. Optional and currently always omitted in practice: the
-   * installed @tensorflow-models/face-detection@1.0.3 (MediaPipeFaceDetector,
-   * tfjs runtime) does not expose a score on its `Face` output at all, so
-   * there is nothing valid to send yet. Field exists so the backend/schema
-   * are ready once a detector that surfaces confidence is adopted (#1222).
+   * this report (#1222). Populated by FaceDetectorWorker.ts via
+   * @mediapipe/tasks-vision's FaceDetector, which exposes a real per-face
+   * score (the previous @tensorflow-models/face-detection library did not).
    */
   confidence?: number;
 }

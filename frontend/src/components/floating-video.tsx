@@ -322,11 +322,10 @@ const lastCalledRef = useRef<number>(0);
 
 
         try {
-          // Per-face detection confidence, when the detector provides one (#1222).
-          // @tensorflow-models/face-detection@1.0.3's `Face` type has no `score`
-          // field today, so this is always undefined/omitted in practice — kept
-          // as a defensive read so it starts working automatically if a future
-          // detector version/model exposes it.
+          // Per-face detection confidence (#1222). FaceDetectorWorker.ts now
+          // runs @mediapipe/tasks-vision's FaceDetector, which does expose a
+          // real per-face score (unlike the previous @tensorflow-models/
+          // face-detection library) - this now populates for real.
           const scores = faces
             .map((face) => (face as { score?: number }).score)
             .filter((score): score is number => typeof score === "number");
