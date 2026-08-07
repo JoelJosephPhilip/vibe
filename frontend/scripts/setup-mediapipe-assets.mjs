@@ -43,17 +43,35 @@ function downloadModel() {
     }
     fs.mkdirSync(path.dirname(MODEL_DEST), { recursive: true });
     console.log(`[setup-mediapipe-assets] downloading ${MODEL_URL}`);
-    const file = fs.createWriteStream(MODEL_DEST);
+    const tmpDest = `${MODEL_DEST}.tmp`;
+    fs.mkdirSync(path.dirname(MODEL_DEST), { recursive: true });
+
+    const file = fs.createWriteStream(tmpDest);
+    const cleanup = (err) => {
+      try { file.destroy(); } catch {}
+      try { fs.unlinkSync(tmpDest); } catch {}
+      reject(err);
+    };
+
     https
       .get(MODEL_URL, (res) => {
         if (res.statusCode !== 200) {
-          reject(new Error(`Model download failed: HTTP ${res.statusCode}`));
+          res.resume();
+          cleanup(new Error(`Model download failed: HTTP ${res.statusCode}`));
           return;
         }
+
         res.pipe(file);
-        file.on('finish', () => file.close(resolve));
+        res.on('error', cleanup);
+        file.on('error', cleanup);
+        file.on('finish', () =>
+          file.close(() => {
+            fs.renameSync(tmpDest, MODEL_DEST);
+            resolve();
+          })
+        );
       })
-      .on('error', reject);
+      .on('error', cleanup);
   });
 }
 
