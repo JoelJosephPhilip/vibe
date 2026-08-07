@@ -1,0 +1,17 @@
+{
+  "name": "face-count-eval",
+  "private": true,
+  "type": "module",
+  "description": "Offline face-count detection accuracy evaluation (#1222) - runs the actual production model.",
+  "scripts": {
+    "eval": "node eval.mjs"
+  },
+  "dependencies": {
+    "@tensorflow-models/face-detection": "^1.0.3",
+    "@tensorflow/tfjs-backend-wasm": "^4.22.0",
+    "@tensorflow/tfjs-converter": "^4.22.0",
+    "@tensorflow/tfjs-core": "^4.22.0",
+    "jpeg-js": "^0.4.4",
+    "pngjs": "^7.0.0"
+  }
+}
