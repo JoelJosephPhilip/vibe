@@ -322,8 +322,8 @@ const lastCalledRef = useRef<number>(0);
 
 
         try {
-          // Per-face detection confidence (#1222). FaceDetectorWorker.ts now
-          // runs @mediapipe/tasks-vision's FaceDetector, which does expose a
+          // Per-face detection confidence (#1222). public/workers/faceDetectorWorker.js
+          // now runs @mediapipe/tasks-vision's FaceDetector, which does expose a
           // real per-face score (unlike the previous @tensorflow-models/
           // face-detection library) - this now populates for real.
           const scores = faces
