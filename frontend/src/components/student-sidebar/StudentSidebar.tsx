@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { Link, useLocation, useNavigate } from "@tanstack/react-router"
-import { LogOut, Settings, Sun, Moon } from "lucide-react"
+import { LogOut, Search, Settings, Sun, Moon } from "lucide-react"
 import { useTheme } from "next-themes"
 import { useAuthStore } from "@/store/auth-store"
 import { useUserEnrollments } from "@/hooks/hooks"
@@ -27,6 +27,7 @@ import {
 import logo from "../../../public/img/vibe_logo_img.ico"
 import { STUDENT_NAV_ITEMS } from "./nav-items"
 import { StudentNotifications } from "./StudentNotifications"
+import { GlobalSearchModal } from "./GlobalSearchModal"
 
 export function StudentSidebar() {
   const { user, token } = useAuthStore()
@@ -34,6 +35,7 @@ export function StudentSidebar() {
   const { pathname } = useLocation()
   const { theme, setTheme } = useTheme()
   const [confirmLogout, setConfirmLogout] = useState(false)
+  const [searchOpen, setSearchOpen] = useState(false)
 
   const { hasNew: hasNewAnnouncements, markSeen: markAnnouncementsSeen } = useNewAnnouncementIndicator()
 
@@ -73,6 +75,9 @@ export function StudentSidebar() {
         description="Are you sure you want to log out? You will need to sign in again to access your dashboard."
       />
 
+      {/* Mounted only while open so the announcements fetch it triggers stays lazy */}
+      {searchOpen && <GlobalSearchModal open={searchOpen} onOpenChange={setSearchOpen} />}
+
       <Sidebar collapsible="icon" variant="sidebar" className="border-r bg-white dark:bg-[#17171a] [&_[data-sidebar=sidebar]]:bg-white dark:[&_[data-sidebar=sidebar]]:bg-[#17171a]">
         <SidebarHeader className="px-2 py-4">
           <div className="flex items-center gap-2 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:gap-1">
@@ -92,6 +97,16 @@ export function StudentSidebar() {
           <SidebarGroup>
             <SidebarGroupContent>
               <SidebarMenu>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    onClick={() => setSearchOpen(true)}
+                    tooltip="Search"
+                    className={`h-10 [&>svg]:size-5 ${yellowItem}`}
+                  >
+                    <Search className="size-5" />
+                    <span>Search</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
                 {visibleItems.map((item) => {
                   const Icon = item.icon
                   const showDot = item.indicator === "announcements" && hasNewAnnouncements

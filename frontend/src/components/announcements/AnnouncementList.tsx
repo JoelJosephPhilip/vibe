@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAnnouncements, useDeleteAnnouncement, useToggleHideAnnouncement } from "@/hooks/announcement-hooks";
 import { AnnouncementItem } from "./AnnouncementItem";
 import { AnnouncementModal } from "./AnnouncementModal";
@@ -42,6 +42,22 @@ export function AnnouncementList({ courseId, versionId, isInstructor, cohortId }
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingItem, setEditingItem] = useState<Announcement | null>(null);
     const [deleteId, setDeleteId] = useState<string | null>(null);
+    const [highlightedId, setHighlightedId] = useState<string | null>(null);
+
+    // Deep-link support: global search stashes an id here before navigating so
+    // we can scroll to and briefly ring the matching announcement once loaded.
+    useEffect(() => {
+        if (isLoading) return;
+        const id = sessionStorage.getItem("pendingAnnouncementHighlight");
+        if (!id || !data.some(item => item._id === id)) return;
+
+        sessionStorage.removeItem("pendingAnnouncementHighlight");
+        setHighlightedId(id);
+        document.getElementById(`announcement-${id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+
+        const clear = setTimeout(() => setHighlightedId(null), 2000);
+        return () => clearTimeout(clear);
+    }, [isLoading, data]);
 
     // Decide default type for creation based on context
     const defaultCreateType = cohortId ? AnnouncementType.COHORT_SPECIFIC : versionId ? AnnouncementType.VERSION_SPECIFIC : courseId ? AnnouncementType.COURSE_SPECIFIC : AnnouncementType.GENERAL;
@@ -150,6 +166,7 @@ export function AnnouncementList({ courseId, versionId, isInstructor, cohortId }
                             announcement={item}
                             isInstructor={isInstructor}
                             isAdmin={isAdmin}
+                            highlighted={item._id === highlightedId}
                             onEdit={handleEdit}
                             onDelete={(id) => setDeleteId(id)}
                             onToggleHide={(id) => {

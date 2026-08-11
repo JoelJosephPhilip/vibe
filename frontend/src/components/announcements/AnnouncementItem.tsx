@@ -11,12 +11,13 @@ interface AnnouncementItemProps {
     announcement: Announcement;
     isInstructor?: boolean;
     isAdmin?: boolean;
+    highlighted?: boolean;
     onEdit?: (a: Announcement) => void;
     onDelete?: (id: string) => void;
     onToggleHide?: (id: string) => void;
 }
 
-export function AnnouncementItem({ announcement, isInstructor, isAdmin, onEdit, onDelete, onToggleHide }: AnnouncementItemProps) {
+export function AnnouncementItem({ announcement, isInstructor, isAdmin, highlighted, onEdit, onDelete, onToggleHide }: AnnouncementItemProps) {
     const { user } = useAuthStore();
     // Show modification buttons only to the creator (matched by Firebase UID) or admin
     const canModify = isInstructor && (
@@ -43,10 +44,14 @@ export function AnnouncementItem({ announcement, isInstructor, isAdmin, onEdit, 
     };
 
     return (
-        <Card className={cn(
-            "overflow-hidden transition-all duration-300 hover:shadow-md border-l-4 border-l-primary/50",
-            announcement.isHidden && "opacity-60"
-        )}>
+        <Card
+            id={`announcement-${announcement._id}`}
+            className={cn(
+                "overflow-hidden transition-all duration-300 hover:shadow-md border-l-4 border-l-primary/50",
+                announcement.isHidden && "opacity-60",
+                highlighted && "ring-2 ring-primary"
+            )}
+        >
             <CardHeader className="pb-3 space-y-0">
                 <div className="flex justify-between items-start gap-4">
                     <div className="flex gap-3 items-start">
