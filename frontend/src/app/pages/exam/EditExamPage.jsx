@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams, useNavigate } from 'react-router-dom'
+import Papa from 'papaparse'
 import { fileToDataUrl } from '@/lib/imageUtils'
 import { RichText } from '@/components/exam/RichText'
 import {
@@ -10,10 +11,22 @@ import {
   useRemoveQuestion,
   useAddTimeGrant,
   useRemoveTimeGrant,
+  useQuestionBank,
+  useAddToQuestionBank,
+  useRemoveFromQuestionBank,
+  useAddQuestionsFromBank,
+  useBulkAddQuestions,
 } from '@/hooks/exam-hooks'
 
+// Same random-4-digit-string convention used everywhere a question/option id
+// is generated client-side (manual "+ Add question" form, CSV bulk import
+// rows) — not a real id, just needs to be unique enough within one form
+// submission/import batch. The backend replaces it anyway wherever it
+// matters (exam question ids, bank entry ids).
+const randomQuestionId = () => String(Math.floor(1000 + Math.random() * 9000)) // e.g. 9908
+
 const emptyQuestion = () => {
-  const qId = String(Math.floor(1000 + Math.random() * 9000)); // e.g. 9908
+  const qId = randomQuestionId()
   return {
     id: qId,
     type: 'MCQ',
@@ -101,8 +114,12 @@ export default function EditExamPage() {
   const navigate = useNavigate()
   const { data: exam, isLoading } = useExam(examId)
   const [addQuestionOpen, setAddQuestionOpen] = useState(false)
+  const [bankPickerOpen, setBankPickerOpen] = useState(false)
+  const [bulkImportOpen, setBulkImportOpen] = useState(false)
+  const [bankNotice, setBankNotice] = useState(null)
   const updateExam = useUpdateExam()
   const addQuestion = useAddQuestion()
+  const addToBank = useAddToQuestionBank()
 
   if (isLoading) {
     return (
@@ -144,13 +161,37 @@ export default function EditExamPage() {
               {exam.published ? 'Published' : 'Draft'}
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <button
               onClick={() => setAddQuestionOpen(true)}
               className="rounded-md border border-primary px-4 py-2 text-sm font-medium text-primary hover:bg-primary/10"
             >
               + Add question
             </button>
+            <button
+              onClick={() => setBankPickerOpen(true)}
+              className="rounded-md border border-input bg-background px-4 py-2 text-sm font-medium hover:bg-accent"
+            >
+              Add from question bank
+            </button>
+            <button
+              onClick={() => setBulkImportOpen(true)}
+              className="rounded-md border border-input bg-background px-4 py-2 text-sm font-medium hover:bg-accent"
+            >
+              Bulk import (CSV)
+            </button>
+            <Link
+              to={`/admin/${exam.id}/attempts`}
+              className="rounded-md border border-input bg-background px-4 py-2 text-sm font-medium hover:bg-accent"
+            >
+              View attempts
+            </Link>
+            <Link
+              to={`/admin/${exam.id}/analytics`}
+              className="rounded-md border border-input bg-background px-4 py-2 text-sm font-medium hover:bg-accent"
+            >
+              Analytics
+            </Link>
             <button
               onClick={handleTogglePublish}
               disabled={(!exam.published && exam.questions.length === 0) || updateExam.isPending}
@@ -169,9 +210,16 @@ export default function EditExamPage() {
           </div>
         </header>
 
+        {bankNotice && (
+          <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            {bankNotice}
+          </p>
+        )}
+
         <ExamSettings exam={exam} />
         <RevealAnswersSetting exam={exam} />
         <ExamProctoringSettings exam={exam} />
+        <ExamScheduleSettings exam={exam} />
         <TimeGrantsSection exam={exam} />
         <ExamHeaderSettings exam={exam} />
         <QuestionsSection exam={exam} negativeMarkingRatios={negativeMarkingRatios} />
@@ -200,17 +248,44 @@ export default function EditExamPage() {
 
       <Modal open={addQuestionOpen} onClose={() => setAddQuestionOpen(false)} title="New question">
         <QuestionForm
+          isNew
           initial={emptyQuestion()}
           negativeMarkingEnabled={exam.negativeMarking}
           negativeMarkingRatios={negativeMarkingRatios}
           onCancel={() => setAddQuestionOpen(false)}
-          onSubmit={(data) => {
+          onSubmit={(data, opts) => {
             addQuestion.mutate(
               { examId: exam.id, question: data },
-              { onSuccess: () => setAddQuestionOpen(false) }
+              {
+                onSuccess: () => {
+                  setAddQuestionOpen(false)
+                  // Independent second write — the exam-question save above
+                  // already succeeded and is the primary action, so a bank
+                  // save failure here must not roll anything back or block
+                  // the modal from closing. Just surface a note.
+                  if (opts?.saveToBank) {
+                    addToBank.mutate(data, {
+                      onError: (err) => {
+                        setBankNotice(
+                          `Question was added to the exam, but saving it to your question bank failed: ${err?.message || err}`
+                        )
+                        setTimeout(() => setBankNotice(null), 6000)
+                      },
+                    })
+                  }
+                },
+              }
             )
           }}
         />
+      </Modal>
+
+      <Modal open={bankPickerOpen} onClose={() => setBankPickerOpen(false)} title="Add from question bank">
+        <QuestionBankBrowser examId={exam.id} onClose={() => setBankPickerOpen(false)} />
+      </Modal>
+
+      <Modal open={bulkImportOpen} onClose={() => setBulkImportOpen(false)} title="Bulk import questions (CSV)">
+        <BulkImportForm examId={exam.id} onClose={() => setBulkImportOpen(false)} />
       </Modal>
     </div>
   )
@@ -281,10 +356,20 @@ const PROCTORING_LABEL_MAP = {
   faceRecognition: 'Face Recognition',
 }
 
+// Mirrors frontend/src/components/EditProctoringModal.tsx (the course-lesson
+// settings equivalent), which force-disables this exact detector with no
+// documented reason in that file either — treat it as "known unreliable,
+// left off pending a real fix" rather than re-enable it here without
+// checking with whoever added that restriction first.
+const FORCE_DISABLED_DETECTORS = new Set(['blurDetection'])
+
 function buildProctoringDetectors(exam) {
   return PROCTORING_DETECTOR_NAMES.map((detectorName) => {
     const existing = exam.proctoring?.detectors?.find((d) => d.detectorName === detectorName)
-    return { detectorName, enabled: existing?.enabled ?? false }
+    return {
+      detectorName,
+      enabled: FORCE_DISABLED_DETECTORS.has(detectorName) ? false : existing?.enabled ?? false,
+    }
   })
 }
 
@@ -299,6 +384,7 @@ function ExamProctoringSettings({ exam }) {
   }, [exam.id])
 
   const toggle = (detectorName) => {
+    if (FORCE_DISABLED_DETECTORS.has(detectorName)) return
     setDetectors((prev) =>
       prev.map((d) => (d.detectorName === detectorName ? { ...d, enabled: !d.enabled } : d))
     )
@@ -319,19 +405,27 @@ function ExamProctoringSettings({ exam }) {
         attempt for review — they never pause the timer or block the candidate from answering.
       </p>
       <div className="grid gap-2 sm:grid-cols-2">
-        {detectors.map((d) => (
-          <label
-            key={d.detectorName}
-            className="flex cursor-pointer select-none items-center gap-2 text-sm text-foreground"
-          >
-            <input
-              type="checkbox"
-              checked={d.enabled}
-              onChange={() => toggle(d.detectorName)}
-            />
-            {PROCTORING_LABEL_MAP[d.detectorName] || d.detectorName}
-          </label>
-        ))}
+        {detectors.map((d) => {
+          const forceDisabled = FORCE_DISABLED_DETECTORS.has(d.detectorName)
+          return (
+            <label
+              key={d.detectorName}
+              className={`flex select-none items-center gap-2 text-sm ${
+                forceDisabled ? 'cursor-not-allowed text-muted-foreground opacity-70' : 'cursor-pointer text-foreground'
+              }`}
+              title={forceDisabled ? 'Disabled — known unreliable, same as course lessons' : undefined}
+            >
+              <input
+                type="checkbox"
+                checked={d.enabled}
+                disabled={forceDisabled}
+                onChange={() => toggle(d.detectorName)}
+              />
+              {PROCTORING_LABEL_MAP[d.detectorName] || d.detectorName}
+              {forceDisabled && <span className="text-xs">(disabled)</span>}
+            </label>
+          )
+        })}
       </div>
       <div className="mt-3 flex items-center gap-3">
         <button
@@ -340,6 +434,113 @@ function ExamProctoringSettings({ exam }) {
           className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
         >
           Save proctoring settings
+        </button>
+        {saved && <span className="text-xs text-green-600">Saved ✓</span>}
+      </div>
+    </section>
+  )
+}
+
+
+// datetime-local inputs work in the browser's local time and expect/return
+// "YYYY-MM-DDTHH:mm" strings — these two converters are the only place that
+// translates between that and the epoch-ms the backend stores.
+function epochToLocalInputValue(epochMs) {
+  if (epochMs === undefined || epochMs === null || Number.isNaN(epochMs)) return ''
+  const d = new Date(epochMs)
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+function localInputValueToEpoch(value) {
+  if (!value) return null // empty input = clear the bound
+  const t = new Date(value).getTime()
+  return Number.isNaN(t) ? null : t
+}
+
+function ExamScheduleSettings({ exam }) {
+  const [opensAt, setOpensAt] = useState(epochToLocalInputValue(exam.opensAt))
+  const [closesAt, setClosesAt] = useState(epochToLocalInputValue(exam.closesAt))
+  // Absent on the exam object means the server default (true) applies.
+  const [allowRetakes, setAllowRetakes] = useState(exam.allowRetakes ?? true)
+  const [saved, setSaved] = useState(false)
+  const updateExam = useUpdateExam()
+
+  useEffect(() => {
+    setOpensAt(epochToLocalInputValue(exam.opensAt))
+    setClosesAt(epochToLocalInputValue(exam.closesAt))
+    setAllowRetakes(exam.allowRetakes ?? true)
+  }, [exam.id])
+
+  const save = () => {
+    updateExam.mutate({
+      examId: exam.id,
+      patch: {
+        // Empty input -> null, which clears a previously-set bound rather
+        // than sending NaN (invalid Date) or 0 (epoch 1970, which would
+        // make the exam look permanently open/closed instead of unbounded).
+        opensAt: localInputValueToEpoch(opensAt),
+        closesAt: localInputValueToEpoch(closesAt),
+        allowRetakes,
+      },
+    })
+    setSaved(true)
+    setTimeout(() => setSaved(false), 1500)
+  }
+
+  return (
+    <section className="rounded-md border border-border bg-card p-4 shadow-sm">
+      <h2 className="mb-1 font-semibold text-foreground">Scheduling &amp; retakes</h2>
+      <p className="mb-3 text-xs text-muted-foreground">
+        These are enforced on the server, not just in this UI — a student genuinely
+        cannot submit outside the window below, and can't re-attempt once retakes are
+        disabled, even if they bypass the candidate-facing warnings.
+      </p>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="block text-sm">
+          Opens at
+          <input
+            type="datetime-local"
+            value={opensAt}
+            onChange={(e) => setOpensAt(e.target.value)}
+            className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+          />
+          <span className="mt-1 block text-xs text-muted-foreground">
+            Leave blank for no start restriction — the exam is open immediately.
+          </span>
+        </label>
+        <label className="block text-sm">
+          Closes at
+          <input
+            type="datetime-local"
+            value={closesAt}
+            onChange={(e) => setClosesAt(e.target.value)}
+            className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+          />
+          <span className="mt-1 block text-xs text-muted-foreground">
+            Leave blank for no end restriction — the exam never closes on its own.
+          </span>
+        </label>
+      </div>
+      <label className="mt-3 flex select-none items-center gap-2 text-sm cursor-pointer">
+        <input
+          type="checkbox"
+          checked={allowRetakes}
+          onChange={(e) => setAllowRetakes(e.target.checked)}
+        />
+        Allow multiple attempts
+      </label>
+      <p className="mt-1 text-xs text-muted-foreground">
+        When OFF, a student who has ever completed this exam once cannot attempt it
+        again — this is checked against their attempt history, not this device.
+      </p>
+      <div className="mt-3 flex items-center gap-3">
+        <button
+          onClick={save}
+          disabled={updateExam.isPending}
+          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+        >
+          Save scheduling
         </button>
         {saved && <span className="text-xs text-green-600">Saved ✓</span>}
       </div>
@@ -779,6 +980,9 @@ function QuestionRow({ examId, question, index, negativeMarkingEnabled, negative
               {negativeMarkingEnabled && question.negativeMarks > 0 && (
                 <span>−{question.negativeMarks}{question.useCustomNegative ? ' (custom)' : ''}</span>
               )}
+              {question.topic && (
+                <span className="rounded bg-muted px-2 py-0.5">{question.topic}</span>
+              )}
             </div>
             <p className="text-sm text-foreground"><RichText text={question.questionText} /></p>
             {question.questionImage && (
@@ -853,7 +1057,7 @@ function QuestionRow({ examId, question, index, negativeMarkingEnabled, negative
   )
 }
 
-function QuestionForm({ initial, onSubmit, onCancel, negativeMarkingEnabled, negativeMarkingRatios }) {
+function QuestionForm({ initial, onSubmit, onCancel, negativeMarkingEnabled, negativeMarkingRatios, isNew = false }) {
   const [type, setType] = useState(initial.type)
   const [questionText, setQuestionText] = useState(initial.questionText)
   const [questionImage, setQuestionImage] = useState(initial.questionImage)
@@ -875,7 +1079,10 @@ const [options, setOptions] = useState(
     initial.type === 'NAT' ? initial.correctOptions[0] ?? '' : ''
   )
   const [natType, setNatType] = useState(initial.natAnswerType ?? 'integer')
+  const [topic, setTopic] = useState(initial.topic ?? '')
+  const [explanation, setExplanation] = useState(initial.explanation ?? '')
   const [uploading, setUploading] = useState(false)
+  const [saveToBank, setSaveToBank] = useState(false)
 
   const computedNegativeMarks = calcNegativeMarks(marks, type, negativeMarkingRatios)
   const effectiveNegativeMarks = customNegativeMarks ? manualNegativeMarks : computedNegativeMarks
@@ -918,9 +1125,10 @@ const [options, setOptions] = useState(
     const appliedNegativeMarks = negativeMarkingEnabled ? effectiveNegativeMarks : 0
     const appliedCustomFlag = negativeMarkingEnabled ? customNegativeMarks : false
 
+    let payload
     if (type === 'NAT') {
       if (!natAnswer.trim()) return alert('Correct numeric answer is required')
-      onSubmit({
+      payload = {
         type,
         questionText: questionText.trim(),
         questionImage,
@@ -930,12 +1138,14 @@ const [options, setOptions] = useState(
         negativeMarks: appliedNegativeMarks,
         useCustomNegative: appliedCustomFlag,
         natAnswerType: natType,
-      })
+        topic: topic.trim(),
+        explanation: explanation.trim(),
+      }
     } else {
       const cleanOptions = options.filter((o) => o.text.trim() || o.image)
       if (cleanOptions.length < 2) return alert('At least 2 options required (text or image)')
       if (correct.length === 0) return alert('Select at least one correct option')
-      onSubmit({
+      payload = {
         type,
         questionText: questionText.trim(),
         questionImage,
@@ -944,8 +1154,15 @@ const [options, setOptions] = useState(
         marks,
         negativeMarks: appliedNegativeMarks,
         useCustomNegative: appliedCustomFlag,
-      })
+        topic: topic.trim(),
+        explanation: explanation.trim(),
+      }
     }
+
+    // `saveToBank` only ever means anything for a brand-new question — the
+    // caller (EditExamPage) ignores this flag entirely for the edit-in-place
+    // flow (QuestionRow's onSubmit only takes one argument).
+    onSubmit(payload, { saveToBank: isNew && saveToBank })
   }
 
   return (
@@ -1045,6 +1262,29 @@ const [options, setOptions] = useState(
         )}
       </label>
 
+      <label className="block">
+        <span className="text-xs font-medium text-muted-foreground">Topic / section</span>
+        <input
+          value={topic}
+          onChange={(e) => setTopic(e.target.value)}
+          placeholder="Graphs, Sorting, OOP…"
+          className="mt-1 w-full max-w-sm rounded-md border border-input bg-background px-3 py-2 text-sm"
+        />
+      </label>
+
+      <label className="block">
+        <span className="text-xs font-medium text-muted-foreground">
+          Explanation (shown to students after results, if reveal is on)
+        </span>
+        <textarea
+          value={explanation}
+          onChange={(e) => setExplanation(e.target.value)}
+          rows={3}
+          placeholder="Why this is the correct answer…"
+          className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+        />
+      </label>
+
       <div className="rounded-md border border-dashed border-border p-3">
         <div className="mb-2 flex items-center justify-between">
           <span className="text-xs font-medium text-muted-foreground">Question image (optional)</span>
@@ -1140,6 +1380,20 @@ const [options, setOptions] = useState(
         </label>
       )}
 
+      {isNew && (
+        <label className="flex select-none items-center gap-2 text-sm cursor-pointer">
+          <input
+            type="checkbox"
+            checked={saveToBank}
+            onChange={(e) => setSaveToBank(e.target.checked)}
+          />
+          Also save to my question bank
+          <span className="text-xs text-muted-foreground">
+            (lets you reuse this question in other tests later)
+          </span>
+        </label>
+      )}
+
       <div className="flex items-center gap-2 pt-2">
         <button
           onClick={submit}
@@ -1153,6 +1407,454 @@ const [options, setOptions] = useState(
           className="rounded-md border border-input bg-background px-4 py-2 text-sm font-medium hover:bg-accent"
         >
           Cancel
+        </button>
+      </div>
+    </div>
+  )
+}
+
+
+// ─── Question bank browser/picker ───────────────────────────
+// Shown inside the "Add from question bank" modal. Fetches the teacher's
+// whole bank once and filters by topic client-side (per the backend note:
+// bank sizes are small, no need to round-trip `?topic=`).
+function QuestionBankBrowser({ examId, onClose }) {
+  const { data: bank, isLoading, isError, error } = useQuestionBank()
+  const [topicFilter, setTopicFilter] = useState('')
+  const [selected, setSelected] = useState(() => new Set())
+  const addFromBank = useAddQuestionsFromBank()
+  const removeFromBank = useRemoveFromQuestionBank()
+
+  const entries = bank || []
+  const filtered = topicFilter.trim()
+    ? entries.filter((e) => (e.topic || '').toLowerCase().includes(topicFilter.trim().toLowerCase()))
+    : entries
+
+  const toggle = (id) => {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const handleAdd = () => {
+    if (selected.size === 0) return
+    addFromBank.mutate(
+      { examId, questionIds: Array.from(selected) },
+      {
+        onSuccess: () => {
+          setSelected(new Set())
+          onClose()
+        },
+        onError: (err) => alert('Failed to add selected questions: ' + (err?.message || err)),
+      }
+    )
+  }
+
+  const handleRemove = (entry) => {
+    if (
+      !confirm(
+        'Remove this question from your bank? This only removes it from the bank — ' +
+          'it will not be removed from any exam it has already been copied into.'
+      )
+    ) {
+      return
+    }
+    removeFromBank.mutate(entry._id, {
+      onSuccess: () => {
+        setSelected((prev) => {
+          if (!prev.has(entry._id)) return prev
+          const next = new Set(prev)
+          next.delete(entry._id)
+          return next
+        })
+      },
+      onError: (err) => alert('Failed to remove question: ' + (err?.message || err)),
+    })
+  }
+
+  if (isLoading) {
+    return <p className="text-sm text-muted-foreground">Loading your question bank…</p>
+  }
+  if (isError) {
+    return (
+      <p className="text-sm text-red-600">
+        Failed to load your question bank{error?.message ? `: ${error.message}` : '.'}
+      </p>
+    )
+  }
+
+  return (
+    <div className="space-y-3">
+      <label className="block text-sm">
+        <span className="text-xs font-medium text-muted-foreground">Filter by topic</span>
+        <input
+          value={topicFilter}
+          onChange={(e) => setTopicFilter(e.target.value)}
+          placeholder="e.g. Graphs"
+          className="mt-1 w-full max-w-xs rounded-md border border-input bg-background px-3 py-2 text-sm"
+        />
+      </label>
+
+      {entries.length === 0 ? (
+        <p className="rounded-md border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+          No saved questions yet — check &quot;Also save to my question bank&quot; when adding a
+          question, or bulk import below.
+        </p>
+      ) : filtered.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No bank questions match that topic.</p>
+      ) : (
+        <ul className="max-h-96 space-y-2 overflow-y-auto">
+          {filtered.map((entry) => (
+            <li key={entry._id} className="rounded-md border border-border p-3">
+              <div className="flex items-start gap-3">
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  checked={selected.has(entry._id)}
+                  onChange={() => toggle(entry._id)}
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                    <span className="rounded bg-primary/10 px-2 py-0.5 font-medium text-primary">
+                      {entry.type}
+                    </span>
+                    <span>{entry.marks} marks</span>
+                    {entry.topic && <span className="rounded bg-muted px-2 py-0.5">{entry.topic}</span>}
+                  </div>
+                  <p className="line-clamp-2 text-sm text-foreground">
+                    {entry.questionText || '(image-only question)'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleRemove(entry)}
+                  disabled={removeFromBank.isPending}
+                  className="shrink-0 rounded border border-red-300 bg-white px-2 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-50"
+                >
+                  Remove from bank
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="flex items-center justify-end gap-2 border-t border-border pt-3">
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-md border border-input bg-background px-4 py-2 text-sm font-medium hover:bg-accent"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={handleAdd}
+          disabled={selected.size === 0 || addFromBank.isPending}
+          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+        >
+          {addFromBank.isPending ? 'Adding…' : `Add ${selected.size} selected to this exam`}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+
+// ─── CSV bulk import ─────────────────────────────────────────
+
+const CSV_COLUMNS = [
+  'type',
+  'questionText',
+  'options',
+  'correctOptions',
+  'marks',
+  'negativeMarks',
+  'topic',
+  'explanation',
+]
+
+// One example row per question type so a teacher has something concrete to
+// edit rather than guessing the format from prose alone.
+const CSV_TEMPLATE_ROWS = [
+  {
+    type: 'MCQ',
+    questionText: 'What is the time complexity of binary search on a sorted array?',
+    options: 'O(n)|O(log n)|O(n^2)|O(1)',
+    correctOptions: '1',
+    marks: '2',
+    negativeMarks: '0.5',
+    topic: 'Algorithms',
+    explanation: 'Binary search halves the remaining search space at each step.',
+  },
+  {
+    type: 'MSQ',
+    questionText: 'Which of the following are comparison-based sorting algorithms?',
+    options: 'QuickSort|Binary Search|MergeSort|Depth-First Search',
+    correctOptions: '0|2',
+    marks: '2',
+    negativeMarks: '0',
+    topic: 'Algorithms',
+    explanation: 'QuickSort and MergeSort compare elements to order them; the others do not sort.',
+  },
+  {
+    type: 'NAT',
+    questionText: 'What is 12 + 30?',
+    options: '',
+    correctOptions: '42',
+    marks: '1',
+    negativeMarks: '0',
+    topic: 'Arithmetic',
+    explanation: '',
+  },
+]
+
+function downloadCsvTemplate() {
+  const csv = Papa.unparse({ fields: CSV_COLUMNS, data: CSV_TEMPLATE_ROWS })
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'question-bulk-import-template.csv'
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
+const VALID_QUESTION_TYPES = ['MCQ', 'MSQ', 'NAT']
+
+// Validates + maps a single parsed CSV row into an `AddQuestionInput`-shaped
+// payload. Returns `{ ok: true, summary, payload }` on success or
+// `{ ok: false, summary, error }` on failure — `summary` is always set (a
+// best-effort preview) so the results table has something to show even for
+// rows that fail validation.
+function validateAndMapCsvRow(row) {
+  const rawType = String(row.type ?? '').trim()
+  const type = rawType.toUpperCase()
+  const questionText = String(row.questionText ?? '').trim()
+  const summary = `${rawType || '?'} — ${questionText ? questionText.slice(0, 60) : '(no question text)'}`
+
+  if (!VALID_QUESTION_TYPES.includes(type)) {
+    return { ok: false, summary, error: `Invalid type "${rawType}" — must be MCQ, MSQ, or NAT` }
+  }
+  if (!questionText) {
+    return { ok: false, summary, error: 'questionText is required' }
+  }
+
+  const marks = Number(row.marks)
+  if (!Number.isFinite(marks) || marks <= 0) {
+    return { ok: false, summary, error: 'marks must be a positive number' }
+  }
+
+  const negativeMarksRaw = row.negativeMarks
+  const negativeMarksProvided = negativeMarksRaw !== undefined && String(negativeMarksRaw).trim() !== ''
+  const negativeMarks = negativeMarksProvided ? Number(negativeMarksRaw) : 0
+  if (negativeMarksProvided && !Number.isFinite(negativeMarks)) {
+    return { ok: false, summary, error: 'negativeMarks must be a number' }
+  }
+
+  const correctOptionsRaw = String(row.correctOptions ?? '').trim()
+  if (!correctOptionsRaw) {
+    return { ok: false, summary, error: 'correctOptions is required' }
+  }
+
+  const topic = String(row.topic ?? '').trim()
+  const explanation = String(row.explanation ?? '').trim()
+  const qId = randomQuestionId()
+
+  if (type === 'NAT') {
+    return {
+      ok: true,
+      summary,
+      payload: {
+        type: 'NAT',
+        questionText,
+        options: [],
+        correctOptions: [correctOptionsRaw],
+        marks,
+        negativeMarks,
+        useCustomNegative: false,
+        natAnswerType: 'integer',
+        topic,
+        explanation,
+      },
+    }
+  }
+
+  const optionTexts = String(row.options ?? '')
+    .split('|')
+    .map((s) => s.trim())
+    .filter(Boolean)
+  if (optionTexts.length < 2) {
+    return { ok: false, summary, error: 'options must have at least 2 pipe-separated values for MCQ/MSQ' }
+  }
+  const rowOptions = optionTexts.map((text, i) => ({ id: `${qId}_${i + 1}`, text }))
+
+  const indexTokens = correctOptionsRaw
+    .split('|')
+    .map((s) => s.trim())
+    .filter((s) => s !== '')
+  const indices = indexTokens.map((s) => Number(s))
+  const outOfRange = indices.some((n) => !Number.isInteger(n) || n < 0 || n >= optionTexts.length)
+  if (outOfRange) {
+    return {
+      ok: false,
+      summary,
+      error: `correctOptions indices must be whole numbers between 0 and ${optionTexts.length - 1}`,
+    }
+  }
+  if (type === 'MCQ' && indices.length !== 1) {
+    return { ok: false, summary, error: 'MCQ requires exactly one correctOptions index' }
+  }
+  if (type === 'MSQ' && indices.length < 1) {
+    return { ok: false, summary, error: 'MSQ requires at least one correctOptions index' }
+  }
+
+  return {
+    ok: true,
+    summary,
+    payload: {
+      type,
+      questionText,
+      options: rowOptions,
+      correctOptions: indices.map((i) => rowOptions[i].id),
+      marks,
+      negativeMarks,
+      useCustomNegative: false,
+      topic,
+      explanation,
+    },
+  }
+}
+
+function BulkImportForm({ examId, onClose }) {
+  const [rows, setRows] = useState([]) // [{ rowNumber, ok, summary, error?, payload? }]
+  const [fileName, setFileName] = useState('')
+  const [parseError, setParseError] = useState('')
+  const bulkAdd = useBulkAddQuestions()
+
+  const handleFile = (file) => {
+    if (!file) return
+    setFileName(file.name)
+    setParseError('')
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: (results) => {
+        const parsed = (results.data || []).map((row, i) => ({
+          rowNumber: i + 1,
+          ...validateAndMapCsvRow(row),
+        }))
+        setRows(parsed)
+      },
+      error: (err) => {
+        setParseError('Failed to parse CSV: ' + (err?.message || err))
+        setRows([])
+      },
+    })
+  }
+
+  const validRows = rows.filter((r) => r.ok)
+  const invalidCount = rows.length - validRows.length
+
+  const handleImport = () => {
+    if (validRows.length === 0) return
+    bulkAdd.mutate(
+      { examId, questions: validRows.map((r) => r.payload) },
+      {
+        onSuccess: () => onClose(),
+        onError: (err) => alert('Bulk import failed: ' + (err?.message || err)),
+      }
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-md border border-dashed border-border p-3 text-sm text-muted-foreground">
+        <p className="mb-2">
+          Upload a CSV with these columns: <code>type</code> (MCQ, MSQ, or NAT),{' '}
+          <code>questionText</code>, <code>options</code> (pipe-separated — MCQ/MSQ only, e.g.{' '}
+          <code>Option A|Option B|Option C|Option D</code>, leave blank for NAT),{' '}
+          <code>correctOptions</code> (for MCQ/MSQ: the 0-based index of the correct option, or
+          multiple pipe-separated indices for MSQ, e.g. <code>1</code> or <code>0|2</code>; for
+          NAT: the literal numeric answer, e.g. <code>42</code>), <code>marks</code> (positive
+          number), <code>negativeMarks</code> (optional, defaults to 0), <code>topic</code>{' '}
+          (optional), and <code>explanation</code> (optional).
+        </p>
+        <button
+          type="button"
+          onClick={downloadCsvTemplate}
+          className="rounded-md border border-input bg-background px-3 py-1.5 text-xs font-medium hover:bg-accent"
+        >
+          Download template CSV
+        </button>
+      </div>
+
+      <label className="block text-sm">
+        <span className="text-xs font-medium text-muted-foreground">CSV file</span>
+        <input
+          type="file"
+          accept=".csv,text/csv"
+          onChange={(e) => handleFile(e.target.files?.[0] ?? null)}
+          className="mt-1 block text-sm"
+        />
+        {fileName && <span className="mt-1 block text-xs text-muted-foreground">Selected: {fileName}</span>}
+      </label>
+
+      {parseError && <p className="text-sm text-red-600">{parseError}</p>}
+
+      {rows.length > 0 && (
+        <div className="max-h-80 overflow-y-auto overflow-x-auto rounded-md border border-border">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 bg-card">
+              <tr className="border-b border-border bg-muted/40 text-left text-xs uppercase text-muted-foreground">
+                <th className="py-2 px-3">Row</th>
+                <th className="py-2 px-3">Summary</th>
+                <th className="py-2 px-3">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.rowNumber} className="border-b border-border/60">
+                  <td className="py-2 px-3 font-mono">{r.rowNumber}</td>
+                  <td className="py-2 px-3">{r.summary}</td>
+                  <td className="py-2 px-3">
+                    {r.ok ? (
+                      <span className="font-medium text-green-700">OK</span>
+                    ) : (
+                      <span className="text-red-600">{r.error}</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div className="flex items-center justify-end gap-2 border-t border-border pt-3">
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-md border border-input bg-background px-4 py-2 text-sm font-medium hover:bg-accent"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={handleImport}
+          disabled={validRows.length === 0 || bulkAdd.isPending}
+          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+        >
+          {bulkAdd.isPending
+            ? 'Importing…'
+            : invalidCount > 0
+            ? `Import ${validRows.length} questions (${invalidCount} skipped, see errors above)`
+            : `Import ${validRows.length} questions`}
         </button>
       </div>
     </div>

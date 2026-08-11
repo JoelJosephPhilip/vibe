@@ -30,6 +30,10 @@ export interface IExamQuestion {
     negativeMarks: number;
     useCustomNegative: boolean;
     natAnswerType?: string;
+    /** Optional per-question explanation, e.g. shown alongside results when revealAnswers is on. */
+    explanation?: string;
+    /** Optional free-text topic tag for this question, e.g. "Graphs", "Sorting". No enum. */
+    topic?: string;
 }
 
 export interface ITimeGrant {
@@ -97,6 +101,25 @@ export interface IExam {
      * this exam — not the same as an empty `detectors` array.
      */
     proctoring?: IExamProctoringConfig;
+    /**
+     * Scheduling window (epoch-ms). Both optional/absent means "always open",
+     * preserving current behavior for every existing exam. Enforced
+     * server-side in `AttemptService.submitAttempt` (a student cannot submit
+     * before `opensAt` or after `closesAt`); deliberately NOT enforced on the
+     * `GET /exams/:examId` read path, since teachers need to fetch/preview an
+     * exam regardless of its window — the frontend handles the student-facing
+     * "not open yet" screen itself using these same fields.
+     */
+    opensAt?: number;
+    closesAt?: number;
+    /**
+     * Retake limiting ("practice mode" toggle). Defaults to `true` when
+     * absent — this preserves today's actual behavior, where nothing
+     * currently stops a student from attempting the same exam multiple
+     * times. When explicitly `false`, `AttemptService.submitAttempt` rejects
+     * a second attempt by the same student for this exam.
+     */
+    allowRetakes?: boolean;
     /** Firebase uid / `user._id.toString()` of the creator — see AttemptController. */
     createdBy: string;
     createdAt: number;

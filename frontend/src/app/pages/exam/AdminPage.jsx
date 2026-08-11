@@ -132,6 +132,18 @@ export default function AdminPage() {
                           >
                             Edit
                           </Link>
+                          <Link
+                            to={`/admin/${exam.id}/attempts`}
+                            className="rounded border border-input bg-background px-2 py-1 text-xs hover:bg-accent"
+                          >
+                            View attempts
+                          </Link>
+                          <Link
+                            to={`/admin/${exam.id}/analytics`}
+                            className="rounded border border-input bg-background px-2 py-1 text-xs hover:bg-accent"
+                          >
+                            Analytics
+                          </Link>
                           <button
                             onClick={() => handleTogglePublish(exam)}
                             disabled={

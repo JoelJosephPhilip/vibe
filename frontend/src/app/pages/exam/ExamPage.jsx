@@ -15,6 +15,15 @@ const LETTERS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
 // instead of just warning.
 const MAX_TAB_SWITCHES = 3
 
+// Exact 403 messages thrown by AttemptService.submitAttempt for the
+// scheduling window / retake-limit checks — matched by substring so extra
+// server-side context wrapped around them still counts as a known block.
+const SUBMIT_BLOCK_MESSAGES = [
+  'This exam is not open yet',
+  'This exam is now closed',
+  'You have already attempted this exam',
+]
+
 // Black/white is the primary palette. Orange is kept only as a thin accent
 // (active-tab underline, links, hover states) rather than large fills —
 // wall-to-wall orange badges/bars read as too much of one color.
@@ -57,7 +66,18 @@ function CountdownDisplay({ initialSeconds, onExpire }) {
   }, [s])
 
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60
-  return <span>{String(h).padStart(2, '0')}:{String(m).padStart(2, '0')}:{String(sec).padStart(2, '0')}</span>
+  const display = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
+  // aria-label carries the accessible name ("Time remaining: HH:MM:SS")
+  // instead of the raw digits, so a screen reader announces it with
+  // context rather than reading the monospace string digit-by-digit. This
+  // is intentionally NOT an aria-live region — announcing every single
+  // second would be unusable noise; the label just updates silently for
+  // whenever the control is actually focused/queried.
+  return (
+    <span role="timer" aria-label={`Time remaining: ${display}`}>
+      {display}
+    </span>
+  )
 }
 
 // Outer component: decides whether this is the always-available, 100%
@@ -101,6 +121,52 @@ export default function ExamPage() {
         </div>
       </div>
     )
+  }
+
+  // Scheduling window is enforced server-side at submit time regardless of
+  // this check (see AttemptService.submitAttempt) — this just stops a
+  // student from starting/answering a test that can only end in a rejected
+  // submission with no warning. The demo exam never has opensAt/closesAt so
+  // it's unaffected.
+  const now = Date.now()
+  if (!isDemo) {
+    if (examData.closesAt !== undefined && examData.closesAt !== null && now > examData.closesAt) {
+      return (
+        <div className="flex min-h-screen items-center justify-center bg-background px-4 text-center">
+          <div className="max-w-md space-y-3">
+            <h1 className="text-2xl font-bold">This test has closed</h1>
+            <p className="text-sm text-muted-foreground">
+              This test closed at {new Date(examData.closesAt).toLocaleString()}. Submissions are no
+              longer accepted.
+            </p>
+            <button
+              onClick={() => navigate('/')}
+              className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+            >
+              Back to home
+            </button>
+          </div>
+        </div>
+      )
+    }
+    if (examData.opensAt !== undefined && examData.opensAt !== null && now < examData.opensAt) {
+      return (
+        <div className="flex min-h-screen items-center justify-center bg-background px-4 text-center">
+          <div className="max-w-md space-y-3">
+            <h1 className="text-2xl font-bold">This test isn't open yet</h1>
+            <p className="text-sm text-muted-foreground">
+              This test opens at {new Date(examData.opensAt).toLocaleString()}. Come back then to start it.
+            </p>
+            <button
+              onClick={() => navigate('/')}
+              className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+            >
+              Back to home
+            </button>
+          </div>
+        </div>
+      )
+    }
   }
 
   // `key` forces a fresh mount (and fresh internal state) if the route ever
@@ -211,6 +277,11 @@ function ExamPageInner({ examId, isDemo, examData, navigate }) {
 
   const [currentIndex, setCurrentIndex] = useState(savedSession?.currentIndex ?? 0)
   const [showCalc, setShowCalc] = useState(false)
+  // Below the `lg` breakpoint the question palette collapses into a
+  // toggleable panel under the question (see the "Question Palette" button
+  // in the main grid below) instead of sitting beside it — at `lg` and up
+  // this is ignored and the palette is always shown via `lg:block`.
+  const [showPalette, setShowPalette] = useState(false)
   const [responses, setResponses] = useState(
     savedSession?.responses?.length
       ? savedSession.responses
@@ -229,6 +300,10 @@ function ExamPageInner({ examId, isDemo, examData, navigate }) {
   const [showSubmitConfirm, setShowSubmitConfirm] = useState(false)
   const [showTabWarning, setShowTabWarning] = useState(false)
   const [autoSubmitting, setAutoSubmitting] = useState(false)
+  // Set when the server rejects a submission for a scheduling/retake reason
+  // (see the exact strings AttemptService.submitAttempt throws — checked by
+  // substring below since the server message may include extra context).
+  const [submitBlockedMessage, setSubmitBlockedMessage] = useState(null)
   // The clock the countdown is measured from. On first load this is "now";
   // on a refresh mid-attempt it's restored from the saved session so the
   // remaining time keeps counting down from where it actually was, instead
@@ -249,8 +324,8 @@ function ExamPageInner({ examId, isDemo, examData, navigate }) {
   // Accumulated in a ref (not state) so a proctoring event never triggers a
   // re-render storm — only read when the attempt is actually submitted.
   const proctoringEventsRef = useRef([])
-  const handleProctoringEvent = useCallback((type) => {
-    proctoringEventsRef.current.push({ type, at: Date.now() })
+  const handleProctoringEvent = useCallback((type, imageDataUrl) => {
+    proctoringEventsRef.current.push({ type, at: Date.now(), imageDataUrl })
   }, [])
 
   // Driven by ExamProctoring's onBlockingChange: a serious violation (no
@@ -273,24 +348,9 @@ function ExamPageInner({ examId, isDemo, examData, navigate }) {
   const [codeMsg, setCodeMsg] = useState('')
 
   const handleRedeemCode = () => {
-    if (isDemo) {
-      // The demo exam is never managed through the admin UI, so it can never
-      // actually have a grant issued — this mirrors the old
-      // examStore.redeemTimeGrant validation purely for UI parity.
-      const code = (codeInput || '').trim().toUpperCase()
-      if (!code) { setCodeMsg('Enter a code'); return }
-      const grant = (examData.timeGrants || []).find((g) => g.code === code)
-      if (!grant) { setCodeMsg('Invalid code'); return }
-      if (grant.used) { setCodeMsg('This code has already been used'); return }
-      grant.used = true
-      grant.usedAt = Date.now()
-      setExtraSeconds((s) => s + grant.minutes * 60)
-      setCodeMsg(`+${grant.minutes} min added.`)
-      setCodeInput('')
-      setTimeout(() => setShowCodeInput(false), 1500)
-      return
-    }
-
+    // The demo exam is never managed through the admin UI, so it can never
+    // actually have a grant issued — the "extra-time code" UI is hidden
+    // entirely for it below, so this only ever runs for real exams.
     redeemTimeGrant.mutate(
       { examId, code: codeInput },
       {
@@ -336,7 +396,20 @@ function ExamPageInner({ examId, isDemo, examData, navigate }) {
   }, [questions, answers, reverseOptionMaps, responses, currentIndex, tabSwitches, extraSeconds])
 
   // Fullscreen enforcement + right-click / devtools / copy-paste blocking
-  const { isFullscreen, requestFullscreen } = useExamSecurity(true)
+  const { isFullscreen, requestFullscreen, isDevToolsOpen } = useExamSecurity(true)
+
+  // DevTools can't actually be closed/blocked by any website (see
+  // useExamSecurity.js) — the heuristic there only detects a docked panel.
+  // Treated the same as a camera proctoring violation: logged once per
+  // absent->present transition, and folded into the same blur overlay below
+  // rather than a separate UI, so the response is consistent everywhere.
+  const wasDevToolsOpenRef = useRef(false)
+  useEffect(() => {
+    if (isDevToolsOpen && !wasDevToolsOpenRef.current) {
+      proctoringEventsRef.current.push({ type: 'devToolsOpen', at: Date.now() })
+    }
+    wasDevToolsOpenRef.current = isDevToolsOpen
+  }, [isDevToolsOpen])
 
   useEffect(() => {
     setResponses((prev) => {
@@ -529,7 +602,19 @@ function ExamPageInner({ examId, isDemo, examData, navigate }) {
         onError: (err) => {
           submittedRef.current = false
           console.error('Submit failed', err)
-          alert('Could not submit: ' + (err?.message || err))
+          const msg = err?.message || ''
+          // These are the exact strings AttemptService.submitAttempt throws
+          // (403 ForbiddenError) for the scheduling window / retake-limit
+          // checks — surface them as-is instead of a generic failure alert,
+          // since they're already written to be shown directly to the
+          // candidate.
+          const isKnownBlock = SUBMIT_BLOCK_MESSAGES.some((m) => msg.includes(m))
+          if (isKnownBlock) {
+            setShowSubmitConfirm(false)
+            setSubmitBlockedMessage(msg)
+          } else {
+            alert('Could not submit: ' + (msg || err))
+          }
         },
       }
     )
@@ -555,6 +640,14 @@ function ExamPageInner({ examId, isDemo, examData, navigate }) {
     exam.duration * 60 + extraSeconds - Math.floor((Date.now() - startedAtRef.current) / 1000)
   )
 
+  // Same blur overlay used for camera proctoring violations also covers a
+  // detected (docked) DevTools panel — one consistent "something's wrong,
+  // resolve it, the timer keeps running" response instead of a second UI.
+  const isBlurred = proctoringBlocked || isDevToolsOpen
+  const blurReasons = isDevToolsOpen
+    ? [...proctoringBlockReasons, 'Developer tools detected']
+    : proctoringBlockReasons
+
   const counts = responses.reduce(
     (acc, r) => {
       if (r.isAnswered && r.isMarkedForReview) acc.answeredMarked++
@@ -572,28 +665,28 @@ function ExamPageInner({ examId, isDemo, examData, navigate }) {
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-white" style={{ fontFamily: 'Inter, sans-serif' }}>
       {/* Top brand bar */}
-      <div className="flex items-center justify-between border-b border-gray-200 bg-white px-4 py-1">
+      <div className="flex items-center justify-between gap-2 border-b border-gray-200 bg-white px-2 py-1 sm:px-4">
         <div className="flex items-center">
           {leftLogo ? (
             <img
               src={leftLogo}
               alt={leftBadge || 'Logo'}
-              className="h-12 w-12 rounded object-contain"
+              className="h-9 w-9 rounded object-contain sm:h-12 sm:w-12"
             />
           ) : (
             <div
-              className="grid h-12 w-12 place-items-center rounded px-1 text-center text-[10px] font-bold leading-tight text-white"
+              className="grid h-9 w-9 place-items-center rounded px-1 text-center text-[9px] font-bold leading-tight text-white sm:h-12 sm:w-12 sm:text-[10px]"
               style={{ backgroundColor: INK }}
             >
               {leftBadge}
             </div>
           )}
         </div>
-        <div className="text-center">
-          <h1 className="text-lg font-bold uppercase tracking-tight sm:text-xl" style={{ color: INK }}>
+        <div className="min-w-0 text-center">
+          <h1 className="truncate text-sm font-bold uppercase tracking-tight sm:text-lg md:text-xl" style={{ color: INK }}>
             {headerTitle}
           </h1>
-          <p className="-mt-1 text-[10px] font-bold uppercase tracking-widest text-gray-500">
+          <p className="-mt-1 hidden text-[10px] font-bold uppercase tracking-widest text-gray-500 sm:block">
             {headerSubtitle}
           </p>
         </div>
@@ -602,11 +695,11 @@ function ExamPageInner({ examId, isDemo, examData, navigate }) {
             <img
               src={rightLogo}
               alt={rightBadge || 'Logo'}
-              className="h-10 w-10 rounded-full object-contain"
+              className="h-8 w-8 rounded-full object-contain sm:h-10 sm:w-10"
             />
           ) : (
             <div
-              className="grid h-10 w-10 place-items-center rounded-full px-1 text-center text-[9px] font-bold leading-tight text-white"
+              className="grid h-8 w-8 place-items-center rounded-full px-1 text-center text-[8px] font-bold leading-tight text-white sm:h-10 sm:w-10 sm:text-[9px]"
               style={{ backgroundColor: INK }}
             >
               {rightBadge}
@@ -617,25 +710,29 @@ function ExamPageInner({ examId, isDemo, examData, navigate }) {
 
       {/* Subject bar */}
       <div
-        className="flex items-center justify-between border-b-2 bg-white px-4 py-1 text-sm font-semibold"
+        className="flex flex-wrap items-center justify-between gap-1 border-b-2 bg-white px-2 py-1 text-xs font-semibold sm:px-4 sm:text-sm"
         style={{ borderColor: ACCENT, color: INK }}
       >
-        <span>{subjectName} Mock</span>
+        <span className="truncate">{subjectName} Mock</span>
         <button
           onClick={() => setShowCalc((s) => !s)}
-          className="flex items-center gap-1 text-gray-700 transition-colors hover:text-black"
+          className="flex min-h-[36px] items-center gap-1 rounded px-1 text-gray-700 transition-colors hover:text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
         >
-          <span className="text-xs">🖩 Scientific Calculator</span>
+          <span className="text-xs">🖩 <span className="hidden sm:inline">Scientific </span>Calculator</span>
         </button>
       </div>
 
-      {/* Sections + timer + candidate */}
-      <div className="flex flex-none items-stretch border-b border-gray-300 bg-[#F7F7F7]" style={{ minHeight: 86 }}>
-        <div className="flex flex-grow flex-col justify-end">
-          <div className="px-4 py-1 text-[10px] font-bold uppercase text-gray-600">Sections</div>
-          <div className="flex items-center gap-1 px-4">
+      {/* Sections + timer + candidate. Below `sm` this wraps onto its own
+          rows instead of forcing three fixed-width blocks into one
+          horizontal strip (which used to clip/overflow on narrow
+          viewports) — the `minHeight: 86` desktop measurement is now only
+          applied from `sm` up. */}
+      <div className="flex flex-none flex-wrap items-stretch border-b border-gray-300 bg-[#F7F7F7] sm:min-h-[86px]">
+        <div className="flex min-w-full flex-grow flex-col justify-end sm:min-w-0">
+          <div className="px-2 py-1 text-[10px] font-bold uppercase text-gray-600 sm:px-4">Sections</div>
+          <div className="flex items-center gap-1 px-2 pb-1 sm:px-4 sm:pb-0">
             <div
-              className="rounded-t-md border-t-2 border-x border-gray-300 px-4 py-2 text-sm font-bold text-white"
+              className="rounded-t-md border-t-2 border-x border-gray-300 px-3 py-1.5 text-xs font-bold text-white sm:px-4 sm:py-2 sm:text-sm"
               style={{ borderTopColor: ACCENT, backgroundColor: INK }}
             >
               {subjectName}
@@ -643,16 +740,21 @@ function ExamPageInner({ examId, isDemo, examData, navigate }) {
           </div>
         </div>
 
-        <div className="flex items-center border-l border-gray-300 bg-white">
-          <div className="flex h-full min-w-[170px] flex-col justify-center border-r border-gray-300 px-6 text-right">
+        <div className="flex min-w-full flex-wrap items-stretch border-t border-gray-300 bg-white sm:min-w-0 sm:flex-nowrap sm:border-l sm:border-t-0">
+          <div className="flex h-full min-w-[130px] flex-1 flex-col justify-center border-r border-gray-300 px-3 py-2 text-right sm:min-w-[170px] sm:flex-none sm:px-6 sm:py-0">
             <span className="mb-1 text-[10px] font-bold uppercase text-gray-500">Time Left:</span>
             <div
-              className="text-[22px] font-extrabold leading-none tracking-tighter"
+              className="text-lg font-extrabold leading-none tracking-tighter sm:text-[22px]"
               style={{ fontFamily: 'monospace', color: INK }}
             >
               <CountdownDisplay key={extraSeconds} initialSeconds={remainingSeconds} onExpire={() => handleSubmit()} />
             </div>
-            {!showCodeInput ? (
+            {/* Time-grant codes are issued through the admin UI against a
+                real exam's timeGrants — the demo exam is never manageable
+                there, so it can never have a valid code and this affordance
+                is hidden for it rather than shown as a permanently-dead
+                "Enter a code" box. */}
+            {!isDemo && (!showCodeInput ? (
               <button
                 onClick={() => setShowCodeInput(true)}
                 className="mt-1 text-[10px] font-medium underline hover:brightness-90"
@@ -686,15 +788,15 @@ function ExamPageInner({ examId, isDemo, examData, navigate }) {
                 </div>
                 {codeMsg && <span className="text-[10px] text-gray-600">{codeMsg}</span>}
               </div>
-            )}
+            ))}
           </div>
 
-          <div className="flex h-full items-center gap-3 bg-white px-4">
-            <div className="flex flex-col justify-center">
+          <div className="flex h-full flex-1 items-center gap-3 bg-white px-3 py-2 sm:flex-none sm:px-4 sm:py-0">
+            <div className="flex min-w-0 flex-col justify-center">
               <span className="mb-1 text-[10px] font-bold uppercase leading-none text-gray-500">
                 Candidate Name:
               </span>
-              <span className="text-[15px] font-bold uppercase leading-tight" style={{ color: INK }}>
+              <span className="truncate text-sm font-bold uppercase leading-tight sm:text-[15px]" style={{ color: INK }}>
                 {candidateName}
               </span>
             </div>
@@ -702,12 +804,17 @@ function ExamPageInner({ examId, isDemo, examData, navigate }) {
         </div>
       </div>
 
-      {/* Main grid */}
-      <main className="w-full min-h-0 flex-1 overflow-hidden p-4">
-        <div className="mx-auto grid h-full min-h-0 max-w-7xl grid-cols-1 gap-4 lg:grid-cols-4">
+      {/* Main grid. Below `lg` the palette collapses into a toggleable
+          panel under the question instead of sitting beside it, and this
+          whole area scrolls as a normal page — the desktop layout instead
+          clips to the viewport height and only the question card scrolls
+          internally (see the `lg:overflow-hidden` / `lg:h-full` pair
+          below). */}
+      <main className="w-full min-h-0 flex-1 overflow-y-auto p-3 sm:p-4 lg:overflow-hidden">
+        <div className="mx-auto flex h-auto min-h-full max-w-7xl flex-col gap-4 lg:grid lg:h-full lg:min-h-0 lg:grid-cols-4">
           <div className="flex min-h-0 flex-col gap-2 lg:col-span-3">
             {/* Question type strip */}
-            <div className="flex flex-wrap items-center justify-between gap-2 border border-gray-300 bg-white px-4 py-2 text-[13px] shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2 border border-gray-300 bg-white px-3 py-2 text-[13px] shadow-sm sm:px-4">
               <div className="font-bold text-black">
                 Question Type: <span className="font-normal">{currentQuestion?.type}</span>
               </div>
@@ -722,13 +829,13 @@ function ExamPageInner({ examId, isDemo, examData, navigate }) {
 
             {/* Question card */}
             <div className="flex min-h-0 flex-1 flex-col border border-gray-300 bg-white shadow-sm">
-              <div className="border-b border-gray-200 px-4 py-2">
+              <div className="border-b border-gray-200 px-3 py-2 sm:px-4">
                 <h2 className="text-[15px] font-bold text-black">
                   Question No. <span>{currentIndex + 1}</span>
                 </h2>
               </div>
               <div
-                className="relative min-h-0 flex-1 overflow-y-auto p-6"
+                className="relative min-h-0 flex-1 overflow-y-auto p-4 sm:p-6"
                 style={{
                   backgroundImage: `url("${watermarkSvg}")`,
                   backgroundRepeat: 'repeat',
@@ -747,9 +854,28 @@ function ExamPageInner({ examId, isDemo, examData, navigate }) {
             </div>
           </div>
 
-          {/* Palette — fixed in place; scrolls internally only if it has too many questions */}
+          {/* Palette. Below `lg` this is a collapsed-by-default toggle
+              panel (so the question itself is what's visible first on a
+              phone) instead of a fixed sidebar; the toggle button itself is
+              hidden from `lg` up, where the panel is always shown exactly
+              like the previous always-visible sidebar. */}
           <div className="flex min-h-0 flex-col lg:col-span-1">
-            <div className="min-h-0 flex-1 overflow-y-auto">
+            <button
+              type="button"
+              onClick={() => setShowPalette((v) => !v)}
+              aria-expanded={showPalette}
+              aria-controls="exam-palette-panel"
+              className="mb-2 flex min-h-[44px] items-center justify-between gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-bold text-gray-800 shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 lg:hidden"
+            >
+              <span>
+                Question Palette ({counts.answered + counts.answeredMarked}/{questions.length} answered)
+              </span>
+              <span aria-hidden="true">{showPalette ? '▲' : '▼'}</span>
+            </button>
+            <div
+              id="exam-palette-panel"
+              className={`min-h-0 flex-1 overflow-y-auto ${showPalette ? 'block' : 'hidden'} lg:block`}
+            >
               <Palette
                 total={questions.length}
                 current={currentIndex}
@@ -764,22 +890,22 @@ function ExamPageInner({ examId, isDemo, examData, navigate }) {
       {/* Footer bar */}
       <footer className="sticky bottom-0 z-10 flex-none border-t border-gray-300 bg-gray-100 p-3 shadow-lg">
         <div className="mx-auto grid max-w-7xl grid-cols-1 items-center gap-4 lg:grid-cols-4">
-          <div className="flex justify-between gap-2 lg:col-span-3 lg:border-r lg:border-gray-300 lg:pr-4">
+          <div className="flex flex-wrap justify-between gap-2 lg:col-span-3 lg:flex-nowrap lg:border-r lg:border-gray-300 lg:pr-4">
             <div className="flex flex-wrap gap-2">
-              <button onClick={handleMarkReviewNext} className="rounded-sm border border-gray-300 bg-white px-4 py-2 text-[13px] font-bold text-gray-700 hover:bg-gray-100">
+              <button onClick={handleMarkReviewNext} className="min-h-[44px] rounded-sm border border-gray-300 bg-white px-3 py-2 text-[13px] font-bold text-gray-700 hover:bg-gray-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 sm:px-4">
                 Mark for Review &amp; Next
               </button>
-              <button onClick={handleClearResponse} className="rounded-sm border border-gray-300 bg-white px-4 py-2 text-[13px] font-bold text-gray-700 hover:bg-gray-100">
+              <button onClick={handleClearResponse} className="min-h-[44px] rounded-sm border border-gray-300 bg-white px-3 py-2 text-[13px] font-bold text-gray-700 hover:bg-gray-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 sm:px-4">
                 Clear Response
               </button>
-              <button onClick={goPrev} disabled={currentIndex === 0} className="rounded-sm border border-gray-300 bg-white px-4 py-2 text-[13px] font-bold text-gray-700 hover:bg-gray-100 disabled:opacity-50">
+              <button onClick={goPrev} disabled={currentIndex === 0} className="min-h-[44px] rounded-sm border border-gray-300 bg-white px-3 py-2 text-[13px] font-bold text-gray-700 hover:bg-gray-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:opacity-50 sm:px-4">
                 &lt;&lt; Previous
               </button>
             </div>
             <div>
               <button
                 onClick={handleSaveAndNext}
-                className="rounded-sm border px-4 py-2 text-[13px] font-bold text-white hover:brightness-125"
+                className="min-h-[44px] rounded-sm border px-3 py-2 text-[13px] font-bold text-white hover:brightness-125 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 sm:px-4"
                 style={{ borderColor: INK, backgroundColor: INK }}
               >
                 Save &amp; Next
@@ -789,7 +915,7 @@ function ExamPageInner({ examId, isDemo, examData, navigate }) {
           <div className="flex justify-center lg:pl-2">
             <button
               onClick={() => setShowSubmitConfirm(true)}
-              className="w-[90%] rounded border py-1.5 text-sm font-bold text-white shadow-sm hover:brightness-125"
+              className="min-h-[44px] w-[90%] rounded border py-1.5 text-sm font-bold text-white shadow-sm hover:brightness-125 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
               style={{ borderColor: INK, backgroundColor: INK }}
             >
               Submit
@@ -798,15 +924,24 @@ function ExamPageInner({ examId, isDemo, examData, navigate }) {
         </div>
       </footer>
 
-      {/* Floating calculator */}
+      {/* Floating calculator. Below `sm` this renders as a full-width
+          bottom sheet instead of a fixed 380px box — that fixed width used
+          to run off the right edge of any phone-width viewport. From `sm`
+          up it's back to the original floating box in its original spot. */}
       {showCalc && (
-        <div className="fixed left-8 top-24 z-50 w-[380px] rounded-md border border-gray-400 bg-[#dadada] shadow-2xl">
+        <div className="fixed inset-x-0 bottom-0 z-50 max-h-[85vh] w-full overflow-y-auto rounded-t-xl border border-gray-400 bg-[#dadada] shadow-2xl sm:inset-x-auto sm:bottom-auto sm:left-8 sm:top-24 sm:max-h-none sm:w-[380px] sm:rounded-md">
           <div
-            className="flex items-center justify-between px-3 py-1.5 text-white"
+            className="flex items-center justify-between px-3 py-2 text-white sm:py-1.5"
             style={{ backgroundColor: INK }}
           >
             <span className="text-sm font-semibold">Scientific Calculator</span>
-            <button onClick={() => setShowCalc(false)} className="text-lg">×</button>
+            <button
+              onClick={() => setShowCalc(false)}
+              aria-label="Close calculator"
+              className="min-h-[44px] min-w-[44px] rounded text-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white sm:min-h-0 sm:min-w-0"
+            >
+              ×
+            </button>
           </div>
           <div className="p-2">
             <Calculator />
@@ -876,15 +1011,23 @@ function ExamPageInner({ examId, isDemo, examData, navigate }) {
         </div>
       )}
 
+      {/* aria-live="polite" (not "assertive") — this is a dismissible
+          warning, not a blocking/urgent state, so a screen reader should
+          announce it without interrupting whatever the candidate is
+          currently doing. */}
       {showTabWarning && !autoSubmitting && (
-        <div className="fixed bottom-4 right-4 z-50 rounded-md bg-red-600 px-4 py-3 text-sm text-white shadow-lg">
+        <div
+          className="fixed inset-x-4 bottom-4 z-50 rounded-md bg-red-600 px-4 py-3 text-sm text-white shadow-lg sm:inset-x-auto sm:right-4 sm:w-auto"
+          role="status"
+          aria-live="polite"
+        >
           <p className="font-semibold">Warning: Tab switching detected ({tabSwitches}/{MAX_TAB_SWITCHES})</p>
           <p className="text-xs">
             {tabSwitches >= MAX_TAB_SWITCHES - 1
               ? 'One more and your test will be auto-submitted.'
               : `After ${MAX_TAB_SWITCHES} switches your test is auto-submitted. It's also logged for the admin.`}
           </p>
-          <button onClick={() => setShowTabWarning(false)} className="mt-2 text-xs underline">
+          <button onClick={() => setShowTabWarning(false)} className="mt-2 min-h-[44px] text-xs underline">
             Dismiss
           </button>
         </div>
@@ -893,14 +1036,42 @@ function ExamPageInner({ examId, isDemo, examData, navigate }) {
       {/* Reaching MAX_TAB_SWITCHES auto-submits (see the effect right after
           handleSubmit above) — this full-screen notice explains why before
           the redirect to the result page happens, instead of an
-          unexplained instant jump. */}
+          unexplained instant jump. aria-live="assertive" (via role="alert")
+          since this is urgent and about to redirect the candidate away. */}
       {autoSubmitting && (
-        <div className="fixed inset-0 z-[9995] flex flex-col items-center justify-center gap-3 bg-black/90 px-6 text-center text-white">
+        <div
+          className="fixed inset-0 z-[9995] flex flex-col items-center justify-center gap-3 bg-black/90 px-6 text-center text-white"
+          role="alert"
+          aria-live="assertive"
+        >
           <h2 className="text-2xl font-bold">⚠️ Auto-submitting your test</h2>
           <p className="max-w-md text-sm text-gray-300">
             Tab switching was detected {tabSwitches} times, which reached the {MAX_TAB_SWITCHES}-switch limit.
             Your test is being submitted now.
           </p>
+        </div>
+      )}
+
+      {/* The server rejected the submission for a scheduling/retake reason
+          (exam not open yet / now closed / already attempted with retakes
+          off). This blocks answering rather than just showing a dismissible
+          alert, since there is nothing further the candidate can do here —
+          resubmitting will fail the same way. */}
+      {submitBlockedMessage && (
+        <div
+          className="fixed inset-0 z-[9996] flex flex-col items-center justify-center gap-4 bg-black/90 px-6 text-center text-white"
+          role="alert"
+          aria-live="assertive"
+        >
+          <h2 className="text-2xl font-bold">Submission not accepted</h2>
+          <p className="max-w-md text-sm text-gray-300">{submitBlockedMessage}</p>
+          <button
+            onClick={() => navigate('/')}
+            className="rounded px-6 py-2 text-sm font-bold text-black hover:brightness-90"
+            style={{ backgroundColor: ACCENT }}
+          >
+            Back to home
+          </button>
         </div>
       )}
 
@@ -922,11 +1093,15 @@ function ExamPageInner({ examId, isDemo, examData, navigate }) {
           compliance — but the timer is duplicated here at full visibility
           and size, and keeps running exactly as it does in the header,
           because a violation must never cost the candidate time. */}
-      {proctoringBlocked && (
-        <div className="fixed inset-0 z-[9990] flex flex-col items-center justify-center gap-4 bg-black/70 px-6 text-center text-white backdrop-blur-xl">
+      {isBlurred && (
+        <div
+          className="fixed inset-0 z-[9990] flex flex-col items-center justify-center gap-4 bg-black/70 px-6 text-center text-white backdrop-blur-xl"
+          role="alert"
+          aria-live="assertive"
+        >
           <h2 className="text-xl font-bold">⚠️ Proctoring alert</h2>
           <p className="max-w-md text-sm text-gray-200">
-            {proctoringBlockReasons.join(', ')}. The test area is hidden until this clears.
+            {blurReasons.join(', ')}. The test area is hidden until this clears.
           </p>
           <p className="text-xs text-gray-400">Resolve the issue below — the timer is still running.</p>
           <div className="mt-2 flex flex-col items-center">

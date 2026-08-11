@@ -68,28 +68,38 @@ export function QuestionRenderer({ question, response, onChange }) {
       </div>
 
       {(question.type === 'MCQ' || question.type === 'MSQ') && question.options && (
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div
+          className="grid gap-3 sm:grid-cols-2"
+          role={question.type === 'MCQ' ? 'radiogroup' : 'group'}
+          aria-label={question.type === 'MCQ' ? 'Answer options, select one' : 'Answer options, select all that apply'}
+        >
           {question.options.map((option) => {
             const isSelected = response?.selectedOptions?.includes(option.id)
             const inputType = question.type === 'MCQ' ? 'radio' : 'checkbox'
+            const inputId = `q-${question.id}-opt-${option.id}`
             return (
               <label
                 key={option.id}
+                htmlFor={inputId}
                 style={{
                   backgroundColor: isSelected ? '#F9FAFB' : '#ffffff',
                   borderColor: isSelected ? INK : '#e5e7eb',
                   borderLeft: isSelected ? `3px solid ${ACCENT}` : '1px solid #e5e7eb',
                   color: INK,
                 }}
-                className="flex cursor-pointer items-start gap-3 rounded-lg border p-4 transition-colors hover:bg-gray-50"
+                // min-height keeps the whole tappable row comfortably above
+                // the ~44px touch-target guideline even when option text is
+                // short and would otherwise let padding alone shrink it.
+                className="flex min-h-[44px] cursor-pointer items-start gap-3 rounded-lg border p-4 transition-colors hover:bg-gray-50"
               >
                 <input
+                  id={inputId}
                   type={inputType}
                   name={question.id}
                   value={option.id}
                   checked={!!isSelected}
                   onChange={() => handleOptionChange(option.id)}
-                  className="mt-1 h-4 w-4"
+                  className="mt-1 h-5 w-5 flex-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
                   style={{ accentColor: ACCENT }}
                 />
                 <div className="flex-1 space-y-2">

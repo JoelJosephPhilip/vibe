@@ -17,6 +17,19 @@ const LOCKABLE_KEYS = [
   'F11',
 ]
 
+// How often to re-check the DevTools-open heuristic below.
+const DEVTOOLS_POLL_MS = 1000
+// A docked DevTools panel (side or bottom) shrinks the window's usable
+// viewport relative to its outer frame by roughly this much or more. This is
+// a heuristic, not a real signal — no browser exposes "DevTools is open" to
+// a page (deliberately: that would let sites detect and punish debugging).
+// Known false-positive sources: some window managers/OS scaling setups,
+// certain browser zoom levels, split-screen/snapped windows on smaller
+// monitors. It also does NOT catch DevTools undocked into its own separate
+// window (outer/inner dimensions of the exam tab don't change at all in
+// that case) — there is no way to detect that from the page either.
+const DEVTOOLS_SIZE_THRESHOLD = 160
+
 /**
  * Exam security hook.
  *
@@ -26,12 +39,16 @@ const LOCKABLE_KEYS = [
  * - Disables right-click / context menu
  * - Blocks dev-tools + view-source + print shortcuts
  * - Disables copy / cut / paste and text selection + drag
+ * - Heuristically flags a *docked* DevTools panel via `isDevToolsOpen` (best
+ *   effort only — see DEVTOOLS_SIZE_THRESHOLD above for what this can't
+ *   catch; no website can actually detect, let alone close, DevTools)
  *
  * Usage:
- *   const { isFullscreen, requestFullscreen } = useExamSecurity(true)
+ *   const { isFullscreen, requestFullscreen, isDevToolsOpen } = useExamSecurity(true)
  */
 export function useExamSecurity(enabled = true) {
   const [isFullscreen, setIsFullscreen] = useState(false)
+  const [isDevToolsOpen, setIsDevToolsOpen] = useState(false)
 
   const lockKeyboard = useCallback(async () => {
     try {
@@ -145,6 +162,15 @@ export function useExamSecurity(enabled = true) {
     // ---- block printing --------------------------------------------------
     const onBeforePrint = (e) => e.preventDefault?.()
 
+    // ---- DevTools-open heuristic ------------------------------------------
+    const checkDevTools = () => {
+      const widthDiff = window.outerWidth - window.innerWidth
+      const heightDiff = window.outerHeight - window.innerHeight
+      setIsDevToolsOpen(widthDiff > DEVTOOLS_SIZE_THRESHOLD || heightDiff > DEVTOOLS_SIZE_THRESHOLD)
+    }
+    checkDevTools()
+    const devToolsInterval = setInterval(checkDevTools, DEVTOOLS_POLL_MS)
+
     document.addEventListener('contextmenu', onContextMenu)
     document.addEventListener('copy', blockUnlessField)
     document.addEventListener('cut', blockUnlessField)
@@ -176,6 +202,7 @@ export function useExamSecurity(enabled = true) {
 
     return () => {
       clearTimeout(t)
+      clearInterval(devToolsInterval)
       document.removeEventListener('fullscreenchange', syncFs)
       document.removeEventListener('webkitfullscreenchange', syncFs)
       document.removeEventListener('contextmenu', onContextMenu)
@@ -194,7 +221,7 @@ export function useExamSecurity(enabled = true) {
     }
   }, [enabled, requestFullscreen, exitFullscreen, lockKeyboard, unlockKeyboard])
 
-  return { isFullscreen, requestFullscreen, exitFullscreen }
+  return { isFullscreen, requestFullscreen, exitFullscreen, isDevToolsOpen }
 }
 
 /**

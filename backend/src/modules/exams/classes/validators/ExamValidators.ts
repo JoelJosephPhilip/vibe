@@ -151,6 +151,30 @@ export class CreateExamBody {
     @ValidateNested({ each: true })
     @Type(() => TimeGrantSeedBody)
     timeGrants?: TimeGrantSeedBody[];
+
+    @JSONSchema({
+        description: 'Epoch-ms timestamp after which the exam becomes open. Absent means always open.',
+        type: 'number',
+    })
+    @IsOptional()
+    @IsNumber()
+    opensAt?: number;
+
+    @JSONSchema({
+        description: 'Epoch-ms timestamp after which the exam closes. Absent means never closes.',
+        type: 'number',
+    })
+    @IsOptional()
+    @IsNumber()
+    closesAt?: number;
+
+    @JSONSchema({
+        description: 'Whether a student may attempt this exam more than once. Defaults to true.',
+        type: 'boolean',
+    })
+    @IsOptional()
+    @IsBoolean()
+    allowRetakes?: boolean;
 }
 
 export class UpdateExamBody {
@@ -212,6 +236,30 @@ export class UpdateExamBody {
     @IsOptional()
     @IsBoolean()
     published?: boolean;
+
+    @JSONSchema({
+        description: 'Epoch-ms timestamp after which the exam becomes open. Absent means always open.',
+        type: 'number',
+    })
+    @IsOptional()
+    @IsNumber()
+    opensAt?: number;
+
+    @JSONSchema({
+        description: 'Epoch-ms timestamp after which the exam closes. Absent means never closes.',
+        type: 'number',
+    })
+    @IsOptional()
+    @IsNumber()
+    closesAt?: number;
+
+    @JSONSchema({
+        description: 'Whether a student may attempt this exam more than once.',
+        type: 'boolean',
+    })
+    @IsOptional()
+    @IsBoolean()
+    allowRetakes?: boolean;
 }
 
 export class ExamQuestionOptionBody {
@@ -286,6 +334,16 @@ export class AddQuestionBody {
     @IsOptional()
     @IsString()
     natAnswerType?: string;
+
+    @JSONSchema({ description: 'Optional explanation for this question, e.g. shown with results', type: 'string' })
+    @IsOptional()
+    @IsString()
+    explanation?: string;
+
+    @JSONSchema({ description: 'Optional free-text topic tag for this question, e.g. "Graphs"', type: 'string' })
+    @IsOptional()
+    @IsString()
+    topic?: string;
 }
 
 export class UpdateQuestionBody {
@@ -341,6 +399,29 @@ export class UpdateQuestionBody {
     @IsOptional()
     @IsString()
     natAnswerType?: string;
+
+    @JSONSchema({ description: 'Optional explanation for this question, e.g. shown with results', type: 'string' })
+    @IsOptional()
+    @IsString()
+    explanation?: string;
+
+    @JSONSchema({ description: 'Optional free-text topic tag for this question, e.g. "Graphs"', type: 'string' })
+    @IsOptional()
+    @IsString()
+    topic?: string;
+}
+
+export class BulkAddQuestionsBody {
+    @JSONSchema({
+        description:
+            'Questions to append to the exam in a single call (e.g. CSV import). ' +
+            'Same per-question shape/validation as AddQuestionBody.',
+    })
+    @IsArray()
+    @ArrayMinSize(1)
+    @ValidateNested({ each: true })
+    @Type(() => AddQuestionBody)
+    questions: AddQuestionBody[];
 }
 
 export class AddTimeGrantBody {

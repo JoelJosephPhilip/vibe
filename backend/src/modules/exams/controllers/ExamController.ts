@@ -26,6 +26,7 @@ import {
     UpdateQuestionBody,
     AddTimeGrantBody,
     RedeemGrantBody,
+    BulkAddQuestionsBody,
 } from '../classes/validators/ExamValidators.js';
 import { IUser } from '#root/shared/interfaces/models.js';
 
@@ -38,8 +39,12 @@ import { IUser } from '#root/shared/interfaces/models.js';
  * it. That check is inlined per-route below rather than built out as a
  * separate CASL abilities file, since there is no course-scoping concept for
  * exams the way there is for announcements.
+ *
+ * Exported (not module-private) so `QuestionBankController` can reuse the
+ * exact same check for its exam-owner-only routes
+ * (`POST /exams/:examId/questions/from-bank`) instead of duplicating it.
  */
-function assertOwnerOrAdmin(createdBy: string, user: IUser): void {
+export function assertOwnerOrAdmin(createdBy: string, user: IUser): void {
     if (createdBy !== user._id?.toString() && user.roles !== 'admin') {
         throw new ForbiddenError('You can only manage your own exams');
     }
@@ -154,6 +159,42 @@ export class ExamController {
         const existing = await this.examService.getExamById(params.examId);
         assertOwnerOrAdmin(existing.createdBy, user);
         return this.examService.addQuestion(params.examId, body);
+    }
+
+    // Bulk-add questions (owner only) — for CSV import. Appends every
+    // question to `exam.questions` in one update via
+    // `ExamService.addQuestionsBulk` rather than N sequential
+    // `POST /:examId/questions` calls.
+    //
+    // Route-collision check against QuestionBankController's
+    // `POST /:examId/questions/from-bank` (same segment count/shape, literal
+    // 3rd segment) and this controller's own
+    // `PATCH/DELETE /:examId/questions/:questionId` (same segment count, but
+    // a param instead of a literal at the 3rd segment): see
+    // `QuestionBankController`'s class doc for the full analysis — in short,
+    // this route's method (POST) never overlaps with the PATCH/DELETE
+    // question routes regardless of path shape, and the literal 3rd segment
+    // (`bulk`) is mutually exclusive with `from-bank` on any concrete path,
+    // so registration order between the two controllers does not matter for
+    // this route (unlike the `/question-bank` vs `/:examId` collision noted
+    // on `QuestionBankController`, which DOES require ordering).
+    @Authorized()
+    @Post('/:examId/questions/bulk')
+    @HttpCode(201)
+    @OpenAPI({
+        summary: 'Bulk-add questions to an exam',
+        description:
+            'Owner only. Appends all questions in a single update, not N sequential ' +
+            'single-question calls — intended for CSV import.',
+    })
+    async addQuestionsBulk(
+        @Params() params: ExamIdParams,
+        @Body() body: BulkAddQuestionsBody,
+        @CurrentUser() user: IUser,
+    ) {
+        const existing = await this.examService.getExamById(params.examId);
+        assertOwnerOrAdmin(existing.createdBy, user);
+        return this.examService.addQuestionsBulk(params.examId, body.questions);
     }
 
     // Update question (owner only)

@@ -32,6 +32,12 @@ export interface IAttemptAnswerEntry {
 export interface IAttemptProctoringEvent {
     type: string;
     at: number;
+    /**
+     * Optional base64 data URL screenshot captured client-side at the moment
+     * of the violation. Purely an audit trail, same as the rest of this
+     * shape — stored as-is, never validated/parsed server-side.
+     */
+    imageDataUrl?: string;
 }
 
 /**
@@ -47,6 +53,9 @@ export interface IExamAttempt {
     examTitle: string;
     /** Firebase uid / `user._id.toString()` of the student — same identity field as IExam.createdBy. */
     studentId: string;
+    /** Snapshotted from the submitting user at attempt time (same rationale as examTitle) — so a teacher reviewing attempts sees a name/email, not just a raw id. */
+    studentName?: string;
+    studentEmail?: string;
     responses: IAttemptResponse[];
     questions: IExamQuestion[];
     answers: Record<string, IAttemptAnswerEntry>;

@@ -7,6 +7,7 @@ import {
 } from 'routing-controllers';
 import { ExamController } from './controllers/ExamController.js';
 import { AttemptController } from './controllers/AttemptController.js';
+import { QuestionBankController } from './controllers/QuestionBankController.js';
 import { examsContainerModule } from './container.js';
 import {
     ExamIdParams,
@@ -18,16 +19,27 @@ import {
     UpdateQuestionBody,
     AddTimeGrantBody,
     RedeemGrantBody,
+    BulkAddQuestionsBody,
     AttemptIdParams,
     SubmitAttemptBody,
+    QuestionBankIdParams,
+    AddQuestionsFromBankBody,
 } from './classes/validators/index.js';
 
-// AttemptController listed first: its two-segment `/attempts/mine` and
+// AttemptController vs. ExamController: its two-segment `/attempts/mine` and
 // `/attempts/:attemptId` routes are already disambiguated from
 // ExamController's single-segment `/:examId` by Express's exact
 // segment-count matching (see the comment atop AttemptController.ts), so
-// order here doesn't change behavior — kept for readability only.
+// their relative order doesn't change behavior — kept for readability only.
+//
+// QuestionBankController vs. ExamController: THIS ordering IS load-bearing.
+// `GET/POST /exams/question-bank` are single-segment literal routes, the
+// exact same shape as ExamController's single-segment `GET /exams/:examId`
+// param route — see QuestionBankController's class doc for the full
+// analysis. QuestionBankController must be registered before ExamController
+// or `/exams/question-bank` would be swallowed by `/exams/:examId`.
 export const examsModuleControllers: Function[] = [
+    QuestionBankController,
     AttemptController,
     ExamController,
 ];
@@ -64,8 +76,11 @@ export const examsModuleValidators: Function[] = [
     UpdateQuestionBody,
     AddTimeGrantBody,
     RedeemGrantBody,
+    BulkAddQuestionsBody,
     AttemptIdParams,
     SubmitAttemptBody,
+    QuestionBankIdParams,
+    AddQuestionsFromBankBody,
 ];
 
 export * from './classes/index.js';

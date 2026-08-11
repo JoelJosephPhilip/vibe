@@ -68,6 +68,10 @@ export interface ExamQuestion {
     negativeMarks: number;
     useCustomNegative: boolean;
     natAnswerType?: string;
+    /** Shown to students on the result page after results, when reveal is on. */
+    explanation?: string;
+    /** Short label used to group questions for the per-topic score breakdown. */
+    topic?: string;
 }
 
 export interface TimeGrant {
@@ -97,6 +101,16 @@ export interface ExamProctoringConfig {
 export interface ProctoringEvent {
     type: string;
     at: number;
+    /**
+     * Downscaled JPEG evidence thumbnail (base64 data URL) captured from the
+     * candidate's camera preview at the moment this violation was flagged.
+     * Only present for the serious "blocking" anomaly types (noFace,
+     * cameraOff, multipleFaces, voiceDetection, faceRecognition) and only
+     * when a camera frame was actually available to capture — absent for
+     * softer signals (blurDetection, cameraIntegrity) and whenever there was
+     * nothing to screenshot.
+     */
+    imageDataUrl?: string;
 }
 
 export interface Exam {
@@ -113,6 +127,12 @@ export interface Exam {
     revealAnswers?: boolean;
     /** Teacher-configured camera/mic proctoring detectors for this exam. */
     proctoring?: ExamProctoringConfig;
+    /** Epoch-ms. Unset means "always open" (no lower bound). */
+    opensAt?: number;
+    /** Epoch-ms. Unset means "never closes" (no upper bound). */
+    closesAt?: number;
+    /** Whether a student may attempt this exam more than once. Server defaults to `true` when omitted. */
+    allowRetakes?: boolean;
     createdBy: string;
     createdAt: number;
     updatedAt: number;
@@ -140,6 +160,9 @@ export interface ExamAttempt {
     examId: string;
     examTitle: string;
     studentId: string;
+    /** Snapshotted from the submitting user at attempt time — may be absent on attempts submitted before this field existed. */
+    studentName?: string;
+    studentEmail?: string;
     responses: AttemptResponseItem[];
     /** Snapshot of `exam.questions` at submit time. */
     questions: ExamQuestion[];
@@ -178,11 +201,19 @@ export interface CreateExamInput {
     instructions?: string;
     revealAnswers?: boolean;
     proctoring?: ExamProctoringConfig;
+    opensAt?: number;
+    closesAt?: number;
+    allowRetakes?: boolean;
     timeGrants?: TimeGrantSeedInput[];
 }
 
 export type UpdateExamInput = Partial<
-    Omit<CreateExamInput, 'timeGrants'> & { published: boolean }
+    Omit<CreateExamInput, 'timeGrants' | 'opensAt' | 'closesAt'> & {
+        published: boolean;
+        /** `null` clears a previously-set bound (mapped from an emptied datetime-local input). */
+        opensAt: number | null;
+        closesAt: number | null;
+    }
 >;
 
 export interface AddQuestionInput {
@@ -195,9 +226,28 @@ export interface AddQuestionInput {
     negativeMarks?: number;
     useCustomNegative?: boolean;
     natAnswerType?: string;
+    explanation?: string;
+    topic?: string;
 }
 
 export type UpdateQuestionInput = Partial<AddQuestionInput>;
+
+/**
+ * A single reusable question in a teacher's own question bank — same shape
+ * as `ExamQuestion` (including its `id`, which is the bank-scoped
+ * `bank-<uuid>` assigned by `QuestionBankService.addToBank`, NOT reused when
+ * the entry is copied into an exam) plus the Mongo `_id` and ownership/audit
+ * fields. `_id` (not `id`) is what `removeFromQuestionBank` and
+ * `addQuestionsFromBank`'s `questionIds` expect — see
+ * `QuestionBankRepository` on the backend, which keys every lookup off the
+ * Mongo document id.
+ */
+export interface QuestionBankEntry extends ExamQuestion {
+    _id: string;
+    createdBy: string;
+    createdAt: number;
+    updatedAt: number;
+}
 
 export interface AddTimeGrantInput {
     minutes: number;
@@ -290,6 +340,47 @@ export const examApi = {
         return withId(data);
     },
 
+    // ── Question bank ────────────────────────────────────────
+    // Note: bank entries already come back with both `_id` and `id` set
+    // natively by the backend (see `QuestionBankEntry` doc comment above),
+    // unlike `Exam`/`ExamAttempt` — so none of these need the `withId`
+    // aliasing helper.
+
+    listQuestionBank: async (params?: { topic?: string; type?: string }): Promise<QuestionBankEntry[]> => {
+        const qs = new URLSearchParams();
+        if (params?.topic) qs.set('topic', params.topic);
+        if (params?.type) qs.set('type', params.type);
+        const suffix = qs.toString() ? `?${qs.toString()}` : '';
+        return apiFetch<QuestionBankEntry[]>(`${BASE_URL}/question-bank${suffix}`);
+    },
+
+    addToQuestionBank: async (input: AddQuestionInput): Promise<QuestionBankEntry> => {
+        return apiFetch<QuestionBankEntry>(`${BASE_URL}/question-bank`, {
+            method: 'POST',
+            body: JSON.stringify(input),
+        });
+    },
+
+    removeFromQuestionBank: async (questionId: string): Promise<{ success: boolean }> => {
+        return apiFetch(`${BASE_URL}/question-bank/${questionId}`, { method: 'DELETE' });
+    },
+
+    addQuestionsFromBank: async (examId: string, questionIds: string[]): Promise<Exam> => {
+        const data = await apiFetch<Exam>(`${BASE_URL}/${examId}/questions/from-bank`, {
+            method: 'POST',
+            body: JSON.stringify({ questionIds }),
+        });
+        return withId(data);
+    },
+
+    bulkAddQuestions: async (examId: string, questions: AddQuestionInput[]): Promise<Exam> => {
+        const data = await apiFetch<Exam>(`${BASE_URL}/${examId}/questions/bulk`, {
+            method: 'POST',
+            body: JSON.stringify({ questions }),
+        });
+        return withId(data);
+    },
+
     // ── Time grants ──────────────────────────────────────────
 
     addTimeGrant: async (examId: string, input: AddTimeGrantInput): Promise<Exam> => {
@@ -332,5 +423,12 @@ export const examApi = {
     getAttempt: async (attemptId: string): Promise<ExamAttempt> => {
         const data = await apiFetch<ExamAttempt>(`${BASE_URL}/attempts/${attemptId}`);
         return withId(data);
+    },
+
+    // Teacher-facing: all attempts for a single exam (owner or admin only,
+    // 403 otherwise). Newest first, per the backend's findByExam ordering.
+    listAttemptsForExam: async (examId: string): Promise<ExamAttempt[]> => {
+        const data = await apiFetch<ExamAttempt[]>(`${BASE_URL}/${examId}/attempts`);
+        return withIds(data);
     },
 };

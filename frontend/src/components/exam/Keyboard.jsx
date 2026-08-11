@@ -23,7 +23,7 @@ export function Keyboard({ onKey, type = 'integer' }) {
               key={key}
               disabled={disabled}
               onClick={() => handleClick(key)}
-              className={`rounded-md py-2 text-sm font-medium transition-colors ${
+              className={`min-h-[44px] rounded-md py-2.5 text-sm font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 sm:min-h-0 sm:py-2 ${
                 isAction
                   ? 'col-span-1 bg-secondary text-secondary-foreground hover:bg-accent'
                   : 'bg-muted text-muted-foreground hover:bg-accent disabled:opacity-40'

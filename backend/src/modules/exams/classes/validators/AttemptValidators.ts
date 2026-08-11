@@ -64,6 +64,14 @@ export class ProctoringEventBody {
     @JSONSchema({ description: 'Client epoch-ms timestamp of when the event occurred', type: 'number' })
     @IsNumber()
     at: number;
+
+    @JSONSchema({
+        description: 'Optional base64 data URL screenshot captured client-side at the moment of the violation',
+        type: 'string',
+    })
+    @IsOptional()
+    @IsString()
+    imageDataUrl?: string;
 }
 
 export class SubmitAttemptBody {

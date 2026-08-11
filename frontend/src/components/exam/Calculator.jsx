@@ -56,7 +56,7 @@ export function Calculator({ className = '' }) {
               <button
                 key={btn}
                 onClick={() => handleClick(btn)}
-                className={`rounded-md py-2 text-sm font-medium transition-colors ${
+                className={`min-h-[44px] rounded-md py-2.5 text-sm font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 sm:min-h-0 sm:py-2 ${
                   ['=', 'C', '⌫'].includes(btn)
                     ? 'bg-primary text-primary-foreground hover:bg-primary/90'
                     : ['÷', '×', '-', '+', '^', '√'].includes(btn)

@@ -93,6 +93,24 @@ export class ExamRepository {
         return result ?? null;
     }
 
+    /**
+     * Batch form of `addQuestion`: appends every question in one `$push`/
+     * `$each` update instead of N sequential single-question writes. Used by
+     * `ExamService.addQuestionsBulk` (CSV import) and
+     * `ExamService.appendQuestions` (copy-from-bank), so both call sites
+     * share a single "one exam update per call" write path.
+     */
+    async addQuestionsBulk(examId: string, questions: IExamQuestion[]): Promise<IExam | null> {
+        await this.init();
+        if (!ObjectId.isValid(examId)) return null;
+        const result = await this.collection.findOneAndUpdate(
+            { _id: new ObjectId(examId) },
+            { $push: { questions: { $each: questions } }, $set: { updatedAt: Date.now() } },
+            { returnDocument: 'after' },
+        );
+        return result ?? null;
+    }
+
     async updateQuestion(
         examId: string,
         questionId: string,

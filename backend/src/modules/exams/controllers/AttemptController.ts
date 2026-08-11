@@ -38,6 +38,26 @@ import { IUser } from '#root/shared/interfaces/models.js';
  *     ones), even though it is not load-bearing here.
  *   - `POST /exams/:examId/attempts` differs from every ExamController route
  *     by method and/or literal suffix, so it cannot collide either.
+ *   - `GET /exams/:examId/attempts` (param at segment 1, literal `attempts`
+ *     at segment 2) is a different *shape* from `GET /exams/attempts/mine`
+ *     and `GET /exams/attempts/:attemptId` (both literal `attempts` at
+ *     segment 1). A concrete path can only match one of these three
+ *     patterns: `/exams/attempts/mine` has segment 1 `attempts`, which is
+ *     also literal-required by the other two `attempts/...` routes but NOT
+ *     by `:examId/attempts` unless `examId` happened to literally be the
+ *     string `attempts` AND segment 2 happened to literally be `attempts` —
+ *     impossible here since segment 2 of `/exams/attempts/mine` is `mine`,
+ *     not `attempts`. Conversely `/exams/abc123/attempts` has segment 1
+ *     `abc123`, which fails the literal-`attempts` requirement of the other
+ *     two routes outright, leaving only `:examId/attempts` to match. So all
+ *     three GET routes are mutually exclusive on any concrete path,
+ *     independent of registration order; it is still registered after
+ *     `submitAttempt` (grouped with the other `:examId/attempts`-shaped
+ *     route) and before `mine`/`:attemptId`, matching this file's existing
+ *     defensive convention.
+ *   - `GET /exams/:examId/attempts` (2 segments) also cannot collide with
+ *     `GET /exams/:examId` (ExamController, 1 segment) — different segment
+ *     counts.
  */
 @OpenAPI({
     tags: ['Exams'],
@@ -58,16 +78,22 @@ export class AttemptController {
         summary: 'Submit an exam attempt',
         description:
             'Recomputes score/correctCount server-side from the exam\'s stored ' +
-            'questions rather than trusting any client-submitted score.',
+            'questions rather than trusting any client-submitted score. Rejected ' +
+            '(403) if the exam has a scheduling window (opensAt/closesAt) and the ' +
+            'submission falls outside it, or if the exam has allowRetakes: false ' +
+            'and the student already has an attempt for this exam.',
     })
     async submitAttempt(
         @Params() params: ExamIdParams,
-        @Body() body: SubmitAttemptBody,
+        // Raised from the framework default: an attempt can now carry several
+        // client-captured proctoring-violation screenshots (imageDataUrl), same
+        // rationale as UserController's face-reference upload.
+        @Body({ options: { limit: '20mb' } }) body: SubmitAttemptBody,
         @CurrentUser() user: IUser,
     ) {
         return this.attemptService.submitAttempt(
             params.examId,
-            user._id!.toString(),
+            user,
             body.responses,
             {
                 tabSwitches: body.tabSwitches,
@@ -75,6 +101,21 @@ export class AttemptController {
                 proctoringEvents: body.proctoringEvents,
             },
         );
+    }
+
+    // All attempts for an exam (teacher-facing; owner or admin only) — must be
+    // registered before GET /attempts/mine and /attempts/:attemptId per the
+    // class-level route-collision note above (defensive convention only; the
+    // three patterns are mutually exclusive regardless of order).
+    @Authorized()
+    @Get('/:examId/attempts')
+    @HttpCode(200)
+    @OpenAPI({
+        summary: 'Get all attempts for an exam',
+        description: 'Owner of the exam or an admin only.',
+    })
+    async getAttemptsForExam(@Params() params: ExamIdParams, @CurrentUser() user: IUser) {
+        return this.attemptService.listByExam(params.examId, user);
     }
 
     // Current student's attempt history (MyTestsPage) — must be registered

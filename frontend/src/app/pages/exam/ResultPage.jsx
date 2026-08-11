@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
@@ -9,6 +9,19 @@ import { DEMO_EXAM, computeNegativeMarks } from "@/lib/examStore";
 import { useAttempt, useExam } from "@/hooks/exam-hooks";
 import { useAuthStore } from "@/store/auth-store";
 import { RichText, tokenizeRichText } from "@/components/exam/RichText";
+
+// Mirrors ExamProctoring.tsx's ANOMALY_LABELS — kept as a small local copy
+// here rather than a shared import since that map is private to the
+// detector component; falls back to the raw type string for anything new.
+const PROCTORING_EVENT_LABELS = {
+  noFace: "No face in frame",
+  cameraOff: "Camera turned off",
+  multipleFaces: "Multiple faces detected",
+  blurDetection: "Camera view is blurry",
+  voiceDetection: "Voice detected",
+  faceRecognition: "Face doesn't match registered identity",
+  cameraIntegrity: "Camera integrity issue",
+};
 
 function formatUserAnswer(q, r) {
   if (!r) return "Not Answered";
@@ -96,6 +109,48 @@ function recomputeScore(result, exam) {
   return { score, correctCount };
 }
 
+
+// Groups questions by `topic` (blank/missing -> "Other") and computes
+// per-topic { correctCount, total, marksEarned, marksTotal } from the same
+// responses/answers/evaluate machinery the review table and PDF already use.
+// Returns null when no question has a topic set, so the caller can skip
+// rendering the block entirely rather than showing a single meaningless
+// "Other" row.
+function computeTopicBreakdown(questions, result, liveExam) {
+  const hasAnyTopic = questions.some((q) => (q.topic || "").trim());
+  if (!hasAnyTopic) return null;
+
+  const byTopic = new Map();
+  questions.forEach((q, i) => {
+    const topic = (q.topic || "").trim() || "Other";
+    const r = result.responses[i];
+    const key = result.answers[q.id];
+    const status = evaluate(q, r, key);
+    const marksAlloc = Number(q.marks) || 0;
+    const neg = computeNegativeMarks(liveExam, q);
+
+    const entry = byTopic.get(topic) || {
+      topic,
+      correctCount: 0,
+      total: 0,
+      marksEarned: 0,
+      marksTotal: 0,
+    };
+    entry.total += 1;
+    entry.marksTotal += marksAlloc;
+    if (status === "Correct") {
+      entry.correctCount += 1;
+      entry.marksEarned += marksAlloc;
+    } else if (status === "Wrong") {
+      entry.marksEarned -= neg;
+    }
+    byTopic.set(topic, entry);
+  });
+
+  return Array.from(byTopic.values())
+    .map((entry) => ({ ...entry, marksEarned: Math.round(entry.marksEarned * 100) / 100 }))
+    .sort((a, b) => a.topic.localeCompare(b.topic));
+}
 
 function buildQrPayload(q, r, candidateName) {
   const chosenOptionIds =
@@ -365,6 +420,11 @@ export default function ResultPage() {
   const [autoCloseSeconds, setAutoCloseSeconds] = useState(isPopup ? 60 : null);
   const [autoCloseCancelled, setAutoCloseCancelled] = useState(false);
 
+  // Lightbox for a proctoring evidence thumbnail — holds the clicked event
+  // (type/at/imageDataUrl) or null when closed. Simple click-to-enlarge, no
+  // gallery/modal library.
+  const [lightboxEvent, setLightboxEvent] = useState(null);
+
   const closeNow = () => (isPopup ? window.close() : navigate("/"));
 
   useEffect(() => {
@@ -491,6 +551,10 @@ export default function ResultPage() {
     (q, i) => evaluate(q, result.responses[i], result.answers[q.id]) === "Not Answered"
   ).length;
 
+  // Only meaningful once correctness is actually visible to the student —
+  // same gate as the Correct/Status columns in the review table below.
+  const topicBreakdown = reveal ? computeTopicBreakdown(hydratedQuestions, result, liveExam) : null;
+
   const measureImage = (dataUrl) =>
     new Promise((resolve) => {
       const img = new Image();
@@ -500,6 +564,35 @@ export default function ResultPage() {
     });
 
   const imgFormat = (dataUrl) => (dataUrl.startsWith("data:image/png") ? "PNG" : "JPEG");
+
+  // Question/option images now come back from the API as real (signed) GCS
+  // URLs, not embedded base64 — but jsPDF's addImage() only accepts a base64
+  // string (or an Image/Canvas element), not a fetchable URL. This fetches
+  // and re-encodes any non-`data:` src before it's ever handed to addImage;
+  // a `data:` src (the demo exam, or any pre-migration attempt that still has
+  // an old embedded image) passes through untouched, no network round-trip.
+  // Requires the storage bucket to allow cross-origin fetches for the
+  // frontend's origin — if that's ever missing, this fails closed (returns
+  // null) and the image is silently skipped from the PDF rather than
+  // breaking the whole export.
+  const toDataUrl = async (src) => {
+    if (!src) return null;
+    if (src.startsWith("data:")) return src;
+    try {
+      const res = await fetch(src);
+      if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
+      const blob = await res.blob();
+      return await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(blob);
+      });
+    } catch (e) {
+      console.warn("Could not fetch image for PDF export:", e);
+      return null;
+    }
+  };
 
   const downloadPDF = async () => {
     try {
@@ -524,13 +617,19 @@ export default function ResultPage() {
       }
 
       const imgDims = new Map();
+      // Resolved (guaranteed base64) source for each image, keyed by the
+      // original src — see toDataUrl() above. addImage() calls below must
+      // use this map's value, never the raw q.questionImage/opt.image string.
+      const imgDataUrls = new Map();
       for (const q of hydratedQuestions) {
         if (q.questionImage && !imgDims.has(q.questionImage)) {
           imgDims.set(q.questionImage, await measureImage(q.questionImage));
+          imgDataUrls.set(q.questionImage, await toDataUrl(q.questionImage));
         }
         for (const opt of q.options || []) {
           if (opt.image && !imgDims.has(opt.image)) {
             imgDims.set(opt.image, await measureImage(opt.image));
+            imgDataUrls.set(opt.image, await toDataUrl(opt.image));
           }
         }
       }
@@ -799,9 +898,10 @@ export default function ResultPage() {
 
   if (q.questionImage) {
     const { w, h } = fitImage(q.questionImage, leftColumnMaxW, 260);
-    if (w && h) {
+    const resolvedSrc = imgDataUrls.get(q.questionImage);
+    if (w && h && resolvedSrc) {
       try {
-        doc.addImage(q.questionImage, imgFormat(q.questionImage), leftPad, innerY, w, h);
+        doc.addImage(resolvedSrc, imgFormat(resolvedSrc), leftPad, innerY, w, h);
         innerY += h + 8;
       } catch {}
     }
@@ -832,9 +932,10 @@ export default function ResultPage() {
       }
       if (opt.image) {
         const { w, h } = fitImage(opt.image, leftColumnMaxW - 12, 110);
-        if (w && h) {
+        const resolvedOptSrc = imgDataUrls.get(opt.image);
+        if (w && h && resolvedOptSrc) {
           try {
-            doc.addImage(opt.image, imgFormat(opt.image), leftPad + 24, innerY, w, h);
+            doc.addImage(resolvedOptSrc, imgFormat(resolvedOptSrc), leftPad + 24, innerY, w, h);
             innerY += h + 6;
           } catch {}
         }
@@ -972,6 +1073,76 @@ export default function ResultPage() {
           </button>
         </div>
 
+        {/* Proctoring evidence thumbnails — only the events that actually
+            captured a snapshot (the serious/blocking anomaly types; softer
+            signals like blurDetection/cameraIntegrity are logged with no
+            image). Click a thumbnail to view it larger in a simple lightbox. */}
+        {result.proctoringEvents?.some((e) => e.imageDataUrl) && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-amber-800">
+              Proctoring evidence snapshots
+            </p>
+            <div className="flex flex-wrap gap-3">
+              {result.proctoringEvents
+                .filter((e) => e.imageDataUrl)
+                .map((e, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => setLightboxEvent(e)}
+                    className="flex w-24 flex-col items-center gap-1 rounded-md border border-amber-300 bg-white p-1.5 text-left hover:border-amber-500"
+                  >
+                    <img
+                      src={e.imageDataUrl}
+                      alt={PROCTORING_EVENT_LABELS[e.type] || e.type}
+                      className="h-16 w-full rounded object-cover"
+                    />
+                    <span className="w-full truncate text-[10px] font-medium text-amber-900">
+                      {PROCTORING_EVENT_LABELS[e.type] || e.type}
+                    </span>
+                    <span className="text-[9px] text-muted-foreground">
+                      {e.at ? new Date(e.at).toLocaleTimeString() : ""}
+                    </span>
+                  </button>
+                ))}
+            </div>
+          </div>
+        )}
+
+        {/* Lightbox: enlarged view of a clicked evidence thumbnail. Click the
+            backdrop or the close button to dismiss. */}
+        {lightboxEvent && (
+          <div
+            className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 p-4"
+            onClick={() => setLightboxEvent(null)}
+          >
+            <div
+              className="max-w-lg rounded-lg bg-white p-3 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mb-2 flex items-center justify-between gap-4">
+                <span className="text-sm font-semibold text-foreground">
+                  {PROCTORING_EVENT_LABELS[lightboxEvent.type] || lightboxEvent.type}
+                  {lightboxEvent.at ? ` · ${new Date(lightboxEvent.at).toLocaleString()}` : ""}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setLightboxEvent(null)}
+                  className="rounded px-2 py-1 text-sm text-muted-foreground hover:bg-accent"
+                  aria-label="Close"
+                >
+                  ✕
+                </button>
+              </div>
+              <img
+                src={lightboxEvent.imageDataUrl}
+                alt={PROCTORING_EVENT_LABELS[lightboxEvent.type] || lightboxEvent.type}
+                className="max-h-[70vh] w-full rounded object-contain"
+              />
+            </div>
+          </div>
+        )}
+
         {reveal ? (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div className="rounded-lg border border-border bg-card p-4">
@@ -1001,6 +1172,36 @@ export default function ResultPage() {
           </div>
         )}
 
+        {topicBreakdown && (
+          <div className="rounded-lg border border-border bg-card p-4">
+            <h2 className="mb-2 text-sm font-semibold text-foreground">Score by topic</h2>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs uppercase text-muted-foreground">
+                    <th className="py-1 pr-4">Topic</th>
+                    <th className="py-1 pr-4">Correct</th>
+                    <th className="py-1 pr-4">Marks</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {topicBreakdown.map((t) => (
+                    <tr key={t.topic} className="border-t border-border/60">
+                      <td className="py-1.5 pr-4 font-medium">{t.topic}</td>
+                      <td className="py-1.5 pr-4">
+                        {t.correctCount}/{t.total} correct
+                      </td>
+                      <td className="py-1.5 pr-4">
+                        {t.marksEarned}/{t.marksTotal} marks
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
         <div className="rounded-lg border border-border bg-card overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-muted/40">
@@ -1023,22 +1224,33 @@ export default function ResultPage() {
                     ? "text-destructive"
                     : "text-muted-foreground";
                 return (
-                  <tr key={q.id} className="border-t border-border align-top">
-                    <td className="p-3 font-medium">{num}</td>
-                    <td className="p-3 max-w-md">
-                      <RichText text={truncateText(q.questionText, 220)} />
-                      {q.questionImage && (
-                        <img
-                          src={q.questionImage}
-                          alt=""
-                          className="mt-2 max-h-40 max-w-[220px] rounded border border-border object-contain"
-                        />
-                      )}
-                    </td>
-                    <td className="p-3">{formatUserAnswer(q, r)}</td>
-                    {reveal && <td className="p-3">{formatCorrectAnswer(q, key)}</td>}
-                    {reveal && <td className={`p-3 font-medium ${color}`}>{status}</td>}
-                  </tr>
+                  <Fragment key={q.id}>
+                    <tr className="border-t border-border align-top">
+                      <td className="p-3 font-medium">{num}</td>
+                      <td className="p-3 max-w-md">
+                        <RichText text={truncateText(q.questionText, 220)} />
+                        {q.questionImage && (
+                          <img
+                            src={q.questionImage}
+                            alt=""
+                            className="mt-2 max-h-40 max-w-[220px] rounded border border-border object-contain"
+                          />
+                        )}
+                      </td>
+                      <td className="p-3">{formatUserAnswer(q, r)}</td>
+                      {reveal && <td className="p-3">{formatCorrectAnswer(q, key)}</td>}
+                      {reveal && <td className={`p-3 font-medium ${color}`}>{status}</td>}
+                    </tr>
+                    {reveal && q.explanation && (
+                      <tr className="border-t border-dashed border-border/60 bg-muted/20">
+                        <td className="p-3" />
+                        <td className="p-3 text-xs text-muted-foreground" colSpan={4}>
+                          <span className="font-medium text-foreground">Explanation: </span>
+                          <RichText text={q.explanation} />
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
                 );
               })}
             </tbody>

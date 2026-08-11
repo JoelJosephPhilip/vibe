@@ -44,10 +44,24 @@ const BLOCKING_ANOMALY_TYPES = new Set([
   "faceRecognition",
 ]);
 
+// Same detector EditExamPage.jsx force-disables (mirrors the course-lesson
+// settings modal, which does the same with no documented reason — treat as
+// "known unreliable" rather than a UI-only restriction). Enforced again here
+// so a stale exam document saved before that lockdown existed can't still
+// enable it.
+const FORCE_DISABLED_DETECTORS = new Set(["blurDetection"]);
+
+// Evidence thumbnails, not full-res photos — kept small since multiple
+// violations can accumulate across a single attempt and all get submitted
+// together in one request body.
+const MAX_SNAPSHOT_WIDTH = 320;
+const MAX_SNAPSHOT_HEIGHT = 240;
+
 export function isDetectorEnabled(
   detectors: ProctoringDetectorSetting[] | undefined,
   detectorName: string
 ): boolean {
+  if (FORCE_DISABLED_DETECTORS.has(detectorName)) return false;
   if (!detectors) return DEFAULT_ENABLED_DETECTORS.has(detectorName);
   const detector = detectors.find((d) => d.detectorName === detectorName);
   return detector?.enabled ?? false;
@@ -72,8 +86,17 @@ const ANOMALY_LABELS: Record<string, string> = {
 export interface ExamProctoringProps {
   /** The exam's `proctoring` field. `undefined` means "not configured" — falls back to the default detector set above. */
   settings?: ExamProctoringConfig;
-  /** Called once per anomaly-type transition (absent -> present), never repeatedly while the same anomaly stays active. */
-  onEvent: (type: string) => void;
+  /**
+   * Called once per anomaly-type transition (absent -> present), never
+   * repeatedly while the same anomaly stays active. `imageDataUrl` is a
+   * downscaled JPEG snapshot (max ~320x240) taken from the camera preview at
+   * the moment of the transition — included only for BLOCKING_ANOMALY_TYPES
+   * (the serious, blur-worthy anomalies), and only when the video actually
+   * had a frame ready. It's `undefined` for the softer, non-blocking signals
+   * (blurDetection/cameraIntegrity) and whenever there was nothing to
+   * capture (e.g. camera genuinely off).
+   */
+  onEvent: (type: string, imageDataUrl?: string) => void;
   /** Called whenever the "should the exam content be blurred" state changes, with the current reasons. */
   onBlockingChange: (isBlocking: boolean, reasons: string[]) => void;
 }
@@ -185,6 +208,37 @@ export default function ExamProctoring({ settings, onEvent, onBlockingChange }: 
     return () => window.clearInterval(intervalId);
   }, []);
 
+  // Grabs a downscaled evidence thumbnail from the preview widget's own
+  // <video> element for a flagged violation — same canvas-snapshot pattern
+  // as floating-video.tsx:268-276, but capped at ~320x240 and re-encoded as
+  // a lower-quality JPEG (0.6) since this is just a thumbnail for a teacher
+  // to skim, not a full-res photo, and events accumulate across an attempt.
+  // Never throws: returns undefined (no image, event still fires) if the
+  // video has no frame ready yet or the canvas fails for any reason — this
+  // must never interrupt the detection loop or the exam itself.
+  const captureSnapshot = useCallback((): string | undefined => {
+    try {
+      const video = videoRef.current;
+      if (!video || video.videoWidth === 0 || video.videoHeight === 0) return undefined;
+      const scale = Math.min(
+        MAX_SNAPSHOT_WIDTH / video.videoWidth,
+        MAX_SNAPSHOT_HEIGHT / video.videoHeight,
+        1
+      );
+      const width = Math.max(1, Math.round(video.videoWidth * scale));
+      const height = Math.max(1, Math.round(video.videoHeight * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return undefined;
+      ctx.drawImage(video, 0, 0, width, height);
+      return canvas.toDataURL("image/jpeg", 0.6);
+    } catch {
+      return undefined;
+    }
+  }, [videoRef]);
+
   // Per-tick anomaly computation (simplified from floating-video.tsx:560-715):
   // no penalty points, no pause/rewind, no gesture challenge — just derive
   // the active anomaly list, notify on new transitions, and notify on any
@@ -205,7 +259,13 @@ export default function ExamProctoring({ settings, onEvent, onBlockingChange }: 
     const prevActive = activeAnomalyTypesRef.current;
     const nextActive = new Set(next);
     for (const type of nextActive) {
-      if (!prevActive.has(type)) onEvent(type);
+      if (!prevActive.has(type)) {
+        // Only the serious, blur-worthy anomalies get a screenshot — the
+        // softer signals (blurDetection/cameraIntegrity) are still logged,
+        // just without evidence imagery.
+        const imageDataUrl = BLOCKING_ANOMALY_TYPES.has(type) ? captureSnapshot() : undefined;
+        onEvent(type, imageDataUrl);
+      }
     }
     activeAnomalyTypesRef.current = nextActive;
     setActiveAnomalies(next);
@@ -230,6 +290,7 @@ export default function ExamProctoring({ settings, onEvent, onBlockingChange }: 
     isFaceRecognitionEnabled,
     hasFaceMismatch,
     cameraIntegrityFlag,
+    captureSnapshot,
     onEvent,
     onBlockingChange,
   ]);
@@ -262,12 +323,16 @@ export default function ExamProctoring({ settings, onEvent, onBlockingChange }: 
           the separate blur overlay (rendered by the host page) does that. */}
       <div
         ref={containerRef}
-        className="fixed z-[9998] w-44 select-none overflow-hidden rounded-lg border border-border bg-black shadow-lg"
-        style={
-          position
-            ? { left: position.x, top: position.y }
-            : { left: 16, bottom: 16 }
-        }
+        // Default (undragged) position is nudged up via `bottom-28` on
+        // narrow viewports — plain `bottom: 16` used to sit directly under
+        // the exam's footer action bar, which can wrap onto 2 lines on a
+        // phone-width screen and would otherwise collide with this widget.
+        // Once the candidate drags it, `position` takes over via inline
+        // style and this responsive default no longer applies.
+        className={`fixed z-[9998] w-36 select-none overflow-hidden rounded-lg border border-border bg-black shadow-lg sm:w-44 ${
+          position ? "" : "bottom-28 left-2 sm:bottom-4 sm:left-4"
+        }`}
+        style={position ? { left: position.x, top: position.y } : undefined}
       >
         <div
           onMouseDown={onHeaderMouseDown}

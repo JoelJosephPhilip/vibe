@@ -7,6 +7,29 @@ function totalMarks(exam) {
   return (exam.questions || []).reduce((sum, q) => sum + (Number(q.marks) || 0), 0)
 }
 
+function formatDateTime(epochMs) {
+  try {
+    return new Date(epochMs).toLocaleString(undefined, {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    })
+  } catch {
+    return ''
+  }
+}
+
+// The demo exam never has opensAt/closesAt, so this is always "open" for it.
+function getScheduleState(exam) {
+  const now = Date.now()
+  if (exam.closesAt !== undefined && exam.closesAt !== null && now > exam.closesAt) {
+    return { status: 'closed' }
+  }
+  if (exam.opensAt !== undefined && exam.opensAt !== null && now < exam.opensAt) {
+    return { status: 'not-open' }
+  }
+  return { status: 'open' }
+}
+
 export default function HomePage() {
   const navigate = useNavigate()
   const { user } = useAuthStore()
@@ -57,6 +80,7 @@ export default function HomePage() {
             <ul className="grid gap-3 sm:grid-cols-2">
               {exams.map((e) => {
                 const total = totalMarks(e)
+                const { status } = getScheduleState(e)
                 return (
                   <li
                     key={e.id}
@@ -66,12 +90,23 @@ export default function HomePage() {
                     <p className="mt-1 text-xs text-muted-foreground">
                       {e.questions.length} questions · {e.duration} min · {total} marks
                     </p>
+                    {status === 'not-open' && (
+                      <p className="mt-1 text-xs font-medium text-amber-600">
+                        Opens {formatDateTime(e.opensAt)}
+                      </p>
+                    )}
+                    {status === 'closed' && (
+                      <p className="mt-1 text-xs font-medium text-destructive">
+                        Closed {e.closesAt ? `on ${formatDateTime(e.closesAt)}` : ''}
+                      </p>
+                    )}
                     <button
                       type="button"
+                      disabled={status !== 'open'}
                       onClick={() => navigate(`/exam/${e.id}`)}
-                      className="mt-3 inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+                      className="mt-3 inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      Start Test
+                      {status === 'not-open' ? 'Not open yet' : status === 'closed' ? 'Closed' : 'Start Test'}
                     </button>
                     <p className="mt-2 text-[11px] text-muted-foreground">
                       Opens in fullscreen. Exiting fullscreen or switching tabs is recorded.

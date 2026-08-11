@@ -46,4 +46,19 @@ export class AttemptRepository {
             .sort({ submittedAt: -1 })
             .toArray();
     }
+
+    /** All attempts for an exam, newest first — backs the teacher-facing list-attempts endpoint. */
+    async findByExam(examId: string): Promise<IExamAttempt[]> {
+        await this.init();
+        return this.collection
+            .find({ examId })
+            .sort({ submittedAt: -1 })
+            .toArray();
+    }
+
+    /** Used by the retake-limit check in `AttemptService.submitAttempt`. */
+    async findByExamAndStudent(examId: string, studentId: string): Promise<IExamAttempt | null> {
+        await this.init();
+        return this.collection.findOne({ examId, studentId });
+    }
 }

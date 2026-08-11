@@ -4,6 +4,7 @@ import { ForbiddenError, NotFoundError } from 'routing-controllers';
 import { EXAMS_TYPES } from '../types.js';
 import { ExamRepository } from '../repositories/providers/mongodb/ExamRepository.js';
 import { AttemptRepository } from '../repositories/providers/mongodb/AttemptRepository.js';
+import { ExamImageStorageService } from './ExamImageStorageService.js';
 import { IExamQuestion } from '../classes/transformers/Exam.js';
 import {
     IAttemptAnswerEntry,
@@ -21,6 +22,8 @@ export class AttemptService {
         private readonly examRepo: ExamRepository,
         @inject(EXAMS_TYPES.AttemptRepo)
         private readonly attemptRepo: AttemptRepository,
+        @inject(EXAMS_TYPES.ExamImageStorageService)
+        private readonly examImageStorageService: ExamImageStorageService,
     ) {}
 
     /**
@@ -33,7 +36,7 @@ export class AttemptService {
      */
     async submitAttempt(
         examId: string,
-        studentId: string,
+        student: IUser,
         responses: ResponseItemBody[],
         meta: {
             tabSwitches?: number;
@@ -41,9 +44,35 @@ export class AttemptService {
             proctoringEvents?: IAttemptProctoringEvent[];
         },
     ): Promise<IExamAttempt> {
+        const studentId = student._id!.toString();
+        const studentName =
+            `${student.firstName || ''} ${student.lastName || ''}`.trim() || undefined;
+        const studentEmail = student.email;
+
         const exam = await this.examRepo.findById(examId);
         if (!exam) {
             throw new NotFoundError('Exam not found');
+        }
+
+        const now = Date.now();
+        // `!= null` (loose) on purpose — catches both `undefined` (field
+        // never set) AND `null` (field explicitly cleared by a PATCH, since
+        // Mongo's $set stores exactly what it's given). A strict
+        // `!== undefined` check here would treat a cleared closesAt as
+        // "0", making `now > 0` always true — i.e. permanently closed
+        // instead of unbounded.
+        if (exam.opensAt != null && now < exam.opensAt) {
+            throw new ForbiddenError('This exam is not open yet');
+        }
+        if (exam.closesAt != null && now > exam.closesAt) {
+            throw new ForbiddenError('This exam is now closed');
+        }
+
+        if (exam.allowRetakes === false) {
+            const existingAttempt = await this.attemptRepo.findByExamAndStudent(examId, studentId);
+            if (existingAttempt) {
+                throw new ForbiddenError('You have already attempted this exam');
+            }
         }
 
         const responseByQuestionId = new Map<string, ResponseItemBody>();
@@ -95,10 +124,30 @@ export class AttemptService {
 
         score = Math.max(0, Number(score.toFixed(2)));
 
+        // Proctoring snapshots: upload-if-base64, storing only the durable GCS
+        // object path (see ExamImageStorageService class doc). Unlike question
+        // images, a broken upload here must never block the student's
+        // submission — resolveUploadForProctoringImage logs and drops just the
+        // one offending snapshot instead of throwing.
+        const proctoringPathPrefix = `exams/${examId}/attempts/${studentId}/proctoring`;
+        const proctoringEvents = meta.proctoringEvents
+            ? await Promise.all(
+                  meta.proctoringEvents.map(async event => ({
+                      ...event,
+                      imageDataUrl: await this.examImageStorageService.resolveUploadForProctoringImage(
+                          event.imageDataUrl,
+                          proctoringPathPrefix,
+                      ),
+                  })),
+              )
+            : undefined;
+
         const attempt: IExamAttempt = {
             examId,
             examTitle: exam.title,
             studentId,
+            studentName,
+            studentEmail,
             responses: responses ?? [],
             questions: exam.questions,
             answers,
@@ -111,15 +160,18 @@ export class AttemptService {
             startedAt: meta.startedAt,
             // Audit trail only — passed through as-is, never consulted above
             // when computing score/correctCount.
-            proctoringEvents: meta.proctoringEvents,
+            proctoringEvents,
             submittedAt: Date.now(),
         };
 
-        return this.attemptRepo.create(attempt);
+        const created = await this.attemptRepo.create(attempt);
+        return this.examImageStorageService.resolveAttemptImages(created);
     }
 
     async listByStudent(studentId: string): Promise<IExamAttempt[]> {
-        return this.attemptRepo.findByStudent(studentId);
+        return this.examImageStorageService.resolveAttemptsImages(
+            await this.attemptRepo.findByStudent(studentId),
+        );
     }
 
     async getById(attemptId: string, user: IUser): Promise<IExamAttempt> {
@@ -140,7 +192,32 @@ export class AttemptService {
             }
         }
 
-        return attempt;
+        return this.examImageStorageService.resolveAttemptImages(attempt);
+    }
+
+    /**
+     * All attempts for an exam — teacher-facing, restricted to the exam's
+     * owner or an admin. Mirrors the ownership check style used elsewhere in
+     * this module (`ExamController`'s `assertOwnerOrAdmin`), just inlined
+     * here since the exam has to be loaded via `examRepo` anyway to check
+     * ownership before touching `attemptRepo`.
+     */
+    async listByExam(examId: string, requestingUser: IUser): Promise<IExamAttempt[]> {
+        const exam = await this.examRepo.findById(examId);
+        if (!exam) {
+            throw new NotFoundError('Exam not found');
+        }
+
+        const userId = requestingUser._id?.toString();
+        const isOwner = exam.createdBy === userId;
+        const isAdmin = requestingUser.roles === 'admin';
+        if (!isOwner && !isAdmin) {
+            throw new ForbiddenError('You can only view attempts for your own exams');
+        }
+
+        return this.examImageStorageService.resolveAttemptsImages(
+            await this.attemptRepo.findByExam(examId),
+        );
     }
 }
 

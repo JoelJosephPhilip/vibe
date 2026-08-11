@@ -17,6 +17,14 @@ export const examKeys = {
     exam: (examId?: string) => ['exam', examId] as const,
     myAttempts: ['exams', 'attempts', 'mine'] as const,
     attempt: (attemptId?: string) => ['exam-attempt', attemptId] as const,
+    examAttempts: (examId?: string) => ['exams', examId, 'attempts'] as const,
+    // Params-aware, but the UI only ever calls `useQuestionBank()` with no
+    // params (fetches everything once, filters client-side — see
+    // EditExamPage's bank browser) so in practice this always resolves to
+    // the same `['exams', 'question-bank', null, null]` key, which is what
+    // the mutations below invalidate.
+    questionBank: (params?: { topic?: string; type?: string }) =>
+        ['exams', 'question-bank', params?.topic ?? null, params?.type ?? null] as const,
 };
 
 // ── Exams ──────────────────────────────────────────────────
@@ -116,6 +124,59 @@ export function useRemoveQuestion() {
     });
 }
 
+// ── Question bank ──────────────────────────────────────────
+
+export function useQuestionBank(params?: { topic?: string; type?: string }) {
+    return useQuery({
+        queryKey: examKeys.questionBank(params),
+        queryFn: () => examApi.listQuestionBank(params),
+    });
+}
+
+export function useAddToQuestionBank() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (input: AddQuestionInput) => examApi.addToQuestionBank(input),
+        onSuccess: () => {
+            void queryClient.invalidateQueries({ queryKey: examKeys.questionBank() });
+        },
+    });
+}
+
+export function useRemoveFromQuestionBank() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (questionId: string) => examApi.removeFromQuestionBank(questionId),
+        onSuccess: () => {
+            void queryClient.invalidateQueries({ queryKey: examKeys.questionBank() });
+        },
+    });
+}
+
+export function useAddQuestionsFromBank() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (input: { examId: string; questionIds: string[] }) =>
+            examApi.addQuestionsFromBank(input.examId, input.questionIds),
+        onSuccess: (exam: Exam) => {
+            void queryClient.invalidateQueries({ queryKey: examKeys.exam(exam.id) });
+            void queryClient.invalidateQueries({ queryKey: examKeys.mine });
+        },
+    });
+}
+
+export function useBulkAddQuestions() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (input: { examId: string; questions: AddQuestionInput[] }) =>
+            examApi.bulkAddQuestions(input.examId, input.questions),
+        onSuccess: (exam: Exam) => {
+            void queryClient.invalidateQueries({ queryKey: examKeys.exam(exam.id) });
+            void queryClient.invalidateQueries({ queryKey: examKeys.mine });
+        },
+    });
+}
+
 // ── Time grants ────────────────────────────────────────────
 
 export function useAddTimeGrant() {
@@ -172,5 +233,16 @@ export function useAttempt(attemptId?: string) {
         queryKey: examKeys.attempt(attemptId),
         queryFn: () => examApi.getAttempt(attemptId!),
         enabled: Boolean(attemptId),
+    });
+}
+
+// Teacher-facing: every attempt on one exam (see AttemptsPage). 403s for
+// non-owners/non-admins — surfaces via the query's isError/error, same as
+// any other useQuery here.
+export function useExamAttempts(examId?: string) {
+    return useQuery({
+        queryKey: examKeys.examAttempts(examId),
+        queryFn: () => examApi.listAttemptsForExam(examId!),
+        enabled: Boolean(examId),
     });
 }

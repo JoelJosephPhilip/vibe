@@ -5,6 +5,8 @@ import ResultPage   from './ResultPage'
 import AdminPage    from './AdminPage'
 import EditExamPage from './EditExamPage'
 import MyTestsPage  from './MyTestsPage'
+import AttemptsPage from './AttemptsPage'
+import AnalyticsPage from './AnalyticsPage'
 
 export default function ExamAppShell() {
   const fullPath = window.location.pathname + window.location.search
@@ -13,12 +15,14 @@ export default function ExamAppShell() {
   return (
     <MemoryRouter initialEntries={[innerPath]}>
       <Routes>
-        <Route path="/my-tests"               element={<MyTestsPage />} />
-        <Route path="/"                       element={<HomePage />} />
-        <Route path="/exam/:examId"           element={<ExamPage />} />
-        <Route path="/result/:attemptId"      element={<ResultPage />} />
-        <Route path="/admin"                  element={<AdminPage />} />
-        <Route path="/admin/:examId"          element={<EditExamPage />} />
+        <Route path="/my-tests"                element={<MyTestsPage />} />
+        <Route path="/"                        element={<HomePage />} />
+        <Route path="/exam/:examId"            element={<ExamPage />} />
+        <Route path="/result/:attemptId"       element={<ResultPage />} />
+        <Route path="/admin"                   element={<AdminPage />} />
+        <Route path="/admin/:examId/attempts"  element={<AttemptsPage />} />
+        <Route path="/admin/:examId/analytics" element={<AnalyticsPage />} />
+        <Route path="/admin/:examId"           element={<EditExamPage />} />
       </Routes>
     </MemoryRouter>
   )
