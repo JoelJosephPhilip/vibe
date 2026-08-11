@@ -1,17 +1,19 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
 import katex from "katex";
 import "katex/dist/katex.min.css";
 import qrcode from "@/lib/qrcode";
-import { examStore, computeNegativeMarks } from "@/lib/examStore";
+import { DEMO_EXAM, computeNegativeMarks } from "@/lib/examStore";
+import { useAttempt, useExam } from "@/hooks/exam-hooks";
+import { useAuthStore } from "@/store/auth-store";
 import { RichText, tokenizeRichText } from "@/components/exam/RichText";
 
 function formatUserAnswer(q, r) {
   if (!r) return "Not Answered";
   if (q.type === "NAT") return (r.natAnswer || "").trim() || "Not Answered";
-  const sel = [...(r.selectedOptions || [])].sort(); 
+  const sel = [...(r.selectedOptions || [])].sort();
   if (!sel.length) return "Not Answered";
   return sel
     .map((id) => {
@@ -25,7 +27,7 @@ function formatUserAnswer(q, r) {
 function formatCorrectAnswer(q, key) {
   if (!key) return "-";
   if (q.type === "NAT") return String(key.correct);
-  const arr = Array.isArray(key.correct) ? [...key.correct].sort() : [key.correct]; 
+  const arr = Array.isArray(key.correct) ? [...key.correct].sort() : [key.correct];
   return arr
     .map((id) => {
       const opt = (q.options || []).find((o) => o.id === id);
@@ -331,12 +333,11 @@ function makeQrDataUrl(text, targetPx = 160) {
 
 // If the result payload had its images stripped at submit time (see
 // stripImages() in ExamPage.jsx, used when the full payload was too big for
-// localStorage), pull them back in from the live exam in examStore so the
-// table and PDF still show them for as long as the exam itself still
-// exists. Question images match by question id. Option images can't match
-// by id, because each attempt shuffles options and reassigns ids to
-// A/B/C/D - they match by option text instead, which is preserved verbatim
-// through the shuffle.
+// localStorage), pull them back in from the live exam so the table and PDF
+// still show them for as long as the exam itself still exists. Question
+// images match by question id. Option images can't match by id, because
+// each attempt shuffles options and reassigns ids to A/B/C/D - they match by
+// option text instead, which is preserved verbatim through the shuffle.
 function hydrateQuestionImages(questions, liveExam) {
   if (!liveExam?.questions?.length) return questions;
   const liveById = new Map(liveExam.questions.map((q) => [q.id, q]));
@@ -356,8 +357,7 @@ function hydrateQuestionImages(questions, liveExam) {
 export default function ResultPage() {
   const { attemptId } = useParams();
   const navigate = useNavigate();
-  const [result, setResult] = useState(null);
-  const [reveal, setReveal] = useState(false);
+  const { user, isAuthenticated } = useAuthStore();
 
   // Only true when this ResultPage is running inside the popup opened by
   // openExamWindow() — not when viewed from MyTestsPage or Admin Preview.
@@ -377,46 +377,70 @@ export default function ResultPage() {
     return () => clearTimeout(t);
   }, [autoCloseSeconds, autoCloseCancelled, isPopup]);
 
-  const computeReveal = (res) => {
-    if (!res) return false;
-    const liveExam = res.examId ? examStore.get(res.examId) : null;
-    // Prefer the live exam's current setting (admin may have toggled it
-    // since the attempt), but fall back to the value captured on the
-    // payload at submit time when the exam is missing/deleted - otherwise
-    // a previously-revealed result would silently flip to "hidden" just
-    // because its exam no longer exists.
-    if (liveExam) return !!liveExam.revealAnswers;
-    return !!res.revealAnswers;
-  };
+  // The demo exam's attempts are 100% local (see ExamPage.jsx, which tags
+  // them with a `local-` prefixed id) so they can be read straight out of
+  // localStorage with no backend involvement. Anything else is a real Mongo
+  // attempt id, fetched from the API.
+  const isDemoAttempt = !!attemptId && attemptId.startsWith("local-");
 
+  const [demoResult, setDemoResult] = useState(null);
   useEffect(() => {
-    const raw = localStorage.getItem(`result_${attemptId}`);
-    if (raw) {
-      try {
-        const parsed = JSON.parse(raw);
-        setResult(parsed);
-        setReveal(computeReveal(parsed));
-      } catch (e) {
-        console.error("Failed to parse result", e);
-      }
+    if (!isDemoAttempt) return;
+    try {
+      const raw = localStorage.getItem(`result_${attemptId}`);
+      if (raw) setDemoResult(JSON.parse(raw));
+    } catch (e) {
+      console.error("Failed to parse result", e);
     }
-    const onChange = () =>
-      setResult((r) => {
-        setReveal(computeReveal(r));
-        return r;
-      });
-    window.addEventListener("exam_store_updated", onChange);
-    const onFocus = () =>
-      setResult((r) => {
-        setReveal(computeReveal(r));
-        return r;
-      });
-    window.addEventListener("focus", onFocus);
-    return () => {
-      window.removeEventListener("exam_store_updated", onChange);
-      window.removeEventListener("focus", onFocus);
+  }, [attemptId, isDemoAttempt]);
+
+  const {
+    data: apiAttempt,
+    refetch: refetchAttempt,
+  } = useAttempt(isDemoAttempt ? undefined : attemptId);
+
+  const rawResult = isDemoAttempt ? demoResult : apiAttempt;
+
+  // API attempt responses are keyed by questionId (map lookup), not array
+  // index — normalize them into the same `{ question, selectedOptions,
+  // natAnswer }` shape (index-aligned with `questions`) the rest of this
+  // page (recomputeScore, formatUserAnswer, the PDF export, …) already
+  // expects from the demo/local-attempt shape.
+  const result = useMemo(() => {
+    if (!rawResult) return null;
+    if (isDemoAttempt) return rawResult;
+    const byQid = new Map((rawResult.responses || []).map((r) => [r.questionId, r]));
+    const responses = (rawResult.questions || []).map((q) => {
+      const r = byQid.get(q.id);
+      return {
+        question: q.id,
+        selectedOptions: r?.selectedOptionIds || [],
+        natAnswer: r?.natValue ?? "",
+        isMarkedForReview: !!r?.isMarkedForReview,
+        isAnswered: !!(r?.selectedOptionIds?.length || (r?.natValue ?? "").length),
+        visited: true,
+        timeSpent: 0,
+      };
+    });
+    return { ...rawResult, responses };
+  }, [rawResult, isDemoAttempt]);
+
+  const liveExamId = !isDemoAttempt && result?.examId ? result.examId : undefined;
+  const { data: fetchedLiveExam, refetch: refetchLiveExam } = useExam(liveExamId);
+  const liveExam = isDemoAttempt ? DEMO_EXAM : fetchedLiveExam ?? null;
+
+  // Admin may have toggled reveal-answers (or edited the exam) since this
+  // attempt was taken — refetch on refocus so a result tab left open picks
+  // that up, same intent as the old exam_store_updated/focus listeners.
+  useEffect(() => {
+    if (isDemoAttempt) return;
+    const onFocus = () => {
+      refetchAttempt();
+      refetchLiveExam();
     };
-  }, [attemptId]);
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [isDemoAttempt, refetchAttempt, refetchLiveExam]);
 
   if (!result) {
     return (
@@ -431,7 +455,13 @@ export default function ResultPage() {
     );
   }
 
-  const liveExam = result.examId ? examStore.get(result.examId) : null;
+  // Prefer the live exam's current setting (admin may have toggled it since
+  // the attempt), but fall back to the value captured on the result itself
+  // when the exam is missing/deleted - otherwise a previously-revealed
+  // result would silently flip to "hidden" just because its exam no longer
+  // exists.
+  const reveal = liveExam ? !!liveExam.revealAnswers : !!result.revealAnswers;
+
   const { score: liveScore, correctCount: liveCorrect } = recomputeScore(result, liveExam);
 
   // Re-attach any images that got stripped from the saved payload (see
@@ -473,7 +503,7 @@ export default function ResultPage() {
 
   const downloadPDF = async () => {
     try {
-      const liveReveal = computeReveal(result);
+      const liveReveal = reveal;
       const doc = new jsPDF({ unit: "pt", format: "a4" });
       const pageWidth = doc.internal.pageSize.getWidth();
       const pageHeight = doc.internal.pageSize.getHeight();
@@ -482,8 +512,7 @@ export default function ResultPage() {
       let y = 0;
 
       const candidateId = String(attemptId || "ATTEMPT").toUpperCase();
-      const candidateName =
-        liveExam?.candidateName || result.candidateName || "DEMO CANDIDATE";
+      const candidateName = isAuthenticated && user ? (user.name || user.email || "Candidate") : "Candidate";
 
       // Pre-generate one QR per question: question + candidate + chosen option
       const qrDataUrls = new Map();
@@ -687,7 +716,7 @@ export default function ResultPage() {
           .map(idToLabel)
           .sort()
           .join(", ") || "--";
-          
+
   const correctVal =
     q.type === "NAT"
       ? String(key?.correct ?? "")
@@ -823,7 +852,7 @@ export default function ResultPage() {
   const cardBottomComputed = qrDataUrl
     ? metaY + metaBoxH + 12 + qrGap + qrSize + qrLabelH + 8
     : metaY + metaBoxH + 12;
-  
+
   const cardBottom = Math.max(innerY + 10, cardBottomComputed);
 
   doc.setDrawColor(170, 170, 170);
@@ -840,15 +869,15 @@ export default function ResultPage() {
     doc.setFont("helvetica", "normal");
     doc.setTextColor(60, 60, 60);
     doc.text(label, metaX + metaBoxW / 2 - 6, mY, { align: "right" });
-    
+
     doc.setFont("helvetica", "bold");
     if (color) doc.setTextColor(color[0], color[1], color[2]);
     else doc.setTextColor(17, 17, 17);
-    
+
     const valLines = doc.splitTextToSize(String(value), metaBoxW / 2 - 10);
     doc.text(valLines, metaX + metaBoxW / 2, mY);
-    
-    mY += (valLines.length * 12) + 6; 
+
+    mY += (valLines.length * 12) + 6;
   });
   doc.setTextColor(0, 0, 0);
 
@@ -922,7 +951,19 @@ export default function ResultPage() {
         )}
 
         <div className="flex items-center justify-between flex-wrap gap-3">
-          <h1 className="text-2xl font-bold">Your Result</h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-bold">Your Result</h1>
+            {result.proctoringEvents?.length > 0 && (
+              <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-800">
+                Proctoring: {result.proctoringEvents.length} flag{result.proctoringEvents.length === 1 ? '' : 's'}
+              </span>
+            )}
+            {result.tabSwitches > 0 && (
+              <span className="rounded-full bg-red-100 px-3 py-1 text-xs font-medium text-red-800">
+                {result.tabSwitches} tab switch{result.tabSwitches === 1 ? '' : 'es'}
+              </span>
+            )}
+          </div>
           <button
             onClick={downloadPDF}
             className="px-4 py-2 rounded-md bg-primary text-primary-foreground font-medium hover:opacity-90"

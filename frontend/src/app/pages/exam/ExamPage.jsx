@@ -1,12 +1,19 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { Palette } from '@/components/exam/Palette'
 import { QuestionRenderer } from '@/components/exam/QuestionRenderer'
 import { Calculator } from '@/components/exam/Calculator'
-import { examStore, computeNegativeMarks } from '@/lib/examStore'
+import ExamProctoring from '@/components/exam/ExamProctoring'
+import { DEMO_EXAM, computeNegativeMarks } from '@/lib/examStore'
 import { useExamSecurity } from '@/lib/useExamSecurity'
+import { useExam, useSubmitAttempt, useRedeemTimeGrant } from '@/hooks/exam-hooks'
+import { useAuthStore } from '@/store/auth-store'
 
 const LETTERS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
+
+// Leaving the exam window/tab this many times auto-submits the attempt
+// instead of just warning.
+const MAX_TAB_SWITCHES = 3
 
 // Black/white is the primary palette. Orange is kept only as a thin accent
 // (active-tab underline, links, hover states) rather than large fills —
@@ -53,24 +60,62 @@ function CountdownDisplay({ initialSeconds, onExpire }) {
   return <span>{String(h).padStart(2, '0')}:{String(m).padStart(2, '0')}:{String(sec).padStart(2, '0')}</span>
 }
 
+// Outer component: decides whether this is the always-available, 100%
+// client-side demo exam (id 'demo') or a real exam that has to be fetched
+// from the backend, and only mounts the actual test-taking UI
+// (ExamPageInner) once a full exam document is available. Splitting it this
+// way keeps ExamPageInner's hooks (useState initializers that read
+// `examData.questions` synchronously on mount) safe to write against a
+// guaranteed-loaded exam, instead of juggling "maybe still loading" in every
+// one of them.
 export default function ExamPage() {
   const navigate = useNavigate()
   const { examId } = useParams()
-  const examData = examStore.get(examId)
-  // NOTE: this used to `return` the "not available" screen right here,
-  // above every hook below. That's a Rules-of-Hooks violation — if this
-  // component ever re-renders with a different examId in place (route
-  // param change without a full remount) while switching between an
-  // empty/broken exam and a valid one, the number of hooks called would
-  // differ between renders and React would throw or corrupt state. Instead
-  // we compute a flag, use safe fallbacks so every hook below always runs,
-  // and only branch to the "not available" screen in the final render,
-  // after all hooks have been called.
-  const hasExam = !!(examData && examData.questions && examData.questions.length > 0)
+  const isDemo = examId === 'demo'
+  const { data: fetchedExam, isLoading } = useExam(isDemo ? undefined : examId)
+  const examData = isDemo ? DEMO_EXAM : fetchedExam
 
-  const exam = hasExam
-    ? { ...examData, totalMarks: examStore.totalMarks(examData) }
-    : { questions: [], duration: 0, title: '' }
+  if (!isDemo && isLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background px-4 text-center">
+        <p className="text-sm text-muted-foreground">Loading test…</p>
+      </div>
+    )
+  }
+
+  const hasExam = !!(examData && examData.questions && examData.questions.length > 0)
+  if (!hasExam) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background px-4 text-center">
+        <div className="max-w-md space-y-3">
+          <h1 className="text-2xl font-bold">Test not available</h1>
+          <p className="text-sm text-muted-foreground">
+            This test does not exist or has no questions yet.
+          </p>
+          <button
+            onClick={() => navigate('/')}
+            className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+          >
+            Back to home
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // `key` forces a fresh mount (and fresh internal state) if the route ever
+  // switches from one exam id straight to another without an unmount.
+  return (
+    <ExamPageInner key={examId} examId={examId} isDemo={isDemo} examData={examData} navigate={navigate} />
+  )
+}
+
+function ExamPageInner({ examId, isDemo, examData, navigate }) {
+  const exam = { ...examData, totalMarks: examData.questions.reduce((sum, q) => sum + (Number(q.marks) || 0), 0) }
+  const { user, isAuthenticated } = useAuthStore()
+
+  const submitAttempt = useSubmitAttempt()
+  const redeemTimeGrant = useRedeemTimeGrant()
 
   // Persist the in-progress attempt (question order, responses, elapsed
   // time, etc.) so a refresh/crash rehydrates the SAME attempt instead of
@@ -80,7 +125,6 @@ export default function ExamPage() {
   // finished/abandoned attempt later.
   const sessionKey = `exam_session_${examId}`
   const savedSession = (() => {
-    if (!hasExam) return null
     try {
       const raw = sessionStorage.getItem(sessionKey)
       if (!raw) return null
@@ -106,13 +150,18 @@ export default function ExamPage() {
 
   // Shuffle questions + options and REMAP option ids to A, B, C... by new
   // position. We keep an old->new id map per question so we can translate the
-  // original correctOptions into the new letter ids for scoring.
-  const [{ questions, answers }] = useState(() => {
-    if (!hasExam) return { questions: [], answers: {} }
+  // original correctOptions into the new letter ids for scoring, and a
+  // reverse map so a submitted attempt can be translated back to the
+  // original question/option ids the backend expects.
+  const [{ questions, answers, reverseOptionMaps }] = useState(() => {
     if (savedSession?.questions?.length && savedSession?.answers) {
       // Resuming after a refresh — reuse the exact same shuffled order and
       // answer key so numbering, options, and scoring stay consistent.
-      return { questions: savedSession.questions, answers: savedSession.answers }
+      return {
+        questions: savedSession.questions,
+        answers: savedSession.answers,
+        reverseOptionMaps: savedSession.reverseOptionMaps || {},
+      }
     }
     const shuffledQuestions = shuffle(examData.questions).map((q) => {
       if ((q.type === 'MCQ' || q.type === 'MSQ') && Array.isArray(q.options) && q.options.length) {
@@ -128,6 +177,7 @@ export default function ExamPage() {
     })
 
     const answerMap = {}
+    const reverseOptionMaps = {}
     for (const q of shuffledQuestions) {
       const orig = examData.questions.find((o) => o.id === q.id)
       if (q.type === 'NAT') {
@@ -136,23 +186,28 @@ export default function ExamPage() {
         // translate original option ids -> new letter ids
         const remapped = (orig.correctOptions || []).map((oid) => q.__idMap?.[oid] ?? oid)
         answerMap[q.id] = { correct: remapped }
+        if (q.__idMap) {
+          const reverse = {}
+          for (const [origId, newId] of Object.entries(q.__idMap)) reverse[newId] = origId
+          reverseOptionMaps[q.id] = reverse
+        }
       }
     }
 
     // strip helper before handing questions to renderer
     const cleaned = shuffledQuestions.map(({ __idMap, ...rest }) => rest)
-    return { questions: cleaned, answers: answerMap }
+    return { questions: cleaned, answers: answerMap, reverseOptionMaps }
   })
 
-  const subjectName = examData?.title || ''
-  const candidateName = examData?.candidateName || 'DEMO CANDIDATE'
+  const subjectName = examData.title || ''
+  const candidateName = isAuthenticated && user ? (user.name || user.email || 'Candidate') : 'Candidate'
   const candidateRegId = ''
-  const headerTitle = examData?.headerTitle || 'Graduate Aptitude Test in Engineering (GATE 2026)'
-  const headerSubtitle = examData?.headerSubtitle || 'Organizing Institute: Indian Institute of Technology Guwahati'
-  const leftBadge = examData?.leftBadge || 'GATE'
-  const rightBadge = examData?.rightBadge || 'IITG'
-  const leftLogo = examData?.leftLogo
-  const rightLogo = examData?.rightLogo
+  const headerTitle = examData.headerTitle || 'ViBe'
+  const headerSubtitle = examData.headerSubtitle || 'Organizing Institute: Indian Institute of Technology Ropar'
+  const leftBadge = examData.leftBadge || 'ViBe'
+  const rightBadge = examData.rightBadge || 'IIT Ropar'
+  const leftLogo = examData.leftLogo
+  const rightLogo = examData.rightLogo
 
   const [currentIndex, setCurrentIndex] = useState(savedSession?.currentIndex ?? 0)
   const [showCalc, setShowCalc] = useState(false)
@@ -173,11 +228,42 @@ export default function ExamPage() {
   const [tabSwitches, setTabSwitches] = useState(savedSession?.tabSwitches ?? 0)
   const [showSubmitConfirm, setShowSubmitConfirm] = useState(false)
   const [showTabWarning, setShowTabWarning] = useState(false)
+  const [autoSubmitting, setAutoSubmitting] = useState(false)
   // The clock the countdown is measured from. On first load this is "now";
   // on a refresh mid-attempt it's restored from the saved session so the
   // remaining time keeps counting down from where it actually was, instead
   // of resetting to the full duration.
   const startedAtRef = useRef(savedSession?.startedAt ?? Date.now())
+
+  // Camera/mic proctoring: active whenever this exam has a detector enabled
+  // (or is the demo, which bakes in a default detector set — see
+  // ExamProctoring's DEFAULT_PROCTORING_DETECTORS/isDetectorEnabled). No
+  // student-facing consent step — the camera starts as soon as the exam
+  // does, same as the course-lesson proctoring flow. The browser's own
+  // native "Allow camera access?" permission prompt still appears (that's
+  // enforced by the browser itself and can't be skipped by any website),
+  // but there's no separate in-app dialog asking the student to opt in.
+  const hasProctoring =
+    isDemo || (examData.proctoring?.detectors || []).some((d) => d.enabled)
+
+  // Accumulated in a ref (not state) so a proctoring event never triggers a
+  // re-render storm — only read when the attempt is actually submitted.
+  const proctoringEventsRef = useRef([])
+  const handleProctoringEvent = useCallback((type) => {
+    proctoringEventsRef.current.push({ type, at: Date.now() })
+  }, [])
+
+  // Driven by ExamProctoring's onBlockingChange: a serious violation (no
+  // face / multiple faces / voice detected / camera turned off / face
+  // mismatch) blurs the exam content until it clears. The timer below is
+  // untouched by this — it has its own interval and keeps counting down
+  // through a blur exactly like it does through a plain warning.
+  const [proctoringBlocked, setProctoringBlocked] = useState(false)
+  const [proctoringBlockReasons, setProctoringBlockReasons] = useState([])
+  const handleProctoringBlockingChange = useCallback((isBlocking, reasons) => {
+    setProctoringBlocked(isBlocking)
+    setProctoringBlockReasons(reasons)
+  }, [])
 
   // Extra-time code redemption (admin can issue a one-time code per exam for
   // students who hit a technical issue; entering it adds bonus minutes here)
@@ -187,15 +273,40 @@ export default function ExamPage() {
   const [codeMsg, setCodeMsg] = useState('')
 
   const handleRedeemCode = () => {
-    const result = examStore.redeemTimeGrant(examData.id, codeInput)
-    if (result.ok) {
-      setExtraSeconds((s) => s + result.minutes * 60)
-      setCodeMsg(`+${result.minutes} min added.`)
+    if (isDemo) {
+      // The demo exam is never managed through the admin UI, so it can never
+      // actually have a grant issued — this mirrors the old
+      // examStore.redeemTimeGrant validation purely for UI parity.
+      const code = (codeInput || '').trim().toUpperCase()
+      if (!code) { setCodeMsg('Enter a code'); return }
+      const grant = (examData.timeGrants || []).find((g) => g.code === code)
+      if (!grant) { setCodeMsg('Invalid code'); return }
+      if (grant.used) { setCodeMsg('This code has already been used'); return }
+      grant.used = true
+      grant.usedAt = Date.now()
+      setExtraSeconds((s) => s + grant.minutes * 60)
+      setCodeMsg(`+${grant.minutes} min added.`)
       setCodeInput('')
       setTimeout(() => setShowCodeInput(false), 1500)
-    } else {
-      setCodeMsg(result.error)
+      return
     }
+
+    redeemTimeGrant.mutate(
+      { examId, code: codeInput },
+      {
+        onSuccess: (result) => {
+          if (result.ok) {
+            setExtraSeconds((s) => s + result.minutes * 60)
+            setCodeMsg(`+${result.minutes} min added.`)
+            setCodeInput('')
+            setTimeout(() => setShowCodeInput(false), 1500)
+          } else {
+            setCodeMsg(result.error)
+          }
+        },
+        onError: (err) => setCodeMsg(err?.message || 'Could not redeem code'),
+      }
+    )
   }
 
   // Keep the saved session in sync with live state so a refresh (or crash)
@@ -213,6 +324,7 @@ export default function ExamPage() {
         JSON.stringify({
           questions,
           answers,
+          reverseOptionMaps,
           responses,
           currentIndex,
           tabSwitches,
@@ -221,7 +333,7 @@ export default function ExamPage() {
         })
       )
     } catch {}
-  }, [questions, answers, responses, currentIndex, tabSwitches, extraSeconds])
+  }, [questions, answers, reverseOptionMaps, responses, currentIndex, tabSwitches, extraSeconds])
 
   // Fullscreen enforcement + right-click / devtools / copy-paste blocking
   const { isFullscreen, requestFullscreen } = useExamSecurity(true)
@@ -272,109 +384,170 @@ export default function ExamPage() {
   const handleSubmit = () => {
     if (submittedRef.current) return // guard against double submit (e.g. timer + click)
     submittedRef.current = true
-    try {
-      let score = 0
-      let correctCount = 0
-      responses.forEach((r, i) => {
-        const q = questions[i]
-        const key = answers[q.id]
-        if (!key) return
-        // Use the same computeNegativeMarks(exam, q) helper ResultPage.jsx
-        // recomputes scores with, instead of reading q.negativeMarks
-        // directly - keeps the score saved at submit time consistent with
-        // the "live" score shown on the result page, and stops MSQ wrong
-        // answers from silently skipping negative marking.
-        const neg = computeNegativeMarks(exam, q)
-        if (q.type === 'NAT') {
-          if ((r.natAnswer || '').trim() === key.correct) { score += q.marks; correctCount++ }
-        } else if (q.type === 'MCQ') {
-          const sel = (r.selectedOptions || [])[0]
-          const correct = Array.isArray(key.correct) ? key.correct[0] : key.correct
-          if (sel === correct) { score += q.marks; correctCount++ }
-          else if (sel) { score -= neg }
-        } else if (q.type === 'MSQ') {
-          const sel = [...(r.selectedOptions || [])].sort().join(',')
-          const correct = [].concat(key.correct).sort().join(',')
-          if (sel.length > 0 && sel === correct) { score += q.marks; correctCount++ }
-          else if (sel.length > 0) { score -= neg }
-        }
-      })
 
-      const attemptId = `local-${Date.now()}`
-      const payload = {
-        score: Math.max(0, Number(score.toFixed(2))),
-        totalMarks: exam.totalMarks,
-        correctCount,
-        total: questions.length,
-        responses,
-        questions,
-        answers,
-        examTitle: exam.title,
-        revealAnswers: examData.revealAnswers ?? false,
-        examId: examData.id,
-      }
-
-      // Base64 question/option images can blow past the ~5MB localStorage
-      // quota. If the full payload does not fit, retry without images.
-      // ResultPage.jsx re-hydrates missing images by matching question id
-      // (and option text, since option ids get shuffled per-attempt)
-      // against the live exam in examStore, so they still show up there as
-      // long as the exam itself isn't later deleted.
-      const key = `result_${attemptId}`
-      const stripImages = (p) => ({
-        ...p,
-        questions: p.questions.map((q) => ({
-          ...q,
-          questionImage: undefined,
-          options: (q.options || []).map((o) => ({ ...o, image: undefined })),
-        })),
-      })
-      let saved = false
+    if (isDemo) {
       try {
-        localStorage.setItem(key, JSON.stringify(payload))
-        saved = true
-      } catch (e) {
-        try {
-          localStorage.setItem(key, JSON.stringify(stripImages(payload)))
-          saved = true
-        } catch (e2) {
-          // Last resort: keep the attempt for this tab only so the result
-          // page still renders instead of showing "No result found".
-          try {
-            sessionStorage.setItem(key, JSON.stringify(stripImages(payload)))
-            saved = true
-          } catch {}
-        }
-      }
-      if (!saved) console.error('Could not persist result payload')
+        let score = 0
+        let correctCount = 0
+        responses.forEach((r, i) => {
+          const q = questions[i]
+          const key = answers[q.id]
+          if (!key) return
+          // Use the same computeNegativeMarks(exam, q) helper ResultPage.jsx
+          // recomputes scores with, instead of reading q.negativeMarks
+          // directly - keeps the score saved at submit time consistent with
+          // the "live" score shown on the result page, and stops MSQ wrong
+          // answers from silently skipping negative marking.
+          const neg = computeNegativeMarks(exam, q)
+          if (q.type === 'NAT') {
+            if ((r.natAnswer || '').trim() === key.correct) { score += q.marks; correctCount++ }
+          } else if (q.type === 'MCQ') {
+            const sel = (r.selectedOptions || [])[0]
+            const correct = Array.isArray(key.correct) ? key.correct[0] : key.correct
+            if (sel === correct) { score += q.marks; correctCount++ }
+            else if (sel) { score -= neg }
+          } else if (q.type === 'MSQ') {
+            const sel = [...(r.selectedOptions || [])].sort().join(',')
+            const correct = [].concat(key.correct).sort().join(',')
+            if (sel.length > 0 && sel === correct) { score += q.marks; correctCount++ }
+            else if (sel.length > 0) { score -= neg }
+          }
+        })
 
-      try { sessionStorage.removeItem(sessionKey) } catch {}
-
-      try {
-        const idx = JSON.parse(localStorage.getItem('attempts_index') || '[]')
-        idx.unshift({
-          attemptId,
-          examId: examData.id,
-          examTitle: exam.title,
-          score: payload.score,
-          totalMarks: payload.totalMarks,
+        const attemptId = `local-${Date.now()}`
+        const payload = {
+          score: Math.max(0, Number(score.toFixed(2))),
+          totalMarks: exam.totalMarks,
           correctCount,
           total: questions.length,
-          submittedAt: new Date().toISOString(),
+          responses,
+          questions,
+          answers,
+          examTitle: exam.title,
+          revealAnswers: examData.revealAnswers ?? false,
+          examId: examData.id,
+          proctoringEvents: proctoringEventsRef.current,
+          tabSwitches,
+        }
+
+        // Base64 question/option images can blow past the ~5MB localStorage
+        // quota. If the full payload does not fit, retry without images.
+        // ResultPage.jsx re-hydrates missing images by matching question id
+        // (and option text, since option ids get shuffled per-attempt)
+        // against the live exam, so they still show up there as long as the
+        // exam itself isn't later deleted.
+        const key = `result_${attemptId}`
+        const stripImages = (p) => ({
+          ...p,
+          questions: p.questions.map((q) => ({
+            ...q,
+            questionImage: undefined,
+            options: (q.options || []).map((o) => ({ ...o, image: undefined })),
+          })),
         })
-        localStorage.setItem('attempts_index', JSON.stringify(idx.slice(0, 200)))
-      } catch {}
+        let saved = false
+        try {
+          localStorage.setItem(key, JSON.stringify(payload))
+          saved = true
+        } catch (e) {
+          try {
+            localStorage.setItem(key, JSON.stringify(stripImages(payload)))
+            saved = true
+          } catch (e2) {
+            // Last resort: keep the attempt for this tab only so the result
+            // page still renders instead of showing "No result found".
+            try {
+              sessionStorage.setItem(key, JSON.stringify(stripImages(payload)))
+              saved = true
+            } catch {}
+          }
+        }
+        if (!saved) console.error('Could not persist result payload')
 
-      // Leave fullscreen/secure mode before routing so the result page is usable.
-      try { if (document.fullscreenElement) document.exitFullscreen() } catch {}
+        try { sessionStorage.removeItem(sessionKey) } catch {}
 
-      navigate(`/result/${attemptId}`)
-    } catch (err) {
-      submittedRef.current = false
-      console.error('Submit failed', err)
-      alert('Could not submit: ' + (err?.message || err))
+        try {
+          const idx = JSON.parse(localStorage.getItem('attempts_index') || '[]')
+          idx.unshift({
+            attemptId,
+            examId: examData.id,
+            examTitle: exam.title,
+            score: payload.score,
+            totalMarks: payload.totalMarks,
+            correctCount,
+            total: questions.length,
+            submittedAt: new Date().toISOString(),
+            proctoringFlags: proctoringEventsRef.current.length,
+            tabSwitches,
+          })
+          localStorage.setItem('attempts_index', JSON.stringify(idx.slice(0, 200)))
+        } catch {}
+
+        // Leave fullscreen/secure mode before routing so the result page is usable.
+        try { if (document.fullscreenElement) document.exitFullscreen() } catch {}
+
+        navigate(`/result/${attemptId}`)
+      } catch (err) {
+        submittedRef.current = false
+        console.error('Submit failed', err)
+        alert('Could not submit: ' + (err?.message || err))
+      }
+      return
     }
+
+    // Real exam: persist through the API. The server independently
+    // recomputes the score from its own copy of the exam — it does not
+    // trust anything computed client-side. Responses are translated back
+    // from the shuffled, per-attempt display ids to the original
+    // questionId/option ids the backend knows about.
+    const responsesPayload = questions.map((q, i) => {
+      const r = responses[i] || {}
+      if (q.type === 'NAT') {
+        return { questionId: q.id, natValue: r.natAnswer || '' }
+      }
+      const map = reverseOptionMaps[q.id] || {}
+      const selectedOptionIds = (r.selectedOptions || []).map((oid) => map[oid] ?? oid)
+      return { questionId: q.id, selectedOptionIds }
+    })
+
+    submitAttempt.mutate(
+      {
+        examId,
+        body: {
+          responses: responsesPayload,
+          tabSwitches,
+          startedAt: startedAtRef.current,
+          proctoringEvents: proctoringEventsRef.current,
+        },
+      },
+      {
+        onSuccess: (attempt) => {
+          try { sessionStorage.removeItem(sessionKey) } catch {}
+          try { if (document.fullscreenElement) document.exitFullscreen() } catch {}
+          navigate(`/result/${attempt.id}`)
+        },
+        onError: (err) => {
+          submittedRef.current = false
+          console.error('Submit failed', err)
+          alert('Could not submit: ' + (err?.message || err))
+        },
+      }
+    )
   }
+
+  // After MAX_TAB_SWITCHES tab-switches/window-blurs, auto-submit instead of
+  // just warning — a fresh effect keyed on `tabSwitches` so `handleSubmit`
+  // (declared above) is always the current render's version, not a stale
+  // closure from whenever the blur listener below was first attached. A
+  // short delay lets the candidate actually read why before being
+  // redirected, instead of an instant, unexplained jump to the result page.
+  useEffect(() => {
+    if (tabSwitches < MAX_TAB_SWITCHES || submittedRef.current) return
+    setAutoSubmitting(true)
+    const t = setTimeout(() => handleSubmit(), 2000)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabSwitches])
 
   const currentQuestion = questions[currentIndex]
   const remainingSeconds = Math.max(
@@ -395,27 +568,6 @@ export default function ExamPage() {
   )
 
   const watermarkSvg = `data:image/svg+xml,%3Csvg width='350' height='200' xmlns='http://www.w3.org/2000/svg'%3E%3Ctext x='50%25' y='50%25' font-size='24' fill='rgba(0,0,0,0.05)' font-family='Arial' font-weight='bold' text-anchor='middle' transform='rotate(-35, 175, 100)'%3E${encodeURIComponent(subjectName + ' ' + candidateRegId)}%3C/text%3E%3C/svg%3E`
-
-  // All hooks above have run unconditionally on every render, so it's now
-  // safe to branch on exam availability.
-  if (!hasExam) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-background px-4 text-center">
-        <div className="max-w-md space-y-3">
-          <h1 className="text-2xl font-bold">Test not available</h1>
-          <p className="text-sm text-muted-foreground">
-            This test does not exist or has no questions yet.
-          </p>
-          <button
-            onClick={() => navigate('/')}
-            className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
-          >
-            Back to home
-          </button>
-        </div>
-      </div>
-    )
-  }
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-white" style={{ fontFamily: 'Inter, sans-serif' }}>
@@ -696,10 +848,11 @@ export default function ExamPage() {
               </button>
               <button
                 onClick={() => handleSubmit()}
-                className="rounded-full px-6 py-2 text-sm font-semibold text-white shadow-sm hover:brightness-110"
+                disabled={submitAttempt.isPending}
+                className="rounded-full px-6 py-2 text-sm font-semibold text-white shadow-sm hover:brightness-110 disabled:opacity-60"
                 style={{ backgroundColor: ACCENT, color: INK }}
               >
-                Submit Test
+                {submitAttempt.isPending ? 'Submitting…' : 'Submit Test'}
               </button>
             </div>
           </div>
@@ -723,13 +876,65 @@ export default function ExamPage() {
         </div>
       )}
 
-      {showTabWarning && (
+      {showTabWarning && !autoSubmitting && (
         <div className="fixed bottom-4 right-4 z-50 rounded-md bg-red-600 px-4 py-3 text-sm text-white shadow-lg">
-          <p className="font-semibold">Warning: Tab switching detected ({tabSwitches})</p>
-          <p className="text-xs">Repeated switching may be reported to the admin.</p>
+          <p className="font-semibold">Warning: Tab switching detected ({tabSwitches}/{MAX_TAB_SWITCHES})</p>
+          <p className="text-xs">
+            {tabSwitches >= MAX_TAB_SWITCHES - 1
+              ? 'One more and your test will be auto-submitted.'
+              : `After ${MAX_TAB_SWITCHES} switches your test is auto-submitted. It's also logged for the admin.`}
+          </p>
           <button onClick={() => setShowTabWarning(false)} className="mt-2 text-xs underline">
             Dismiss
           </button>
+        </div>
+      )}
+
+      {/* Reaching MAX_TAB_SWITCHES auto-submits (see the effect right after
+          handleSubmit above) — this full-screen notice explains why before
+          the redirect to the result page happens, instead of an
+          unexplained instant jump. */}
+      {autoSubmitting && (
+        <div className="fixed inset-0 z-[9995] flex flex-col items-center justify-center gap-3 bg-black/90 px-6 text-center text-white">
+          <h2 className="text-2xl font-bold">⚠️ Auto-submitting your test</h2>
+          <p className="max-w-md text-sm text-gray-300">
+            Tab switching was detected {tabSwitches} times, which reached the {MAX_TAB_SWITCHES}-switch limit.
+            Your test is being submitted now.
+          </p>
+        </div>
+      )}
+
+      {/* Camera/mic proctoring starts automatically with the exam — no
+          student-facing opt-in/opt-out step. The browser's own native
+          camera-permission prompt still appears (unavoidable, browser-
+          enforced), but there's no extra in-app dialog on top of it. */}
+      {hasProctoring && (
+        <ExamProctoring
+          settings={examData.proctoring}
+          onEvent={handleProctoringEvent}
+          onBlockingChange={handleProctoringBlockingChange}
+        />
+      )}
+
+      {/* Proctoring blur: covers the exam content on a serious violation
+          (no face / multiple faces / voice detected / camera off / face
+          mismatch) so the candidate can't keep answering while out of
+          compliance — but the timer is duplicated here at full visibility
+          and size, and keeps running exactly as it does in the header,
+          because a violation must never cost the candidate time. */}
+      {proctoringBlocked && (
+        <div className="fixed inset-0 z-[9990] flex flex-col items-center justify-center gap-4 bg-black/70 px-6 text-center text-white backdrop-blur-xl">
+          <h2 className="text-xl font-bold">⚠️ Proctoring alert</h2>
+          <p className="max-w-md text-sm text-gray-200">
+            {proctoringBlockReasons.join(', ')}. The test area is hidden until this clears.
+          </p>
+          <p className="text-xs text-gray-400">Resolve the issue below — the timer is still running.</p>
+          <div className="mt-2 flex flex-col items-center">
+            <span className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Time left</span>
+            <div className="font-mono text-3xl font-extrabold tabular-nums" style={{ color: ACCENT }}>
+              <CountdownDisplay key={extraSeconds} initialSeconds={remainingSeconds} onExpire={() => handleSubmit()} />
+            </div>
+          </div>
         </div>
       )}
     </div>

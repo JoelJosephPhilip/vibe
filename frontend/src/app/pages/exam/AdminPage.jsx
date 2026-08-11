@@ -1,27 +1,41 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { examStore } from '@/lib/examStore'
+import {
+  useMyExams,
+  useCreateExam,
+  useDeleteExam,
+  useUpdateExam,
+} from '@/hooks/exam-hooks'
+
+function totalMarks(exam) {
+  return (exam.questions || []).reduce((sum, q) => sum + (Number(q.marks) || 0), 0)
+}
 
 export default function AdminPage() {
   const navigate = useNavigate()
-  const [exams, setExams] = useState([])
+  const { data: exams = [], isLoading } = useMyExams()
+  const createExam = useCreateExam()
+  const deleteExam = useDeleteExam()
+  const updateExam = useUpdateExam()
+
   const [title, setTitle] = useState('')
   const [duration, setDuration] = useState(30)
 
-  const refresh = () => setExams(examStore.list())
-  useEffect(() => {
-    refresh()
-    window.addEventListener('exam_store_updated', refresh)
-    return () => window.removeEventListener('exam_store_updated', refresh)
-  }, [])
-
-  const handleCreate = (e) => {
+  const handleCreate = async (e) => {
     e.preventDefault()
     if (!title.trim()) return
-    const exam = examStore.create({ title: title.trim(), duration })
+    const exam = await createExam.mutateAsync({ title: title.trim(), duration })
     setTitle('')
     setDuration(30)
     navigate(`/admin/${exam.id}`)
+  }
+
+  const handleTogglePublish = (exam) => {
+    updateExam.mutate({ examId: exam.id, patch: { published: !exam.published } })
+  }
+
+  const handleDelete = (exam) => {
+    if (confirm(`Delete "${exam.title}"?`)) deleteExam.mutate(exam.id)
   }
 
   return (
@@ -65,16 +79,19 @@ export default function AdminPage() {
             </div>
             <button
               type="submit"
-              className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+              disabled={createExam.isPending}
+              className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
             >
-              Create
+              {createExam.isPending ? 'Creating…' : 'Create'}
             </button>
           </form>
         </div>
 
         <div className="rounded-lg border border-border bg-card p-4">
           <h2 className="mb-3 text-lg font-semibold">All tests</h2>
-          {exams.length === 0 ? (
+          {isLoading ? (
+            <p className="text-sm text-muted-foreground">Loading…</p>
+          ) : exams.length === 0 ? (
             <p className="text-sm text-muted-foreground">No tests yet.</p>
           ) : (
             <div className="overflow-x-auto">
@@ -94,7 +111,7 @@ export default function AdminPage() {
                     <tr key={exam.id} className="border-b border-border/60">
                       <td className="py-2 pr-4 font-medium">{exam.title}</td>
                       <td className="py-2 pr-4">{exam.questions.length}</td>
-                      <td className="py-2 pr-4">{examStore.totalMarks(exam)}</td>
+                      <td className="py-2 pr-4">{totalMarks(exam)}</td>
                       <td className="py-2 pr-4">{exam.duration} min</td>
                       <td className="py-2 pr-4">
                         <span
@@ -116,8 +133,11 @@ export default function AdminPage() {
                             Edit
                           </Link>
                           <button
-                            onClick={() => examStore.togglePublish(exam.id)}
-                            disabled={!exam.published && exam.questions.length === 0}
+                            onClick={() => handleTogglePublish(exam)}
+                            disabled={
+                              (!exam.published && exam.questions.length === 0) ||
+                              updateExam.isPending
+                            }
                             className="rounded border border-input bg-background px-2 py-1 text-xs hover:bg-accent disabled:opacity-50"
                             title={
                               !exam.published && exam.questions.length === 0
@@ -136,10 +156,9 @@ export default function AdminPage() {
                             </Link>
                           )}
                           <button
-                            onClick={() => {
-                              if (confirm(`Delete "${exam.title}"?`)) examStore.remove(exam.id)
-                            }}
-                            className="rounded border border-red-300 bg-white px-2 py-1 text-xs text-red-600 hover:bg-red-50"
+                            onClick={() => handleDelete(exam)}
+                            disabled={deleteExam.isPending}
+                            className="rounded border border-red-300 bg-white px-2 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-50"
                           >
                             Delete
                           </button>

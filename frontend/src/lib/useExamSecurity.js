@@ -1,9 +1,28 @@
 import { useCallback, useEffect, useState } from 'react'
 
+// Keys locked via the Keyboard Lock API while in fullscreen (Chromium only —
+// Chrome/Edge on desktop). This is what actually stops the Windows/Meta key,
+// Alt+Tab, and Alt+F4 from reaching the OS instead of the page: normally the
+// OS intercepts these before any browser JS ever runs, so no keydown handler
+// can "block" them — the Keyboard Lock API is the one browser mechanism that
+// can reserve them for the page while it's in fullscreen. It does NOT work
+// in Firefox/Safari (no support) and can never capture Ctrl+Alt+Delete (that
+// one is hard-reserved by Windows itself, no browser or website can touch
+// it) — so this raises the bar a lot but isn't an absolute guarantee.
+const LOCKABLE_KEYS = [
+  'MetaLeft', 'MetaRight', // Windows / Cmd key
+  'AltLeft', 'AltRight',
+  'Tab',
+  'Escape',
+  'F11',
+]
+
 /**
  * Exam security hook.
  *
  * - Forces fullscreen (auto request + re-prompt when the candidate exits)
+ * - Locks the Windows/Meta key, Alt+Tab, Alt+F4, Esc and F11 via the
+ *   Keyboard Lock API while in fullscreen (Chromium browsers only)
  * - Disables right-click / context menu
  * - Blocks dev-tools + view-source + print shortcuts
  * - Disables copy / cut / paste and text selection + drag
@@ -14,6 +33,21 @@ import { useCallback, useEffect, useState } from 'react'
 export function useExamSecurity(enabled = true) {
   const [isFullscreen, setIsFullscreen] = useState(false)
 
+  const lockKeyboard = useCallback(async () => {
+    try {
+      if (navigator.keyboard?.lock) await navigator.keyboard.lock(LOCKABLE_KEYS)
+    } catch {
+      /* unsupported browser (Firefox/Safari) or the lock was refused — fall
+         back to the keydown-based blocking below, which is all we get there */
+    }
+  }, [])
+
+  const unlockKeyboard = useCallback(() => {
+    try {
+      navigator.keyboard?.unlock?.()
+    } catch {}
+  }, [])
+
   const requestFullscreen = useCallback(async () => {
     const el = document.documentElement
     try {
@@ -23,15 +57,19 @@ export function useExamSecurity(enabled = true) {
     } catch {
       /* browser refused (needs a user gesture) — the overlay button will retry */
     }
-  }, [])
+    // Keyboard Lock only takes effect once the document is actually in
+    // fullscreen, so it's requested right after (best-effort either way).
+    await lockKeyboard()
+  }, [lockKeyboard])
 
   const exitFullscreen = useCallback(async () => {
+    unlockKeyboard()
     try {
       if (document.fullscreenElement && document.exitFullscreen) await document.exitFullscreen()
       else if (document.webkitFullscreenElement && document.webkitExitFullscreen)
         document.webkitExitFullscreen()
     } catch {}
-  }, [])
+  }, [unlockKeyboard])
 
   useEffect(() => {
     if (!enabled) return
@@ -40,6 +78,12 @@ export function useExamSecurity(enabled = true) {
     const syncFs = () => {
       const active = !!(document.fullscreenElement || document.webkitFullscreenElement)
       setIsFullscreen(active)
+      // Keyboard Lock is tied to the fullscreen session — re-acquire it
+      // whenever fullscreen (re)starts (e.g. re-entered via the overlay
+      // button, or F11) and release it the moment fullscreen drops so a
+      // stale lock doesn't linger over the rest of the page.
+      if (active) lockKeyboard()
+      else unlockKeyboard()
     }
     document.addEventListener('fullscreenchange', syncFs)
     document.addEventListener('webkitfullscreenchange', syncFs)
@@ -148,14 +192,24 @@ export function useExamSecurity(enabled = true) {
       document.body.style.webkitUserSelect = prevUserSelect
       exitFullscreen()
     }
-  }, [enabled, requestFullscreen, exitFullscreen])
+  }, [enabled, requestFullscreen, exitFullscreen, lockKeyboard, unlockKeyboard])
 
   return { isFullscreen, requestFullscreen, exitFullscreen }
 }
 
 /**
- * Opens a URL in a separate, chrome-less exam window (kiosk-like popup).
- * Falls back to a normal new tab if popups are blocked.
+ * Opens a URL in a separate popup window.
+ *
+ * NOT currently used to launch exams (HomePage.jsx navigates in-tab and
+ * relies on the Fullscreen API instead) — kept only as a general utility.
+ * Reason: modern Chrome refuses to hide the address bar for scripted
+ * popups (a deliberate anti-phishing policy, `location=no`/`toolbar=no`
+ * below are ignored), and a popup is its own top-level OS window, so even
+ * once it's fullscreened it can still surface its own minimize/close
+ * window controls on hover — an escape hatch a same-tab fullscreen page
+ * doesn't have (fullscreening the actual tab hides ALL browser chrome,
+ * including the window's own controls). Do not reuse this for exams
+ * without re-verifying that behavior in current Chrome.
  */
 export function openExamWindow(url) {
   const w = window.screen.availWidth

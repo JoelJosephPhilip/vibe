@@ -1,19 +1,21 @@
-import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
-import { examStore } from '@/lib/examStore'
-import { openExamWindow } from '@/lib/useExamSecurity'
+import { Link, useNavigate } from 'react-router-dom'
+import { DEMO_EXAM } from '@/lib/examStore'
 import { useAuthStore } from '@/store/auth-store'
+import { usePublishedExams } from '@/hooks/exam-hooks'
+
+function totalMarks(exam) {
+  return (exam.questions || []).reduce((sum, q) => sum + (Number(q.marks) || 0), 0)
+}
 
 export default function HomePage() {
-  const [exams, setExams] = useState([])
+  const navigate = useNavigate()
   const { user } = useAuthStore()
-
-  useEffect(() => {
-    const refresh = () => setExams(examStore.listPublished())
-    refresh()
-    window.addEventListener('exam_store_updated', refresh)
-    return () => window.removeEventListener('exam_store_updated', refresh)
-  }, [])
+  // The demo exam is always shown first, entirely client-side, whether the
+  // published-exams request is still loading, fails, or the backend is
+  // simply unreachable — that's the whole point of it (see the module
+  // migration plan's "Frontend" section).
+  const { data: publishedExams } = usePublishedExams()
+  const exams = [DEMO_EXAM, ...(publishedExams ?? [])]
 
   return (
     <div className="min-h-screen bg-background px-4 py-12">
@@ -54,7 +56,7 @@ export default function HomePage() {
           ) : (
             <ul className="grid gap-3 sm:grid-cols-2">
               {exams.map((e) => {
-                const total = examStore.totalMarks(e)
+                const total = totalMarks(e)
                 return (
                   <li
                     key={e.id}
@@ -66,13 +68,13 @@ export default function HomePage() {
                     </p>
                     <button
                       type="button"
-                      onClick={() => openExamWindow(`/exam-app/exam/${e.id}`)}
+                      onClick={() => navigate(`/exam/${e.id}`)}
                       className="mt-3 inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
                     >
                       Start Test
                     </button>
                     <p className="mt-2 text-[11px] text-muted-foreground">
-                      Opens in a separate secure fullscreen window.
+                      Opens in fullscreen. Exiting fullscreen or switching tabs is recorded.
                     </p>
                   </li>
                 )

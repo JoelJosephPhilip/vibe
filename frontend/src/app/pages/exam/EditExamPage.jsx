@@ -1,8 +1,16 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams, useNavigate } from 'react-router-dom'
-import { examStore } from '@/lib/examStore'
 import { fileToDataUrl } from '@/lib/imageUtils'
 import { RichText } from '@/components/exam/RichText'
+import {
+  useExam,
+  useUpdateExam,
+  useAddQuestion,
+  useUpdateQuestion,
+  useRemoveQuestion,
+  useAddTimeGrant,
+  useRemoveTimeGrant,
+} from '@/hooks/exam-hooks'
 
 const emptyQuestion = () => {
   const qId = String(Math.floor(1000 + Math.random() * 9000)); // e.g. 9908
@@ -19,7 +27,7 @@ const emptyQuestion = () => {
     correctOptions: [],
     marks: 1,
     negativeMarks: 0,
-    customNegativeMarks: false,
+    useCustomNegative: false,
     natAnswerType: 'integer',
   }
 }
@@ -91,15 +99,20 @@ function Modal({ open, onClose, title, children }) {
 export default function EditExamPage() {
   const { examId } = useParams()
   const navigate = useNavigate()
-  const [exam, setExam] = useState(() => examStore.get(examId))
+  const { data: exam, isLoading } = useExam(examId)
   const [addQuestionOpen, setAddQuestionOpen] = useState(false)
+  const updateExam = useUpdateExam()
+  const addQuestion = useAddQuestion()
 
-  useEffect(() => {
-    const refresh = () => setExam(examStore.get(examId))
-    refresh()
-    window.addEventListener('exam_store_updated', refresh)
-    return () => window.removeEventListener('exam_store_updated', refresh)
-  }, [examId])
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-background px-4 py-10">
+        <div className="mx-auto max-w-5xl">
+          <p className="text-sm text-muted-foreground">Loading…</p>
+        </div>
+      </div>
+    )
+  }
 
   if (!exam) {
     return (
@@ -112,8 +125,12 @@ export default function EditExamPage() {
     )
   }
 
-  const totalMarks = examStore.totalMarks(exam)
+  const totalMarks = exam.questions.reduce((sum, q) => sum + (Number(q.marks) || 0), 0)
   const negativeMarkingRatios = exam.negativeMarkingRatios ?? defaultNegativeMarkingRatios
+
+  const handleTogglePublish = () => {
+    updateExam.mutate({ examId: exam.id, patch: { published: !exam.published } })
+  }
 
   return (
     <div className="min-h-screen bg-background px-4 py-10">
@@ -135,8 +152,8 @@ export default function EditExamPage() {
               + Add question
             </button>
             <button
-              onClick={() => examStore.togglePublish(exam.id)}
-              disabled={!exam.published && exam.questions.length === 0}
+              onClick={handleTogglePublish}
+              disabled={(!exam.published && exam.questions.length === 0) || updateExam.isPending}
               className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
             >
               {exam.published ? 'Unpublish' : 'Publish'}
@@ -154,6 +171,7 @@ export default function EditExamPage() {
 
         <ExamSettings exam={exam} />
         <RevealAnswersSetting exam={exam} />
+        <ExamProctoringSettings exam={exam} />
         <TimeGrantsSection exam={exam} />
         <ExamHeaderSettings exam={exam} />
         <QuestionsSection exam={exam} negativeMarkingRatios={negativeMarkingRatios} />
@@ -187,8 +205,10 @@ export default function EditExamPage() {
           negativeMarkingRatios={negativeMarkingRatios}
           onCancel={() => setAddQuestionOpen(false)}
           onSubmit={(data) => {
-            examStore.addQuestion(exam.id, data)
-            setAddQuestionOpen(false)
+            addQuestion.mutate(
+              { examId: exam.id, question: data },
+              { onSuccess: () => setAddQuestionOpen(false) }
+            )
           }}
         />
       </Modal>
@@ -199,11 +219,12 @@ export default function EditExamPage() {
 
 function RevealAnswersSetting({ exam }) {
   const [reveal, setReveal] = useState(exam.revealAnswers ?? false)
-  useEffect(() => setReveal(exam.revealAnswers ?? false), [exam.id])
+  const updateExam = useUpdateExam()
+  useEffect(() => setReveal(exam.revealAnswers ?? false), [exam.id, exam.revealAnswers])
 
   const toggle = (val) => {
     setReveal(val)
-    examStore.update(exam.id, { revealAnswers: val })
+    updateExam.mutate({ examId: exam.id, patch: { revealAnswers: val } })
   }
 
   return (
@@ -233,20 +254,124 @@ function RevealAnswersSetting({ exam }) {
 }
 
 
+// Same 8 detector keys/labels used by the course-lesson proctoring settings
+// (frontend/src/components/EditProctoringModal.tsx:26-68), reused verbatim
+// here for naming/wording consistency even though this exam-scoped config is
+// persisted through useUpdateExam (`PATCH /exams/:examId`) rather than
+// CourseSettingService.
+const PROCTORING_DETECTOR_NAMES = [
+  'cameraMic',
+  'blurDetection',
+  'faceCountDetection',
+  'handGestureDetection',
+  'voiceDetection',
+  'virtualBackgroundDetection',
+  'rightClickDisabled',
+  'faceRecognition',
+]
+
+const PROCTORING_LABEL_MAP = {
+  cameraMic: 'Camera + Microphone',
+  blurDetection: 'Blur Detection',
+  faceCountDetection: 'Face Count Detection',
+  handGestureDetection: 'Hand Gesture Detection',
+  voiceDetection: 'Voice Detection',
+  virtualBackgroundDetection: 'Virtual Background Detection',
+  rightClickDisabled: 'Right Click Disabled',
+  faceRecognition: 'Face Recognition',
+}
+
+function buildProctoringDetectors(exam) {
+  return PROCTORING_DETECTOR_NAMES.map((detectorName) => {
+    const existing = exam.proctoring?.detectors?.find((d) => d.detectorName === detectorName)
+    return { detectorName, enabled: existing?.enabled ?? false }
+  })
+}
+
+function ExamProctoringSettings({ exam }) {
+  const [detectors, setDetectors] = useState(() => buildProctoringDetectors(exam))
+  const [saved, setSaved] = useState(false)
+  const updateExam = useUpdateExam()
+
+  useEffect(() => {
+    setDetectors(buildProctoringDetectors(exam))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exam.id])
+
+  const toggle = (detectorName) => {
+    setDetectors((prev) =>
+      prev.map((d) => (d.detectorName === detectorName ? { ...d, enabled: !d.enabled } : d))
+    )
+  }
+
+  const save = () => {
+    updateExam.mutate({ examId: exam.id, patch: { proctoring: { detectors } } })
+    setSaved(true)
+    setTimeout(() => setSaved(false), 1500)
+  }
+
+  return (
+    <section className="rounded-md border border-border bg-card p-4 shadow-sm">
+      <h2 className="mb-1 font-semibold text-foreground">Proctoring</h2>
+      <p className="mb-3 text-xs text-muted-foreground">
+        Choose which camera/mic-based checks run while a candidate is taking this test.
+        Reuses the same detectors used during course lessons. Violations are logged with the
+        attempt for review — they never pause the timer or block the candidate from answering.
+      </p>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {detectors.map((d) => (
+          <label
+            key={d.detectorName}
+            className="flex cursor-pointer select-none items-center gap-2 text-sm text-foreground"
+          >
+            <input
+              type="checkbox"
+              checked={d.enabled}
+              onChange={() => toggle(d.detectorName)}
+            />
+            {PROCTORING_LABEL_MAP[d.detectorName] || d.detectorName}
+          </label>
+        ))}
+      </div>
+      <div className="mt-3 flex items-center gap-3">
+        <button
+          onClick={save}
+          disabled={updateExam.isPending}
+          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+        >
+          Save proctoring settings
+        </button>
+        {saved && <span className="text-xs text-green-600">Saved ✓</span>}
+      </div>
+    </section>
+  )
+}
+
+
 function TimeGrantsSection({ exam }) {
   const [minutes, setMinutes] = useState(10)
   const [note, setNote] = useState('')
   const [justCreatedId, setJustCreatedId] = useState(null)
   const [copiedId, setCopiedId] = useState(null)
+  const addTimeGrant = useAddTimeGrant()
+  const removeTimeGrant = useRemoveTimeGrant()
 
   const grants = [...(exam.timeGrants || [])].sort((a, b) => b.createdAt - a.createdAt)
 
-  const handleGenerate = (e) => {
+  const handleGenerate = async (e) => {
     e.preventDefault()
-    const grant = examStore.addTimeGrant(exam.id, { minutes, note: note.trim() })
-    if (grant) {
-      setJustCreatedId(grant.id)
-      setNote('')
+    try {
+      const updated = await addTimeGrant.mutateAsync({
+        examId: exam.id,
+        grant: { minutes, note: note.trim() },
+      })
+      const newest = [...(updated.timeGrants || [])].sort((a, b) => b.createdAt - a.createdAt)[0]
+      if (newest) {
+        setJustCreatedId(newest.id)
+        setNote('')
+      }
+    } catch (err) {
+      alert('Failed to generate code: ' + (err?.message || err))
     }
   }
 
@@ -259,7 +384,7 @@ function TimeGrantsSection({ exam }) {
 
   const handleRevoke = (grant) => {
     if (!grant.used && !confirm(`Revoke unused code ${grant.code}?`)) return
-    examStore.removeTimeGrant(exam.id, grant.id)
+    removeTimeGrant.mutate({ examId: exam.id, grantId: grant.id })
   }
 
   return (
@@ -295,7 +420,8 @@ function TimeGrantsSection({ exam }) {
         </label>
         <button
           type="submit"
-          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+          disabled={addTimeGrant.isPending}
+          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
         >
           Generate code
         </button>
@@ -347,7 +473,8 @@ function TimeGrantsSection({ exam }) {
                       )}
                       <button
                         onClick={() => handleRevoke(g)}
-                        className="rounded border border-red-300 bg-white px-2 py-1 text-xs text-red-600 hover:bg-red-50"
+                        disabled={removeTimeGrant.isPending}
+                        className="rounded border border-red-300 bg-white px-2 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-50"
                       >
                         {g.used ? 'Remove' : 'Revoke'}
                       </button>
@@ -373,6 +500,7 @@ function ExamSettings({ exam }) {
   const [minSubmitTime, setMinSubmitTime] = useState(exam.minSubmitTime || 0)
   const [ratios, setRatios] = useState(exam.negativeMarkingRatios ?? defaultNegativeMarkingRatios)
   const [saved, setSaved] = useState(false)
+  const updateExam = useUpdateExam()
 
   useEffect(() => {
     setTitle(exam.title)
@@ -392,9 +520,12 @@ function ExamSettings({ exam }) {
   }
 
   const save = () => {
-    examStore.update(exam.id, {
-      title, duration, passingMarks, negativeMarking, instructions, minSubmitTime,
-      negativeMarkingRatios: ratios,
+    updateExam.mutate({
+      examId: exam.id,
+      patch: {
+        title, duration, passingMarks, negativeMarking, instructions, minSubmitTime,
+        negativeMarkingRatios: ratios,
+      },
     })
     setSaved(true)
     setTimeout(() => setSaved(false), 1500)
@@ -502,7 +633,8 @@ function ExamSettings({ exam }) {
       <div className="mt-3 flex items-center gap-3">
         <button
           onClick={save}
-          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+          disabled={updateExam.isPending}
+          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
         >
           Save settings
         </button>
@@ -517,24 +649,25 @@ function ExamHeaderSettings({ exam }) {
   const [headerSubtitle, setHeaderSubtitle] = useState(exam.headerSubtitle ?? '')
   const [leftBadge, setLeftBadge] = useState(exam.leftBadge ?? '')
   const [rightBadge, setRightBadge] = useState(exam.rightBadge ?? '')
-  const [candidateName, setCandidateName] = useState(exam.candidateName ?? '')
   const [saved, setSaved] = useState(false)
+  const updateExam = useUpdateExam()
 
   useEffect(() => {
     setHeaderTitle(exam.headerTitle ?? '')
     setHeaderSubtitle(exam.headerSubtitle ?? '')
     setLeftBadge(exam.leftBadge ?? '')
     setRightBadge(exam.rightBadge ?? '')
-    setCandidateName(exam.candidateName ?? '')
   }, [exam.id])
 
   const save = () => {
-    examStore.update(exam.id, {
-      headerTitle: headerTitle.trim(),
-      headerSubtitle: headerSubtitle.trim(),
-      leftBadge: leftBadge.trim(),
-      rightBadge: rightBadge.trim(),
-      candidateName: candidateName.trim(),
+    updateExam.mutate({
+      examId: exam.id,
+      patch: {
+        headerTitle: headerTitle.trim(),
+        headerSubtitle: headerSubtitle.trim(),
+        leftBadge: leftBadge.trim(),
+        rightBadge: rightBadge.trim(),
+      },
     })
     setSaved(true)
     setTimeout(() => setSaved(false), 1500)
@@ -544,7 +677,7 @@ function ExamHeaderSettings({ exam }) {
     <section className="rounded-md border border-border bg-card p-4 shadow-sm">
       <h2 className="mb-1 font-semibold text-foreground">Exam header (shown on the test page)</h2>
       <p className="mb-3 text-xs text-muted-foreground">
-        Customize the top branding bar. e.g. "GATE 2026", "IIT Guwahati", left/right badges.
+        Customize the top branding bar. e.g. "ViBe", "IIT Ropar", left/right badges.
       </p>
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="block text-sm sm:col-span-2">
@@ -552,7 +685,7 @@ function ExamHeaderSettings({ exam }) {
           <input
             value={headerTitle}
             onChange={(e) => setHeaderTitle(e.target.value)}
-            placeholder="Graduate Aptitude Test in Engineering (GATE 2026)"
+            placeholder="ViBe"
             className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
           />
         </label>
@@ -561,7 +694,7 @@ function ExamHeaderSettings({ exam }) {
           <input
             value={headerSubtitle}
             onChange={(e) => setHeaderSubtitle(e.target.value)}
-            placeholder="Organizing Institute: Indian Institute of Technology Guwahati"
+            placeholder="Organizing Institute: Indian Institute of Technology Ropar"
             className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
           />
         </label>
@@ -570,7 +703,7 @@ function ExamHeaderSettings({ exam }) {
           <input
             value={leftBadge}
             onChange={(e) => setLeftBadge(e.target.value)}
-            placeholder="GATE"
+            placeholder="ViBe"
             className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
           />
         </label>
@@ -579,24 +712,19 @@ function ExamHeaderSettings({ exam }) {
           <input
             value={rightBadge}
             onChange={(e) => setRightBadge(e.target.value)}
-            placeholder="IITG"
-            className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-          />
-        </label>
-        <label className="block text-sm sm:col-span-2">
-          Candidate name (shown in candidate info bar)
-          <input
-            value={candidateName}
-            onChange={(e) => setCandidateName(e.target.value)}
-            placeholder="DEMO CANDIDATE"
+            placeholder="IIT Ropar"
             className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
           />
         </label>
       </div>
+      <p className="mt-2 text-xs text-muted-foreground">
+        Candidate name is taken from the logged-in student, not set here.
+      </p>
       <div className="mt-3 flex items-center gap-3">
         <button
           onClick={save}
-          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+          disabled={updateExam.isPending}
+          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
         >
           Save header
         </button>
@@ -634,6 +762,9 @@ function QuestionsSection({ exam, negativeMarkingRatios }) {
 
 function QuestionRow({ examId, question, index, negativeMarkingEnabled, negativeMarkingRatios }) {
   const [editing, setEditing] = useState(false)
+  const updateQuestion = useUpdateQuestion()
+  const removeQuestion = useRemoveQuestion()
+
   return (
     <li className="rounded-md border border-border bg-card p-4 shadow-sm">
       {!editing ? (
@@ -646,7 +777,7 @@ function QuestionRow({ examId, question, index, negativeMarkingEnabled, negative
               </span>
               <span>+{question.marks}</span>
               {negativeMarkingEnabled && question.negativeMarks > 0 && (
-                <span>−{question.negativeMarks}{question.customNegativeMarks ? ' (custom)' : ''}</span>
+                <span>−{question.negativeMarks}{question.useCustomNegative ? ' (custom)' : ''}</span>
               )}
             </div>
             <p className="text-sm text-foreground"><RichText text={question.questionText} /></p>
@@ -693,9 +824,12 @@ function QuestionRow({ examId, question, index, negativeMarkingEnabled, negative
             </button>
             <button
               onClick={() => {
-                if (confirm('Delete this question?')) examStore.removeQuestion(examId, question.id)
+                if (confirm('Delete this question?')) {
+                  removeQuestion.mutate({ examId, questionId: question.id })
+                }
               }}
-              className="rounded border border-red-300 bg-white px-2 py-1 text-xs text-red-600 hover:bg-red-50"
+              disabled={removeQuestion.isPending}
+              className="rounded border border-red-300 bg-white px-2 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-50"
             >
               Delete
             </button>
@@ -708,8 +842,10 @@ function QuestionRow({ examId, question, index, negativeMarkingEnabled, negative
           negativeMarkingRatios={negativeMarkingRatios}
           onCancel={() => setEditing(false)}
           onSubmit={(patch) => {
-            examStore.updateQuestion(examId, question.id, patch)
-            setEditing(false)
+            updateQuestion.mutate(
+              { examId, questionId: question.id, patch },
+              { onSuccess: () => setEditing(false) }
+            )
           }}
         />
       )}
@@ -733,7 +869,7 @@ const [options, setOptions] = useState(
   )
   const [correct, setCorrect] = useState(initial.correctOptions)
   const [marks, setMarks] = useState(initial.marks)
-  const [customNegativeMarks, setCustomNegativeMarks] = useState(initial.customNegativeMarks ?? false)
+  const [customNegativeMarks, setCustomNegativeMarks] = useState(initial.useCustomNegative ?? false)
   const [manualNegativeMarks, setManualNegativeMarks] = useState(initial.negativeMarks ?? 0)
   const [natAnswer, setNatAnswer] = useState(
     initial.type === 'NAT' ? initial.correctOptions[0] ?? '' : ''
@@ -792,7 +928,7 @@ const [options, setOptions] = useState(
         correctOptions: [natAnswer.trim()],
         marks,
         negativeMarks: appliedNegativeMarks,
-        customNegativeMarks: appliedCustomFlag,
+        useCustomNegative: appliedCustomFlag,
         natAnswerType: natType,
       })
     } else {
@@ -807,7 +943,7 @@ const [options, setOptions] = useState(
         correctOptions: correct.filter((c) => cleanOptions.some((o) => o.id === c)),
         marks,
         negativeMarks: appliedNegativeMarks,
-        customNegativeMarks: appliedCustomFlag,
+        useCustomNegative: appliedCustomFlag,
       })
     }
   }
