@@ -10,12 +10,21 @@ export const NotFoundComponent: FC = () => {
   const routerState = useRouterState()
 
   useEffect(() => {
-    console.error('[DEBUG-404]', JSON.stringify({
+    const payload = JSON.stringify({
       windowPathname: window.location.pathname,
       routerPathname: routerState.location.pathname,
       matchIds: routerState.matches.map((m) => m.routeId),
       status: routerState.status,
-    }))
+      referrer: document.referrer,
+      time: Date.now(),
+    })
+    console.error('[DEBUG-404]', payload)
+    try {
+      const prior = sessionStorage.getItem('debug404Log')
+      const arr = prior ? JSON.parse(prior) : []
+      arr.push(payload)
+      sessionStorage.setItem('debug404Log', JSON.stringify(arr))
+    } catch {}
   }, [])
 
   const getHomeRoute = () => {
