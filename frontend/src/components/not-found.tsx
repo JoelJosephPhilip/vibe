@@ -1,12 +1,22 @@
 import { type FC, useEffect, useState } from "react"
 import { useAuthStore } from "@/store/auth-store"
-import { useNavigate } from "@tanstack/react-router"
+import { useNavigate, useRouterState } from "@tanstack/react-router"
 
 export const NotFoundComponent: FC = () => {
   const { isAuthenticated, user } = useAuthStore()
   const navigate = useNavigate()
   const [countdown, setCountdown] = useState(5)
   const [isRedirecting, setIsRedirecting] = useState(false)
+  const routerState = useRouterState()
+
+  useEffect(() => {
+    console.error('[DEBUG-404]', JSON.stringify({
+      windowPathname: window.location.pathname,
+      routerPathname: routerState.location.pathname,
+      matchIds: routerState.matches.map((m) => m.routeId),
+      status: routerState.status,
+    }))
+  }, [])
 
   const getHomeRoute = () => {
     if (isAuthenticated && user?.role) {
