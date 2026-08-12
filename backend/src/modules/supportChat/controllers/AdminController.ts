@@ -19,6 +19,13 @@ import {
   SUPPORT_CHAT_TYPES,
 } from '../types.js';
 import { AdminService } from '../services/index.js';
+import {
+  AdminDashboardQuery,
+  AdminFaqsQuery,
+  AdminQuestionsQuery,
+  SupportFaqIdParams,
+  SupportQuestionIdParams,
+} from '../validators/SupportChatParams.js';
 
 // The app applies a global '/api' routePrefix, so it must not be repeated here.
 @JsonController('/admin/support')
@@ -29,7 +36,7 @@ export class AdminController {
   @Get('/dashboard')
   @Authorized(['admin', 'staff'])
   async getDashboard(
-    @QueryParams() query: { courseId?: string; startDate?: string; endDate?: string }
+    @QueryParams() query: AdminDashboardQuery
   ) {
     const courseId = query.courseId ? new ObjectId(query.courseId) : undefined;
     const startDate = query.startDate ? new Date(query.startDate) : undefined;
@@ -47,7 +54,7 @@ export class AdminController {
   @Get('/questions')
   @Authorized(['admin', 'staff'])
   async getQuestions(
-    @QueryParams() query: { status?: string; page?: string; limit?: string; courseId?: string }
+    @QueryParams() query: AdminQuestionsQuery
   ) {
     const limit = query.limit ? parseInt(query.limit, 10) : 50;
     const courseId = query.courseId ? new ObjectId(query.courseId) : undefined;
@@ -64,7 +71,7 @@ export class AdminController {
   @Authorized(['admin', 'staff'])
   async respondToQuestion(
     @CurrentUser() user: any,
-    @Params() params: { questionId: string },
+    @Params() params: SupportQuestionIdParams,
     @Body() request: AdminResponseRequest
   ) {
     const questionId = new ObjectId(params.questionId);
@@ -75,14 +82,14 @@ export class AdminController {
 
   @Put('/questions/:questionId/resolve')
   @Authorized(['admin', 'staff'])
-  async resolveQuestion(@Params() params: { questionId: string }) {
+  async resolveQuestion(@Params() params: SupportQuestionIdParams) {
     const questionId = new ObjectId(params.questionId);
     return await this.adminService.markQuestionResolved(questionId);
   }
 
   @Get('/faqs')
   @Authorized(['admin', 'staff'])
-  async getFAQs(@QueryParams() query: { category?: string }) {
+  async getFAQs(@QueryParams() query: AdminFaqsQuery) {
     const category = query.category ? (query.category as FAQCategory) : undefined;
     const faqs = await this.adminService.getAllFAQs(category);
 
@@ -115,7 +122,7 @@ export class AdminController {
   @Put('/faqs/:faqId')
   @Authorized(['admin', 'staff'])
   async updateFAQ(
-    @Params() params: { faqId: string },
+    @Params() params: SupportFaqIdParams,
     @Body() updates: Partial<IFAQ>
   ) {
     const faqId = new ObjectId(params.faqId);
@@ -124,7 +131,7 @@ export class AdminController {
 
   @Delete('/faqs/:faqId')
   @Authorized(['admin', 'staff'])
-  async deleteFAQ(@Params() params: { faqId: string }) {
+  async deleteFAQ(@Params() params: SupportFaqIdParams) {
     const faqId = new ObjectId(params.faqId);
     const deleted = await this.adminService.deleteFAQ(faqId);
 

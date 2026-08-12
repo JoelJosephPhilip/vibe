@@ -13,6 +13,12 @@ import {
 import { ObjectId } from 'mongodb';
 import { ChatMessageRequest, ChatMessageResponse, ResolutionRating, SUPPORT_CHAT_TYPES } from '../types.js';
 import { ChatService } from '../services/index.js';
+import {
+  ChatHistoryQuery,
+  ChatMessageQuery,
+  FaqSearchQuery,
+  SupportQuestionIdParams,
+} from '../validators/SupportChatParams.js';
 
 // The app applies a global '/api' routePrefix, so it must not be repeated here.
 @JsonController('/support/chat')
@@ -25,7 +31,7 @@ export class ChatController {
   async sendMessage(
     @CurrentUser() user: any,
     @Body() messageRequest: ChatMessageRequest,
-    @QueryParams() query: { courseId?: string; courseVersionId?: string; cohortId?: string }
+    @QueryParams() query: ChatMessageQuery
   ): Promise<ChatMessageResponse> {
     const userId = new ObjectId(user.id);
     const courseId = query.courseId ? new ObjectId(query.courseId) : undefined;
@@ -45,7 +51,7 @@ export class ChatController {
   @Authorized('user')
   async getHistory(
     @CurrentUser() user: any,
-    @QueryParams() query: { limit?: string }
+    @QueryParams() query: ChatHistoryQuery
   ) {
     const userId = new ObjectId(user.id);
     const limit = query.limit ? parseInt(query.limit, 10) : 50;
@@ -62,7 +68,7 @@ export class ChatController {
   @Authorized('user')
   async getQuestion(
     @CurrentUser() user: any,
-    @Params() params: { questionId: string }
+    @Params() params: SupportQuestionIdParams
   ) {
     const questionId = new ObjectId(params.questionId);
     const question = await this.chatService.getQuestion(questionId);
@@ -83,7 +89,7 @@ export class ChatController {
   @Authorized('user')
   async rateQuestion(
     @CurrentUser() user: any,
-    @Params() params: { questionId: string },
+    @Params() params: SupportQuestionIdParams,
     @Body() body: { rating: ResolutionRating }
   ) {
     const questionId = new ObjectId(params.questionId);
@@ -102,7 +108,7 @@ export class ChatController {
   }
 
   @Get('/faqs/search')
-  async searchFAQs(@QueryParams() query: { search?: string; category?: string }) {
+  async searchFAQs(@QueryParams() query: FaqSearchQuery) {
     // This would be implemented with FAQ retrieval and search logic
     // For now, returning placeholder
     return {
