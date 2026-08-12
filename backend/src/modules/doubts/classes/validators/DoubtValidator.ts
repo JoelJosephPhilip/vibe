@@ -174,6 +174,16 @@ export class DoubtResponse {
   @IsString()
   courseVersionId!: string;
 
+  // Needed by the instructor "View" action: the item-fetch endpoint is keyed by
+  // module + section, not itemId alone.
+  @IsOptional()
+  @IsString()
+  moduleId?: string;
+
+  @IsOptional()
+  @IsString()
+  sectionId?: string;
+
   @IsString()
   userId!: string;
 

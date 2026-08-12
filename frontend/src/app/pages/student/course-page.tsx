@@ -2169,6 +2169,7 @@ return false;
                   courseVersionId: VERSION_ID,
                 },
                 cohortId: COHORT_ID || undefined,
+                moduleId: activeSectionInfo?.moduleId || undefined,
                 sectionId: sectionId || undefined,
                 askAtSeconds,
                 seekForwardEnabled: proctoringData?.settings.seekForwardEnabled || false,

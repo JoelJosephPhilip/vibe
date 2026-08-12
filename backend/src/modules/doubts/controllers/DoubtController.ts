@@ -44,6 +44,8 @@ function toResponse(doubt: IDoubt): DoubtResponse {
     itemId: doubt.itemId.toString(),
     courseId: doubt.courseId.toString(),
     courseVersionId: doubt.courseVersionId.toString(),
+    moduleId: doubt.moduleId?.toString(),
+    sectionId: doubt.sectionId?.toString(),
     userId: doubt.userId.toString(),
     userName: doubt.userName,
     videoTimestamp: doubt.videoTimestamp,

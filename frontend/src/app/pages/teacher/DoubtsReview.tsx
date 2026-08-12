@@ -1,5 +1,5 @@
 import {useState} from 'react';
-import {Loader2, MessagesSquare, RefreshCw, Send, CheckCircle2, RotateCcw, Eye, EyeOff, Trash2} from 'lucide-react';
+import {Loader2, MessagesSquare, RefreshCw, Send, CheckCircle2, RotateCcw, Eye, EyeOff, Trash2, PlayCircle} from 'lucide-react';
 import {Button} from '@/components/ui/button';
 import {Input} from '@/components/ui/input';
 import {Badge} from '@/components/ui/badge';
@@ -20,6 +20,8 @@ import {
   useSetDoubtStatus,
 } from '@/hooks/doubt-hooks';
 import CourseBackButton from './CourseBackButton';
+import DoubtVideoModal from './components/DoubtVideoModal';
+import type {Doubt} from '@/lib/api/doubts';
 
 const STATUS_FILTERS = ['ALL', 'OPEN', 'RESOLVED'] as const;
 type StatusFilter = (typeof STATUS_FILTERS)[number];
@@ -32,6 +34,7 @@ export default function DoubtsReview() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('OPEN');
   const [replyingTo, setReplyingTo] = useState<string | null>(null);
   const [replyText, setReplyText] = useState('');
+  const [viewing, setViewing] = useState<Doubt | null>(null);
 
   const {doubts, isLoading, isFetching, refetch} = useCourseDoubts(
     courseId,
@@ -175,6 +178,14 @@ export default function DoubtsReview() {
                   variant="ghost"
                   size="sm"
                   className="h-7 px-2 text-xs"
+                  onClick={() => setViewing(d)}
+                >
+                  <PlayCircle className="mr-1 h-3 w-3" />View
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs"
                   onClick={() => setReplyingTo(replyingTo === d._id ? null : d._id)}
                 >
                   Reply
@@ -241,6 +252,8 @@ export default function DoubtsReview() {
           ))}
         </div>
       )}
+
+      <DoubtVideoModal doubt={viewing} onClose={() => setViewing(null)} />
     </div>
   );
 }

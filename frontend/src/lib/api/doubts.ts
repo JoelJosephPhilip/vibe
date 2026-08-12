@@ -43,6 +43,9 @@ export interface Doubt {
   itemId: string;
   courseId: string;
   courseVersionId: string;
+  /** Present on doubts created after the instructor "View" action shipped. */
+  moduleId?: string;
+  sectionId?: string;
   userId: string;
   userName: string;
   /** Seconds into the video this doubt refers to. */
