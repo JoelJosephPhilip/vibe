@@ -1,5 +1,5 @@
-import { inject, injectable } from 'inversify';
-import { ObjectId } from 'mongodb';
+import {inject, injectable} from 'inversify';
+import {ObjectId} from 'mongodb';
 import {
   ChatMessageResponse,
   ISupportQuestion,
@@ -7,14 +7,12 @@ import {
   SUPPORT_CHAT_TYPES,
   ChatMessageRequest,
 } from '../types.js';
-import { FAQRetrievalService } from './FAQRetrievalService.js';
-import { FAQRepository } from '../repositories/providers/mongodb/index.js';
-import { SupportQuestionRepository } from '../repositories/providers/mongodb/index.js';
-import { Logger } from '@/shared/logger';
+import {FAQRetrievalService} from './FAQRetrievalService.js';
+import {FAQRepository} from '../repositories/providers/mongodb/index.js';
+import {SupportQuestionRepository} from '../repositories/providers/mongodb/index.js';
 
 @injectable()
 export class ChatService {
-  private logger = Logger.getLogger('ChatService');
 
   constructor(
     @inject(SUPPORT_CHAT_TYPES.FAQRetrievalService) private faqRetrieval: FAQRetrievalService,
@@ -76,7 +74,7 @@ export class ChatService {
         questionId: question._id!,
       };
     } catch (error) {
-      this.logger.error('Error handling user question', error);
+      console.error('Error handling user question', error);
       throw error;
     }
   }

@@ -1,16 +1,14 @@
-import { inject, injectable } from 'inversify';
+import {inject, injectable} from 'inversify';
 import {
   IFAQ,
   FAQRetrievalResult,
   SUPPORT_CHAT_CONFIG,
   SUPPORT_CHAT_TYPES,
 } from '../types.js';
-import { FAQRepository } from '../repositories/providers/mongodb/index.js';
-import { Logger } from '@/shared/logger';
+import {FAQRepository} from '../repositories/providers/mongodb/index.js';
 
 @injectable()
 export class FAQRetrievalService {
-  private logger = Logger.getLogger('FAQRetrievalService');
   private minimaxApiKey = process.env.MINIMAX_API_KEY;
   private minimaxApiUrl = process.env.MINIMAX_API_URL || 'https://api.minimax.chat/v1';
   private minimaxEmbeddingModel =
@@ -72,11 +70,13 @@ export class FAQRetrievalService {
       });
 
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(`Minimax API error: ${error.message || response.statusText}`);
+        const errorData = (await response.json()) as {message?: string};
+        throw new Error(`Minimax API error: ${errorData.message || response.statusText}`);
       }
 
-      const data = await response.json();
+      const data = (await response.json()) as {
+        data?: Array<{embedding: number[]}>;
+      };
 
       // Minimax returns embeddings in data.data array
       if (!data.data || !Array.isArray(data.data) || data.data.length === 0) {
@@ -85,7 +85,7 @@ export class FAQRetrievalService {
 
       return data.data[0].embedding;
     } catch (error) {
-      this.logger.error('Error getting embedding from Minimax', error);
+      console.error('Error getting embedding from Minimax', error);
       throw error;
     }
   }
