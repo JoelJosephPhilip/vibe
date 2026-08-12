@@ -44,6 +44,7 @@ import {
   MoreVertical,
   MoreVerticalIcon,
   MessageSquareQuote,
+  MessagesSquare,
   NotebookPen,
 } from "lucide-react"
 import { useQueryClient } from "@tanstack/react-query"
@@ -1467,6 +1468,18 @@ function VersionCard({
     storePageAndNavigate("/teacher/courses/reflections")
   }
 
+  const goToDoubts = () => {
+    setCurrentCourse({
+      courseId: courseId,
+      versionId: selectedVersionId ? selectedVersionId : null,
+      moduleId: null,
+      sectionId: null,
+      itemId: null,
+      watchItemId: null,
+    })
+    storePageAndNavigate("/teacher/courses/doubts")
+  }
+
   const viewInstructors = () => {
     // Set course info in store and navigate to instructors page
     setCurrentCourse({
@@ -1822,6 +1835,15 @@ function VersionCard({
                       >
                         <NotebookPen className="mr-2 h-4 w-4" />
                         Reflections
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          goToDoubts();
+                        }}
+                      >
+                        <MessagesSquare className="mr-2 h-4 w-4" />
+                        Student Doubts
                       </DropdownMenuItem>
                       <DropdownMenuItem onClick={configureCohorts}>
                         <Layers className="mr-2 h-4 w-4" />
