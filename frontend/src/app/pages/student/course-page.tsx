@@ -229,6 +229,16 @@ export default function CoursePage() {
   // floating control is used.
   const pauseVideoForControl = useCallback(() => setPauseSignal((n) => n + 1), []);
 
+  // Playback position, plus the moment the discussion panel was opened at — a
+  // doubt anchors to where the learner actually was, not where they end up.
+  const [currentVideoTime, setCurrentVideoTime] = useState(0);
+  const [askAtSeconds, setAskAtSeconds] = useState(0);
+  const [seekRequest, setSeekRequest] = useState<{ time: number; nonce: number }>();
+  const requestSeek = useCallback(
+    (time: number) => setSeekRequest((prev) => ({ time, nonce: (prev?.nonce ?? 0) + 1 })),
+    [],
+  );
+
   // Fullscreen is entered from the "Continue" click that brings the student here.
   // Exit it when they leave the learn page so fullscreen is scoped to this page only.
   useEffect(() => {
@@ -1930,6 +1940,8 @@ return false;
                   pauseVid={pauseVid || showProctorDialog || alertVisible}
                   pauseSignal={pauseSignal}
                   awayPaused={awayPaused || drawerOpen || needsFullscreen}
+                  onTimeUpdate={setCurrentVideoTime}
+                  seekRequest={seekRequest}
                   displayNextLesson={false}
                   setQuizPassed={setQuizPassed}
                   anomalies={anomalies}
@@ -1986,6 +1998,8 @@ return false;
               }
               setIsFlagModalOpen(true);
             } else {
+              // Freeze the moment the panel opened — the composer anchors here.
+              if (id === "discussion") setAskAtSeconds(currentVideoTime);
               setAiSheet(id);
             }
           }}
@@ -2143,7 +2157,27 @@ return false;
       />
 
       {/* AI companion placeholder surfaces (chat / talk / discussion) */}
-      <AiActionSheet active={aiSheet} onClose={() => setAiSheet(null)} />
+      <AiActionSheet
+        active={aiSheet}
+        onClose={() => setAiSheet(null)}
+        doubtContext={
+          currentItem?.type === "VIDEO" && COURSE_ID && VERSION_ID
+            ? {
+                itemRef: {
+                  itemId: currentItem._id.toString(),
+                  courseId: COURSE_ID,
+                  courseVersionId: VERSION_ID,
+                },
+                cohortId: COHORT_ID || undefined,
+                sectionId: sectionId || undefined,
+                askAtSeconds,
+                seekForwardEnabled: proctoringData?.settings.seekForwardEnabled || false,
+                currentTime: currentVideoTime,
+                onSeek: requestSeek,
+              }
+            : undefined
+        }
+      />
 
       {/* Report (flag) — real, existing feature */}
       <FlagModal

@@ -72,6 +72,10 @@ export interface ItemContainerProps {
   pauseSignal?: number;
   /** Sustained away-pause (cursor left page); auto-resumes on return if it was playing. */
   awayPaused?: boolean;
+  /** Throttled playback position, forwarded from the video player. */
+  onTimeUpdate?: (seconds: number) => void;
+  /** Bump `nonce` to seek the video; forward seeks obey seekForwardEnabled. */
+  seekRequest?: { time: number; nonce: number };
   displayNextLesson?: boolean;
   setQuizPassed?: (passed: number) => void; // Function to update quizPassed
   anomalies?: string[];

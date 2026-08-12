@@ -40,6 +40,14 @@ export interface VideoProps {
    * video auto-resumes (unless blocked by a proctoring anomaly/gesture).
    */
   awayPaused?: boolean;
+  /** Throttled (~1/s) playback position, so panels can anchor to the moment. */
+  onTimeUpdate?: (seconds: number) => void;
+  /**
+   * Imperative seek. Bump `nonce` to request a jump to `time`. Honours the same
+   * rule as the progress bar: backward always, forward only when
+   * seekForwardEnabled — otherwise the request is ignored.
+   */
+  seekRequest?: { time: number; nonce: number };
 }
 
 

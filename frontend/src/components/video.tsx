@@ -58,7 +58,7 @@ function parseTimeToSeconds(timeStr: string): number {
   }
 }
 
-export default function Video({ URL, source, assetId, startTime, nextItemId, endTime, points, anomalies, readyToDetect, rewindVid, pauseVid, doGesture = false, onNext, isProgressUpdating, onDurationChange, keyboardLockEnabled = true, focusMode = false, linearProgressionEnabled, seekForwardEnabled, isCompleted, isAlreadyWatched, completedItemIdsRef, pauseSignal, awayPaused = false }: VideoProps) {
+export default function Video({ URL, source, assetId, startTime, nextItemId, endTime, points, anomalies, readyToDetect, rewindVid, pauseVid, doGesture = false, onNext, isProgressUpdating, onDurationChange, keyboardLockEnabled = true, focusMode = false, linearProgressionEnabled, seekForwardEnabled, isCompleted, isAlreadyWatched, completedItemIdsRef, pauseSignal, awayPaused = false, onTimeUpdate, seekRequest }: VideoProps) {
   /**
    * An uploaded lesson streams HLS instead of embedding YouTube. Everything else
    * in this component — proctoring, seek gating, watch-time, overlays, keyboard
@@ -558,6 +558,42 @@ export default function Video({ URL, source, assetId, startTime, nextItemId, end
     pauseSignalSeenRef.current = pauseSignal;
     playerRef.current?.pauseVideo?.();
   }, [pauseSignal]);
+
+  // Imperative seek requested by a panel (e.g. jumping to a doubt's timestamp).
+  // Mirrors the progress-bar rule at the bottom of this file: seeking backward is
+  // always allowed, forward only when seekForwardEnabled — otherwise the request
+  // is dropped so this can't become a way around the no-skip proctoring setting.
+  const seekRequestSeenRef = useRef<number | undefined>(seekRequest?.nonce);
+  useEffect(() => {
+    if (seekRequest === undefined) return;
+    if (seekRequestSeenRef.current === seekRequest.nonce) return;
+    seekRequestSeenRef.current = seekRequest.nonce;
+
+    const player = playerRef.current;
+    if (!player || typeof player.seekTo !== 'function') return;
+
+    const maxSeekTime = endTimeSeconds > 0 ? endTimeSeconds : duration;
+    const target = Math.max(
+      startTimeSeconds,
+      Math.min(seekRequest.time, maxSeekTime || seekRequest.time),
+    );
+
+    if (!seekForwardEnabled && target > currentTime) {
+      toast.error('You are not allowed to seek forward');
+      return;
+    }
+    player.seekTo(target, true);
+  }, [seekRequest, seekForwardEnabled, currentTime, startTimeSeconds, endTimeSeconds, duration]);
+
+  // Report playback position outward, throttled to ~1/s.
+  const lastReportedTimeRef = useRef(-1);
+  useEffect(() => {
+    if (!onTimeUpdate) return;
+    const whole = Math.floor(currentTime);
+    if (whole === lastReportedTimeRef.current) return;
+    lastReportedTimeRef.current = whole;
+    onTimeUpdate(currentTime);
+  }, [currentTime, onTimeUpdate]);
 
   // "Stepped away" pause (cursor left the page). Remembers whether the video was
   // playing and AUTO-RESUMES when the learner returns — but only if it was

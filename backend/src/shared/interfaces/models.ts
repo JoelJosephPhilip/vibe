@@ -1044,6 +1044,44 @@ export interface IAnnouncement {
   cohortName?: string;
 }
 
+export type DoubtStatus = 'OPEN' | 'RESOLVED';
+
+export interface IDoubtReply {
+  _id: ID;
+  userId: ID;
+  userName: string;
+  role: 'STUDENT' | 'INSTRUCTOR';
+  content: string;
+  isHidden: boolean;
+  isDeleted?: boolean;
+  createdAt: Date;
+}
+
+/**
+ * A student's question anchored to a moment in a video item. `videoTimestamp`
+ * is display metadata reported by the client — never gate access on it.
+ */
+export interface IDoubt {
+  _id?: ID;
+  itemId: ID;
+  courseId: ID;
+  courseVersionId: ID;
+  cohortId?: ID;
+  moduleId?: ID;
+  sectionId?: ID;
+  userId: ID;
+  userName: string;
+  videoTimestamp: number;
+  content: string;
+  status: DoubtStatus;
+  replies: IDoubtReply[];
+  isHidden: boolean;
+  isDeleted?: boolean;
+  deletedAt?: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 // export type AuditCategory =
 //   | "COURSE"
 //   | "COURSE_VERSION"
