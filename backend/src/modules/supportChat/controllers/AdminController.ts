@@ -1,13 +1,15 @@
 import { inject, injectable } from 'inversify';
 import {
-  controller,
-  httpPost,
-  httpGet,
-  httpPut,
-  httpDelete,
-  requestBody,
-  pathParams,
-  queryParams,
+  JsonController,
+  Post,
+  Get,
+  Put,
+  Delete,
+  Body,
+  Params,
+  QueryParams,
+  Authorized,
+  CurrentUser,
 } from 'routing-controllers';
 import { ObjectId } from 'mongodb';
 import {
@@ -15,19 +17,19 @@ import {
   FAQCategory,
   IFAQ,
   SUPPORT_CHAT_TYPES,
-} from '../types';
-import { AdminService } from '../services';
-import { Authorized, CurrentUser } from '@/shared/decorators';
+} from '../types.js';
+import { AdminService } from '../services/index.js';
 
-@controller('/api/admin/support')
+// The app applies a global '/api' routePrefix, so it must not be repeated here.
+@JsonController('/admin/support')
 @injectable()
 export class AdminController {
   constructor(@inject(SUPPORT_CHAT_TYPES.AdminService) private adminService: AdminService) {}
 
-  @httpGet('/dashboard')
-  @Authorized('admin', 'staff')
+  @Get('/dashboard')
+  @Authorized(['admin', 'staff'])
   async getDashboard(
-    @queryParams() query: { courseId?: string; startDate?: string; endDate?: string }
+    @QueryParams() query: { courseId?: string; startDate?: string; endDate?: string }
   ) {
     const courseId = query.courseId ? new ObjectId(query.courseId) : undefined;
     const startDate = query.startDate ? new Date(query.startDate) : undefined;
@@ -42,10 +44,10 @@ export class AdminController {
     };
   }
 
-  @httpGet('/questions')
-  @Authorized('admin', 'staff')
+  @Get('/questions')
+  @Authorized(['admin', 'staff'])
   async getQuestions(
-    @queryParams() query: { status?: string; page?: string; limit?: string; courseId?: string }
+    @QueryParams() query: { status?: string; page?: string; limit?: string; courseId?: string }
   ) {
     const limit = query.limit ? parseInt(query.limit, 10) : 50;
     const courseId = query.courseId ? new ObjectId(query.courseId) : undefined;
@@ -58,12 +60,12 @@ export class AdminController {
     };
   }
 
-  @httpPost('/questions/:questionId/respond')
-  @Authorized('admin', 'staff')
+  @Post('/questions/:questionId/respond')
+  @Authorized(['admin', 'staff'])
   async respondToQuestion(
     @CurrentUser() user: any,
-    @pathParams() params: { questionId: string },
-    @requestBody() request: AdminResponseRequest
+    @Params() params: { questionId: string },
+    @Body() request: AdminResponseRequest
   ) {
     const questionId = new ObjectId(params.questionId);
     const adminUserId = new ObjectId(user.id);
@@ -71,16 +73,16 @@ export class AdminController {
     return await this.adminService.respondToQuestion(questionId, adminUserId, request);
   }
 
-  @httpPut('/questions/:questionId/resolve')
-  @Authorized('admin', 'staff')
-  async resolveQuestion(@pathParams() params: { questionId: string }) {
+  @Put('/questions/:questionId/resolve')
+  @Authorized(['admin', 'staff'])
+  async resolveQuestion(@Params() params: { questionId: string }) {
     const questionId = new ObjectId(params.questionId);
     return await this.adminService.markQuestionResolved(questionId);
   }
 
-  @httpGet('/faqs')
-  @Authorized('admin', 'staff')
-  async getFAQs(@queryParams() query: { category?: string }) {
+  @Get('/faqs')
+  @Authorized(['admin', 'staff'])
+  async getFAQs(@QueryParams() query: { category?: string }) {
     const category = query.category ? (query.category as FAQCategory) : undefined;
     const faqs = await this.adminService.getAllFAQs(category);
 
@@ -90,11 +92,11 @@ export class AdminController {
     };
   }
 
-  @httpPost('/faqs')
-  @Authorized('admin', 'staff')
+  @Post('/faqs')
+  @Authorized(['admin', 'staff'])
   async createFAQ(
     @CurrentUser() user: any,
-    @requestBody()
+    @Body()
     faq: Omit<IFAQ, '_id' | 'createdAt' | 'updatedAt' | 'embedding' | 'createdBy'>
   ) {
     const adminUserId = new ObjectId(user.id);
@@ -110,19 +112,19 @@ export class AdminController {
     );
   }
 
-  @httpPut('/faqs/:faqId')
-  @Authorized('admin', 'staff')
+  @Put('/faqs/:faqId')
+  @Authorized(['admin', 'staff'])
   async updateFAQ(
-    @pathParams() params: { faqId: string },
-    @requestBody() updates: Partial<IFAQ>
+    @Params() params: { faqId: string },
+    @Body() updates: Partial<IFAQ>
   ) {
     const faqId = new ObjectId(params.faqId);
     return await this.adminService.updateFAQ(faqId, updates);
   }
 
-  @httpDelete('/faqs/:faqId')
-  @Authorized('admin', 'staff')
-  async deleteFAQ(@pathParams() params: { faqId: string }) {
+  @Delete('/faqs/:faqId')
+  @Authorized(['admin', 'staff'])
+  async deleteFAQ(@Params() params: { faqId: string }) {
     const faqId = new ObjectId(params.faqId);
     const deleted = await this.adminService.deleteFAQ(faqId);
 

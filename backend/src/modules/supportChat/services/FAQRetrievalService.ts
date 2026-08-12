@@ -4,19 +4,19 @@ import {
   FAQRetrievalResult,
   SUPPORT_CHAT_CONFIG,
   SUPPORT_CHAT_TYPES,
-} from '../types';
-import { FAQRepository } from '../repositories/providers/mongodb';
-import { Logger } from '@/shared/logger';
+} from '../types.js';
+import { FAQRepository } from '../repositories/providers/mongodb/index.js';
 
 @injectable()
 export class FAQRetrievalService {
-  private logger = Logger.getLogger('FAQRetrievalService');
+  // This repo has no logger abstraction; console keeps the existing call sites.
+  private logger = console;
   private minimaxApiKey = process.env.MINIMAX_API_KEY;
   private minimaxApiUrl = process.env.MINIMAX_API_URL || 'https://api.minimax.chat/v1';
   private minimaxEmbeddingModel =
     process.env.MINIMAX_EMBEDDING_MODEL || 'embo-01';
 
-  constructor(@inject(SUPPORT_CHAT_TYPES.FAQRepo) private faqRepo: FAQRepository) {
+  constructor(@inject(SUPPORT_CHAT_TYPES.FAQRepository) private faqRepo: FAQRepository) {
     if (!this.minimaxApiKey) {
       this.logger.warn('MINIMAX_API_KEY not set - embedding generation will fail');
     }
@@ -72,11 +72,13 @@ export class FAQRetrievalService {
       });
 
       if (!response.ok) {
-        const error = await response.json();
+        const error = (await response.json()) as {message?: string};
         throw new Error(`Minimax API error: ${error.message || response.statusText}`);
       }
 
-      const data = await response.json();
+      const data = (await response.json()) as {
+        data?: {embedding: number[]}[];
+      };
 
       // Minimax returns embeddings in data.data array
       if (!data.data || !Array.isArray(data.data) || data.data.length === 0) {

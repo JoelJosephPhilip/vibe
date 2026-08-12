@@ -4,22 +4,23 @@ import {
   ChatMessageResponse,
   ISupportQuestion,
   SupportQuestionStatus,
+  ResolutionRating,
   SUPPORT_CHAT_TYPES,
   ChatMessageRequest,
-} from '../types';
-import { FAQRetrievalService } from './FAQRetrievalService';
-import { FAQRepository } from '../repositories/providers/mongodb';
-import { SupportQuestionRepository } from '../repositories/providers/mongodb';
-import { Logger } from '@/shared/logger';
+} from '../types.js';
+import { FAQRetrievalService } from './FAQRetrievalService.js';
+import { FAQRepository } from '../repositories/providers/mongodb/index.js';
+import { SupportQuestionRepository } from '../repositories/providers/mongodb/index.js';
 
 @injectable()
 export class ChatService {
-  private logger = Logger.getLogger('ChatService');
+  // This repo has no logger abstraction; console keeps the existing call sites.
+  private logger = console;
 
   constructor(
     @inject(SUPPORT_CHAT_TYPES.FAQRetrievalService) private faqRetrieval: FAQRetrievalService,
-    @inject(SUPPORT_CHAT_TYPES.FAQRepo) private faqRepo: FAQRepository,
-    @inject(SUPPORT_CHAT_TYPES.SupportQuestionRepo) private questionRepo: SupportQuestionRepository
+    @inject(SUPPORT_CHAT_TYPES.FAQRepository) private faqRepo: FAQRepository,
+    @inject(SUPPORT_CHAT_TYPES.SupportQuestionRepository) private questionRepo: SupportQuestionRepository
   ) {}
 
   async handleUserQuestion(
@@ -101,7 +102,7 @@ export class ChatService {
 
   async rateResolution(
     questionId: ObjectId,
-    rating: 'helpful' | 'not_helpful'
+    rating: ResolutionRating
   ): Promise<ISupportQuestion | null> {
     try {
       const updated = await this.questionRepo.setResolutionRating(questionId, rating);

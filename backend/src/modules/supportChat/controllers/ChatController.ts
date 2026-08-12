@@ -1,29 +1,31 @@
 import { inject, injectable } from 'inversify';
 import {
-  controller,
-  httpPost,
-  httpGet,
-  httpPatch,
-  requestBody,
-  pathParams,
-  queryParams,
+  JsonController,
+  Post,
+  Get,
+  Patch,
+  Body,
+  Params,
+  QueryParams,
+  Authorized,
+  CurrentUser,
 } from 'routing-controllers';
 import { ObjectId } from 'mongodb';
-import { ChatMessageRequest, ChatMessageResponse, SUPPORT_CHAT_TYPES } from '../types';
-import { ChatService } from '../services';
-import { Authorized, CurrentUser } from '@/shared/decorators';
+import { ChatMessageRequest, ChatMessageResponse, ResolutionRating, SUPPORT_CHAT_TYPES } from '../types.js';
+import { ChatService } from '../services/index.js';
 
-@controller('/api/support/chat')
+// The app applies a global '/api' routePrefix, so it must not be repeated here.
+@JsonController('/support/chat')
 @injectable()
 export class ChatController {
   constructor(@inject(SUPPORT_CHAT_TYPES.ChatService) private chatService: ChatService) {}
 
-  @httpPost('/message')
+  @Post('/message')
   @Authorized('user')
   async sendMessage(
     @CurrentUser() user: any,
-    @requestBody() messageRequest: ChatMessageRequest,
-    @queryParams() query: { courseId?: string; courseVersionId?: string; cohortId?: string }
+    @Body() messageRequest: ChatMessageRequest,
+    @QueryParams() query: { courseId?: string; courseVersionId?: string; cohortId?: string }
   ): Promise<ChatMessageResponse> {
     const userId = new ObjectId(user.id);
     const courseId = query.courseId ? new ObjectId(query.courseId) : undefined;
@@ -39,11 +41,11 @@ export class ChatController {
     );
   }
 
-  @httpGet('/history')
+  @Get('/history')
   @Authorized('user')
   async getHistory(
     @CurrentUser() user: any,
-    @queryParams() query: { limit?: string }
+    @QueryParams() query: { limit?: string }
   ) {
     const userId = new ObjectId(user.id);
     const limit = query.limit ? parseInt(query.limit, 10) : 50;
@@ -56,11 +58,11 @@ export class ChatController {
     };
   }
 
-  @httpGet('/:questionId')
+  @Get('/:questionId')
   @Authorized('user')
   async getQuestion(
     @CurrentUser() user: any,
-    @pathParams() params: { questionId: string }
+    @Params() params: { questionId: string }
   ) {
     const questionId = new ObjectId(params.questionId);
     const question = await this.chatService.getQuestion(questionId);
@@ -77,12 +79,12 @@ export class ChatController {
     return question;
   }
 
-  @httpPatch('/:questionId/rate')
+  @Patch('/:questionId/rate')
   @Authorized('user')
   async rateQuestion(
     @CurrentUser() user: any,
-    @pathParams() params: { questionId: string },
-    @requestBody() body: { rating: 'helpful' | 'not_helpful' }
+    @Params() params: { questionId: string },
+    @Body() body: { rating: ResolutionRating }
   ) {
     const questionId = new ObjectId(params.questionId);
     const question = await this.chatService.getQuestion(questionId);
@@ -99,8 +101,8 @@ export class ChatController {
     return await this.chatService.rateResolution(questionId, body.rating);
   }
 
-  @httpGet('/faqs/search')
-  async searchFAQs(@queryParams() query: { search?: string; category?: string }) {
+  @Get('/faqs/search')
+  async searchFAQs(@QueryParams() query: { search?: string; category?: string }) {
     // This would be implemented with FAQ retrieval and search logic
     // For now, returning placeholder
     return {

@@ -8,19 +8,19 @@ import {
   SUPPORT_CHAT_TYPES,
   FAQCategory,
   FAQSource,
-} from '../types';
-import { FAQRepository } from '../repositories/providers/mongodb';
-import { SupportQuestionRepository } from '../repositories/providers/mongodb';
-import { FAQRetrievalService } from './FAQRetrievalService';
-import { Logger } from '@/shared/logger';
+} from '../types.js';
+import { FAQRepository } from '../repositories/providers/mongodb/index.js';
+import { SupportQuestionRepository } from '../repositories/providers/mongodb/index.js';
+import { FAQRetrievalService } from './FAQRetrievalService.js';
 
 @injectable()
 export class AdminService {
-  private logger = Logger.getLogger('AdminService');
+  // This repo has no logger abstraction; console keeps the existing call sites.
+  private logger = console;
 
   constructor(
-    @inject(SUPPORT_CHAT_TYPES.FAQRepo) private faqRepo: FAQRepository,
-    @inject(SUPPORT_CHAT_TYPES.SupportQuestionRepo) private questionRepo: SupportQuestionRepository,
+    @inject(SUPPORT_CHAT_TYPES.FAQRepository) private faqRepo: FAQRepository,
+    @inject(SUPPORT_CHAT_TYPES.SupportQuestionRepository) private questionRepo: SupportQuestionRepository,
     @inject(SUPPORT_CHAT_TYPES.FAQRetrievalService) private faqRetrieval: FAQRetrievalService
   ) {}
 
@@ -133,7 +133,8 @@ export class AdminService {
   }
 
   async createFAQ(
-    faq: Omit<IFAQ, '_id' | 'createdAt' | 'updatedAt' | 'embedding'>,
+    // createdBy is supplied from the authenticated admin below, not the caller.
+    faq: Omit<IFAQ, '_id' | 'createdAt' | 'updatedAt' | 'embedding' | 'createdBy'>,
     adminUserId: ObjectId
   ): Promise<IFAQ> {
     try {
