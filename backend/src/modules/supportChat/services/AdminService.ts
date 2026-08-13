@@ -12,12 +12,15 @@ import {
 import { FAQRepository } from '../repositories/providers/mongodb/index.js';
 import { SupportQuestionRepository } from '../repositories/providers/mongodb/index.js';
 import { FAQRetrievalService } from './FAQRetrievalService.js';
+
 @injectable()
 export class AdminService {
+  // This repo has no logger abstraction; console keeps the existing call sites.
+  private logger = console;
 
   constructor(
-    @inject(SUPPORT_CHAT_TYPES.FAQRepo) private faqRepo: FAQRepository,
-    @inject(SUPPORT_CHAT_TYPES.SupportQuestionRepo) private questionRepo: SupportQuestionRepository,
+    @inject(SUPPORT_CHAT_TYPES.FAQRepository) private faqRepo: FAQRepository,
+    @inject(SUPPORT_CHAT_TYPES.SupportQuestionRepository) private questionRepo: SupportQuestionRepository,
     @inject(SUPPORT_CHAT_TYPES.FAQRetrievalService) private faqRetrieval: FAQRetrievalService
   ) {}
 
@@ -30,7 +33,7 @@ export class AdminService {
       }
       return await this.questionRepo.findPending(limit);
     } catch (error) {
-      console.error('Error fetching pending questions', error);
+      this.logger.error('Error fetching pending questions', error);
       throw error;
     }
   }
@@ -72,7 +75,7 @@ export class AdminService {
         // Link FAQ to original question
         await this.questionRepo.linkFaqCreated(questionId, newFAQ._id!);
 
-        console.log(`Created FAQ ${newFAQ._id} from question ${questionId}`);
+        this.logger.info(`Created FAQ ${newFAQ._id} from question ${questionId}`);
       }
 
       // Set admin response on question
@@ -82,11 +85,11 @@ export class AdminService {
         adminUserId
       );
 
-      console.log(`Admin ${adminUserId} responded to question ${questionId}`);
+      this.logger.info(`Admin ${adminUserId} responded to question ${questionId}`);
 
       return updated;
     } catch (error) {
-      console.error('Error responding to question', error);
+      this.logger.error('Error responding to question', error);
       throw error;
     }
   }
@@ -112,7 +115,7 @@ export class AdminService {
         satisfactionRate,
       };
     } catch (error) {
-      console.error('Error fetching dashboard stats', error);
+      this.logger.error('Error fetching dashboard stats', error);
       throw error;
     }
   }
@@ -124,12 +127,13 @@ export class AdminService {
         category,
       });
     } catch (error) {
-      console.error('Error fetching FAQs', error);
+      this.logger.error('Error fetching FAQs', error);
       throw error;
     }
   }
 
   async createFAQ(
+    // createdBy is supplied from the authenticated admin below, not the caller.
     faq: Omit<IFAQ, '_id' | 'createdAt' | 'updatedAt' | 'embedding' | 'createdBy'>,
     adminUserId: ObjectId
   ): Promise<IFAQ> {
@@ -142,7 +146,7 @@ export class AdminService {
         createdBy: adminUserId,
       });
     } catch (error) {
-      console.error('Error creating FAQ', error);
+      this.logger.error('Error creating FAQ', error);
       throw error;
     }
   }
@@ -151,7 +155,7 @@ export class AdminService {
     try {
       return await this.faqRepo.updateById(faqId, updates);
     } catch (error) {
-      console.error('Error updating FAQ', error);
+      this.logger.error('Error updating FAQ', error);
       throw error;
     }
   }
@@ -160,11 +164,11 @@ export class AdminService {
     try {
       const result = await this.faqRepo.deleteById(faqId);
       if (result) {
-        console.log(`FAQ ${faqId} deleted`);
+        this.logger.info(`FAQ ${faqId} deleted`);
       }
       return result;
     } catch (error) {
-      console.error('Error deleting FAQ', error);
+      this.logger.error('Error deleting FAQ', error);
       throw error;
     }
   }
@@ -173,7 +177,7 @@ export class AdminService {
     try {
       return await this.questionRepo.updateStatus(questionId, SupportQuestionStatus.RESOLVED);
     } catch (error) {
-      console.error('Error marking question resolved', error);
+      this.logger.error('Error marking question resolved', error);
       throw error;
     }
   }

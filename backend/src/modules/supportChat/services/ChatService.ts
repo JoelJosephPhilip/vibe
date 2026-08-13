@@ -4,19 +4,23 @@ import {
   ChatMessageResponse,
   ISupportQuestion,
   SupportQuestionStatus,
+  ResolutionRating,
   SUPPORT_CHAT_TYPES,
   ChatMessageRequest,
 } from '../types.js';
 import { FAQRetrievalService } from './FAQRetrievalService.js';
 import { FAQRepository } from '../repositories/providers/mongodb/index.js';
 import { SupportQuestionRepository } from '../repositories/providers/mongodb/index.js';
+
 @injectable()
 export class ChatService {
+  // This repo has no logger abstraction; console keeps the existing call sites.
+  private logger = console;
 
   constructor(
     @inject(SUPPORT_CHAT_TYPES.FAQRetrievalService) private faqRetrieval: FAQRetrievalService,
-    @inject(SUPPORT_CHAT_TYPES.FAQRepo) private faqRepo: FAQRepository,
-    @inject(SUPPORT_CHAT_TYPES.SupportQuestionRepo) private questionRepo: SupportQuestionRepository
+    @inject(SUPPORT_CHAT_TYPES.FAQRepository) private faqRepo: FAQRepository,
+    @inject(SUPPORT_CHAT_TYPES.SupportQuestionRepository) private questionRepo: SupportQuestionRepository
   ) {}
 
   async handleUserQuestion(
@@ -73,7 +77,7 @@ export class ChatService {
         questionId: question._id!,
       };
     } catch (error) {
-      console.error('Error handling user question', error);
+      this.logger.error('Error handling user question', error);
       throw error;
     }
   }
@@ -82,7 +86,7 @@ export class ChatService {
     try {
       return await this.questionRepo.findByUserId(userId, limit);
     } catch (error) {
-      console.error('Error fetching question history', error);
+      this.logger.error('Error fetching question history', error);
       throw error;
     }
   }
@@ -91,21 +95,21 @@ export class ChatService {
     try {
       return await this.questionRepo.findById(questionId);
     } catch (error) {
-      console.error('Error fetching question', error);
+      this.logger.error('Error fetching question', error);
       throw error;
     }
   }
 
   async rateResolution(
     questionId: ObjectId,
-    rating: 'helpful' | 'not_helpful'
+    rating: ResolutionRating
   ): Promise<ISupportQuestion | null> {
     try {
       const updated = await this.questionRepo.setResolutionRating(questionId, rating);
-      console.log(`Question ${questionId} rated as ${rating}`);
+      this.logger.info(`Question ${questionId} rated as ${rating}`);
       return updated;
     } catch (error) {
-      console.error('Error rating resolution', error);
+      this.logger.error('Error rating resolution', error);
       throw error;
     }
   }

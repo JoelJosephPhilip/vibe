@@ -123,10 +123,8 @@ export class SupportQuestionRepository {
     return this.updateById(id, { faqCreatedFromThis: faqId });
   }
 
-  async setResolutionRating(id: ObjectId, rating: 'helpful' | 'not_helpful'): Promise<ISupportQuestion | null> {
-    const resolutionRating =
-      rating === 'helpful' ? ResolutionRating.HELPFUL : ResolutionRating.NOT_HELPFUL;
-    return this.updateById(id, { resolutionRating });
+  async setResolutionRating(id: ObjectId, rating: ResolutionRating): Promise<ISupportQuestion | null> {
+    return this.updateById(id, { resolutionRating: rating });
   }
 
   async markAsSeenByLearner(id: ObjectId): Promise<ISupportQuestion | null> {
