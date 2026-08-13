@@ -79,10 +79,19 @@ export function DoubtVideoModal({ doubt, onClose, onSelectDoubt }: Props) {
     const videoId = getYouTubeId(details.URL);
     if (!videoId) return;
 
+    // YT.Player replaces whatever element it's given with its own iframe,
+    // which leaves React's virtual DOM pointing at a node that's no longer
+    // there — the next reconcile then crashes with a removeChild error.
+    // Handing it a plain element we created ourselves, outside JSX, keeps
+    // that swap entirely off React's radar.
+    const mountPoint = document.createElement("div");
+    mountPoint.className = "h-full w-full";
+    ytContainerRef.current.appendChild(mountPoint);
+
     let cancelled = false;
     loadYouTubeIframeApi().then((YT) => {
-      if (cancelled || !ytContainerRef.current) return;
-      const player = new YT.Player(ytContainerRef.current, {
+      if (cancelled) return;
+      const player = new YT.Player(mountPoint, {
         videoId,
         playerVars: { autoplay: 1, start: at, rel: 0 },
         events: {
@@ -101,6 +110,7 @@ export function DoubtVideoModal({ doubt, onClose, onSelectDoubt }: Props) {
       cancelled = true;
       ytPlayerRef.current?.destroy?.();
       ytPlayerRef.current = null;
+      mountPoint.remove();
     };
     // `at` deliberately excluded — this effect (re)builds the player, it
     // shouldn't rerun just because the active doubt's timestamp changed.
