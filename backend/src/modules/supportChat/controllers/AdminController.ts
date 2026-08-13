@@ -26,7 +26,7 @@ export class AdminController {
   constructor(@inject(SUPPORT_CHAT_TYPES.AdminService) private adminService: AdminService) {}
 
   @Get('/dashboard')
-  @Authorized())
+  @Authorized()
   async getDashboard(
     @QueryParams() query: { courseId?: string; startDate?: string; endDate?: string }
   ) {
@@ -44,7 +44,7 @@ export class AdminController {
   }
 
   @Get('/questions')
-  @Authorized())
+  @Authorized()
   async getQuestions(
     @QueryParams() query: { status?: string; page?: string; limit?: string; courseId?: string }
   ) {
@@ -60,7 +60,7 @@ export class AdminController {
   }
 
   @Post('/questions/:questionId/respond')
-  @Authorized())
+  @Authorized()
   async respondToQuestion(
     @CurrentUser() user: any,
     @Param('questionId') questionId: string,
@@ -73,14 +73,14 @@ export class AdminController {
   }
 
   @Put('/questions/:questionId/resolve')
-  @Authorized())
+  @Authorized()
   async resolveQuestion(@Param('questionId') questionId: string) {
     const qId = new ObjectId(questionId);
     return await this.adminService.markQuestionResolved(qId);
   }
 
   @Get('/faqs')
-  @Authorized())
+  @Authorized()
   async getFAQs(@queryParams() query: { category?: string }) {
     const category = query.category ? (query.category as FAQCategory) : undefined;
     const faqs = await this.adminService.getAllFAQs(category);
@@ -92,7 +92,7 @@ export class AdminController {
   }
 
   @Post('/faqs')
-  @Authorized())
+  @Authorized()
   async createFAQ(
     @CurrentUser() user: any,
     @Body()
@@ -112,7 +112,7 @@ export class AdminController {
   }
 
   @Put('/faqs/:faqId')
-  @Authorized())
+  @Authorized()
   async updateFAQ(
     @Param('faqId') faqId: string,
     @Body() updates: Partial<IFAQ>
@@ -122,7 +122,7 @@ export class AdminController {
   }
 
   @Delete('/faqs/:faqId')
-  @Authorized())
+  @Authorized()
   async deleteFAQ(@Param('faqId') faqId: string) {
     const id = new ObjectId(faqId);
     const deleted = await this.adminService.deleteFAQ(id);

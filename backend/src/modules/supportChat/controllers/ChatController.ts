@@ -20,7 +20,7 @@ export class ChatController {
   constructor(@inject(SUPPORT_CHAT_TYPES.ChatService) private chatService: ChatService) {}
 
   @Post('/message')
-  @Authorized())
+  @Authorized()
   async sendMessage(
     @CurrentUser() user: any,
     @Body() messageRequest: ChatMessageRequest,
@@ -41,7 +41,7 @@ export class ChatController {
   }
 
   @Get('/history')
-  @Authorized())
+  @Authorized()
   async getHistory(
     @CurrentUser() user: any,
     @QueryParams() query: { limit?: string }
@@ -58,7 +58,7 @@ export class ChatController {
   }
 
   @Get('/:questionId')
-  @Authorized())
+  @Authorized()
   async getQuestion(
     @CurrentUser() user: any,
     @Param('questionId') questionId: string
@@ -79,7 +79,7 @@ export class ChatController {
   }
 
   @Patch('/:questionId/rate')
-  @Authorized())
+  @Authorized()
   async rateQuestion(
     @CurrentUser() user: any,
     @Param('questionId') questionId: string,
