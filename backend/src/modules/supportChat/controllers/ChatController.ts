@@ -5,33 +5,26 @@ import {
   Get,
   Patch,
   Body,
-  Params,
+  Param,
   QueryParams,
   Authorized,
   CurrentUser,
 } from 'routing-controllers';
 import { ObjectId } from 'mongodb';
-import { ChatMessageRequest, ChatMessageResponse, ResolutionRating, SUPPORT_CHAT_TYPES } from '../types.js';
+import { ChatMessageRequest, ChatMessageResponse, SUPPORT_CHAT_TYPES } from '../types.js';
 import { ChatService } from '../services/index.js';
-import {
-  ChatHistoryQuery,
-  ChatMessageQuery,
-  FaqSearchQuery,
-  SupportQuestionIdParams,
-} from '../validators/SupportChatParams.js';
 
-// The app applies a global '/api' routePrefix, so it must not be repeated here.
-@JsonController('/support/chat')
+@JsonController('/api/support/chat')
 @injectable()
 export class ChatController {
   constructor(@inject(SUPPORT_CHAT_TYPES.ChatService) private chatService: ChatService) {}
 
   @Post('/message')
-  @Authorized('user')
+  @Authorized()
   async sendMessage(
     @CurrentUser() user: any,
     @Body() messageRequest: ChatMessageRequest,
-    @QueryParams() query: ChatMessageQuery
+    @QueryParams() query: { courseId?: string; courseVersionId?: string; cohortId?: string }
   ): Promise<ChatMessageResponse> {
     const userId = new ObjectId(user.id);
     const courseId = query.courseId ? new ObjectId(query.courseId) : undefined;
@@ -48,10 +41,10 @@ export class ChatController {
   }
 
   @Get('/history')
-  @Authorized('user')
+  @Authorized()
   async getHistory(
     @CurrentUser() user: any,
-    @QueryParams() query: ChatHistoryQuery
+    @QueryParams() query: { limit?: string }
   ) {
     const userId = new ObjectId(user.id);
     const limit = query.limit ? parseInt(query.limit, 10) : 50;
@@ -65,13 +58,13 @@ export class ChatController {
   }
 
   @Get('/:questionId')
-  @Authorized('user')
+  @Authorized()
   async getQuestion(
     @CurrentUser() user: any,
-    @Params() params: SupportQuestionIdParams
+    @Param('questionId') questionId: string
   ) {
-    const questionId = new ObjectId(params.questionId);
-    const question = await this.chatService.getQuestion(questionId);
+    const qId = new ObjectId(questionId);
+    const question = await this.chatService.getQuestion(qId);
 
     if (!question) {
       throw new Error('Question not found');
@@ -86,14 +79,14 @@ export class ChatController {
   }
 
   @Patch('/:questionId/rate')
-  @Authorized('user')
+  @Authorized()
   async rateQuestion(
     @CurrentUser() user: any,
-    @Params() params: SupportQuestionIdParams,
-    @Body() body: { rating: ResolutionRating }
+    @Param('questionId') questionId: string,
+    @Body() body: { rating: 'helpful' | 'not_helpful' }
   ) {
-    const questionId = new ObjectId(params.questionId);
-    const question = await this.chatService.getQuestion(questionId);
+    const qId2 = new ObjectId(questionId);
+    const question = await this.chatService.getQuestion(qId2);
 
     if (!question) {
       throw new Error('Question not found');
@@ -104,11 +97,11 @@ export class ChatController {
       throw new Error('Unauthorized');
     }
 
-    return await this.chatService.rateResolution(questionId, body.rating);
+    return await this.chatService.rateResolution(qId2, body.rating);
   }
 
   @Get('/faqs/search')
-  async searchFAQs(@QueryParams() query: FaqSearchQuery) {
+  async searchFAQs(@QueryParams() query: { search?: string; category?: string }) {
     // This would be implemented with FAQ retrieval and search logic
     // For now, returning placeholder
     return {

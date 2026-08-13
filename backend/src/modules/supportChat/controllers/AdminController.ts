@@ -6,7 +6,7 @@ import {
   Put,
   Delete,
   Body,
-  Params,
+  Param,
   QueryParams,
   Authorized,
   CurrentUser,
@@ -19,24 +19,16 @@ import {
   SUPPORT_CHAT_TYPES,
 } from '../types.js';
 import { AdminService } from '../services/index.js';
-import {
-  AdminDashboardQuery,
-  AdminFaqsQuery,
-  AdminQuestionsQuery,
-  SupportFaqIdParams,
-  SupportQuestionIdParams,
-} from '../validators/SupportChatParams.js';
 
-// The app applies a global '/api' routePrefix, so it must not be repeated here.
-@JsonController('/admin/support')
+@JsonController('/api/admin/support')
 @injectable()
 export class AdminController {
   constructor(@inject(SUPPORT_CHAT_TYPES.AdminService) private adminService: AdminService) {}
 
   @Get('/dashboard')
-  @Authorized(['admin', 'staff'])
+  @Authorized()
   async getDashboard(
-    @QueryParams() query: AdminDashboardQuery
+    @QueryParams() query: { courseId?: string; startDate?: string; endDate?: string }
   ) {
     const courseId = query.courseId ? new ObjectId(query.courseId) : undefined;
     const startDate = query.startDate ? new Date(query.startDate) : undefined;
@@ -52,9 +44,9 @@ export class AdminController {
   }
 
   @Get('/questions')
-  @Authorized(['admin', 'staff'])
+  @Authorized()
   async getQuestions(
-    @QueryParams() query: AdminQuestionsQuery
+    @QueryParams() query: { status?: string; page?: string; limit?: string; courseId?: string }
   ) {
     const limit = query.limit ? parseInt(query.limit, 10) : 50;
     const courseId = query.courseId ? new ObjectId(query.courseId) : undefined;
@@ -68,28 +60,28 @@ export class AdminController {
   }
 
   @Post('/questions/:questionId/respond')
-  @Authorized(['admin', 'staff'])
+  @Authorized()
   async respondToQuestion(
     @CurrentUser() user: any,
-    @Params() params: SupportQuestionIdParams,
+    @Param('questionId') questionId: string,
     @Body() request: AdminResponseRequest
   ) {
-    const questionId = new ObjectId(params.questionId);
+    const qId = new ObjectId(questionId);
     const adminUserId = new ObjectId(user.id);
 
-    return await this.adminService.respondToQuestion(questionId, adminUserId, request);
+    return await this.adminService.respondToQuestion(qId, adminUserId, request);
   }
 
   @Put('/questions/:questionId/resolve')
-  @Authorized(['admin', 'staff'])
-  async resolveQuestion(@Params() params: SupportQuestionIdParams) {
-    const questionId = new ObjectId(params.questionId);
-    return await this.adminService.markQuestionResolved(questionId);
+  @Authorized()
+  async resolveQuestion(@Param('questionId') questionId: string) {
+    const qId = new ObjectId(questionId);
+    return await this.adminService.markQuestionResolved(qId);
   }
 
   @Get('/faqs')
-  @Authorized(['admin', 'staff'])
-  async getFAQs(@QueryParams() query: AdminFaqsQuery) {
+  @Authorized()
+  async getFAQs(@QueryParams() query: { category?: string }) {
     const category = query.category ? (query.category as FAQCategory) : undefined;
     const faqs = await this.adminService.getAllFAQs(category);
 
@@ -100,7 +92,7 @@ export class AdminController {
   }
 
   @Post('/faqs')
-  @Authorized(['admin', 'staff'])
+  @Authorized()
   async createFAQ(
     @CurrentUser() user: any,
     @Body()
@@ -120,20 +112,20 @@ export class AdminController {
   }
 
   @Put('/faqs/:faqId')
-  @Authorized(['admin', 'staff'])
+  @Authorized()
   async updateFAQ(
-    @Params() params: SupportFaqIdParams,
+    @Param('faqId') faqId: string,
     @Body() updates: Partial<IFAQ>
   ) {
-    const faqId = new ObjectId(params.faqId);
-    return await this.adminService.updateFAQ(faqId, updates);
+    const id = new ObjectId(faqId);
+    return await this.adminService.updateFAQ(id, updates);
   }
 
   @Delete('/faqs/:faqId')
-  @Authorized(['admin', 'staff'])
-  async deleteFAQ(@Params() params: SupportFaqIdParams) {
-    const faqId = new ObjectId(params.faqId);
-    const deleted = await this.adminService.deleteFAQ(faqId);
+  @Authorized()
+  async deleteFAQ(@Param('faqId') faqId: string) {
+    const id = new ObjectId(faqId);
+    const deleted = await this.adminService.deleteFAQ(id);
 
     return {
       success: deleted,

@@ -1,5 +1,5 @@
-import { inject, injectable } from 'inversify';
-import { ObjectId } from 'mongodb';
+import {inject, injectable} from 'inversify';
+import {ObjectId} from 'mongodb';
 import {
   AdminResponseRequest,
   IFAQ,
@@ -9,9 +9,10 @@ import {
   FAQCategory,
   FAQSource,
 } from '../types.js';
-import { FAQRepository } from '../repositories/providers/mongodb/index.js';
-import { SupportQuestionRepository } from '../repositories/providers/mongodb/index.js';
-import { FAQRetrievalService } from './FAQRetrievalService.js';
+import {FAQRepository} from '../repositories/providers/mongodb/index.js';
+import {SupportQuestionRepository} from '../repositories/providers/mongodb/index.js';
+import {FAQRetrievalService} from './FAQRetrievalService.js';
+
 @injectable()
 export class AdminService {
 
@@ -130,7 +131,7 @@ export class AdminService {
   }
 
   async createFAQ(
-    faq: Omit<IFAQ, '_id' | 'createdAt' | 'updatedAt' | 'embedding' | 'createdBy'>,
+    faq: Omit<IFAQ, '_id' | 'createdAt' | 'updatedAt' | 'embedding'>,
     adminUserId: ObjectId
   ): Promise<IFAQ> {
     try {
@@ -160,7 +161,7 @@ export class AdminService {
     try {
       const result = await this.faqRepo.deleteById(faqId);
       if (result) {
-        console.log(`FAQ ${faqId} deleted`);
+        this.logger.info(`FAQ ${faqId} deleted`);
       }
       return result;
     } catch (error) {

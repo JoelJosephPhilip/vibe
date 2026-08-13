@@ -7,10 +7,10 @@ import { ChatController, AdminController } from './controllers/index.js';
 export const supportChatContainerModule = new ContainerModule(options => {
   // Repositories
   options.bind(FAQRepository).toSelf().inSingletonScope();
-  options.bind(SUPPORT_CHAT_TYPES.FAQRepository).to(FAQRepository);
+  options.bind(SUPPORT_CHAT_TYPES.FAQRepo).to(FAQRepository);
 
   options.bind(SupportQuestionRepository).toSelf().inSingletonScope();
-  options.bind(SUPPORT_CHAT_TYPES.SupportQuestionRepository).to(SupportQuestionRepository);
+  options.bind(SUPPORT_CHAT_TYPES.SupportQuestionRepo).to(SupportQuestionRepository);
 
   // Services
   options.bind(FAQRetrievalService).toSelf().inSingletonScope();
@@ -23,6 +23,6 @@ export const supportChatContainerModule = new ContainerModule(options => {
   options.bind(SUPPORT_CHAT_TYPES.AdminService).to(AdminService);
 
   // Controllers
-  options.bind(ChatController).toSelf();
-  options.bind(AdminController).toSelf();
+  options.bind(ChatController).toSelf().inSingletonScope();
+  options.bind(AdminController).toSelf().inSingletonScope();
 });
