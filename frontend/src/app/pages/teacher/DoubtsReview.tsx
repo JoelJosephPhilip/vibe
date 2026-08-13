@@ -253,7 +253,11 @@ export default function DoubtsReview() {
         </div>
       )}
 
-      <DoubtVideoModal doubt={viewing} onClose={() => setViewing(null)} />
+      <DoubtVideoModal
+        doubt={viewing}
+        onClose={() => setViewing(null)}
+        onSelectDoubt={setViewing}
+      />
     </div>
   );
 }
