@@ -1,5 +1,6 @@
 import {useMutation, useQuery, useQueryClient} from '@tanstack/react-query';
 import {toast} from 'sonner';
+import {api} from '@/lib/openapi';
 import {doubtsApi, type DoubtItemRef} from '@/lib/api/doubts';
 
 /** How often the open panel refetches. Polling stands in for websockets. */
@@ -122,4 +123,34 @@ export function formatTimestamp(seconds: number): string {
   const m = Math.floor(total / 60);
   const s = total % 60;
   return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+/** Module/section names for a course version, so a doubt can say where it lives. */
+export function useCourseStructure(versionId: string) {
+  return api.useQuery(
+    'get',
+    '/courses/versions/{id}',
+    {params: {path: {id: versionId}}},
+    {enabled: Boolean(versionId)},
+  );
+}
+
+type CourseStructure = {
+  modules?: {
+    moduleId?: string;
+    name?: string;
+    sections?: {sectionId?: string; name?: string}[];
+  }[];
+};
+
+/** "Module name · Section name" for a doubt, or null until the structure loads / for legacy doubts. */
+export function findLessonLocation(
+  structure: CourseStructure | undefined,
+  moduleId?: string,
+  sectionId?: string,
+): string | null {
+  const mod = structure?.modules?.find((m) => m.moduleId === moduleId);
+  if (!mod) return null;
+  const section = mod.sections?.find((s) => s.sectionId === sectionId);
+  return section?.name ? `${mod.name} · ${section.name}` : mod.name ?? null;
 }
