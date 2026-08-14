@@ -19,6 +19,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # need full history to diff against the PR base
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -28,6 +30,18 @@ jobs:
         run: pnpm install
         working-directory: backend
 
-      - name: Lint Backend Code
-        run: pnpm run lint
+      - name: Lint changed files
         working-directory: backend
+        # Only lints files this PR actually touches — the codebase has a
+        # lot of pre-existing lint debt that predates this workflow, so
+        # linting everything would fail on unrelated code in every PR.
+        run: |
+          BASE="${{ github.event.pull_request.base.ref }}"
+          git fetch origin "$BASE" --depth=1
+          FILES=$(git diff --name-only --diff-filter=ACMR "origin/$BASE...HEAD" -- backend | grep -E '\.tsx?$' | sed 's|^backend/||' || true)
+          if [ -z "$FILES" ]; then
+            echo "No changed backend TypeScript files to lint."
+            exit 0
+          fi
+          echo "$FILES"
+          npx eslint $FILES

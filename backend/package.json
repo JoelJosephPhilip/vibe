@@ -11,6 +11,7 @@
     "watch:build": "nodemon --watch build --ext js --exec \"node build/index.js\"",
     "build": "tsc",
     "generate": "plop",
+    "lint": "gts lint",
     "test": "vitest --ui",
     "test:watch": "vitest run --watch",
     "test:ci": "vitest run --coverage --reporter=html",

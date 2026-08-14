@@ -68,6 +68,7 @@ jobs:
         run: pnpm test:ci
         env:
           DB_URL: ${{ secrets.DB_URL }}
+          FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
 
       - name: Remove IP from MongoDB Atlas Access List
         if: always()
