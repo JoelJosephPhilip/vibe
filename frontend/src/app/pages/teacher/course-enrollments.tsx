@@ -19,6 +19,9 @@ import { WatchTimeDisplay } from "./WatchTimeDisplay"
 import TimeSlotsModal from "./components/TimeSlotsModal"
 import { useStudentCurrentProgressPath, useMoveToCohort } from "@/hooks/hooks"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { StudentEmotionJourney } from "./components/StudentEmotionJourney";
+import { ItemEmotionStats } from "./components/ItemEmotionStats";
+
 import { Checkbox } from "@/components/ui/checkbox"
 import { MoreVertical, Trash2 } from "lucide-react"
 import CourseBackButton from "./CourseBackButton";
@@ -1730,6 +1733,13 @@ function CourseEnrollments() {
                   </Button>
                 </div>
 
+                <Tabs defaultValue="details" className="w-full">
+                  <TabsList className="mb-4">
+                    <TabsTrigger value="details">Progress Details</TabsTrigger>
+                    <TabsTrigger value="emotions">😊 Emotions</TabsTrigger>
+                  </TabsList>
+
+                  <TabsContent value="details" className="space-y-6">
                 {/* Enhanced Student Info & Content Summary */}
                 <div className="flex flex-wrap items-center gap-4 p-6 bg-gradient-to-r from-muted/30 to-muted/10 rounded-xl border border-border">
                   <Avatar className="h-12 w-12 border-2 border-primary/20 shadow-md">
@@ -2056,6 +2066,17 @@ function CourseEnrollments() {
                     </div>
                   </div>
                 )}
+
+                  </TabsContent>
+
+                  <TabsContent value="emotions">
+                    <StudentEmotionJourney
+                      courseId={courseId || ""}
+                      courseVersionId={versionId || ""}
+                      studentName={selectedUser.name}
+                    />
+                  </TabsContent>
+                </Tabs>
               </div>
             </div>
           )}
@@ -2973,17 +2994,17 @@ function SectionItems({
   return (
     <div className="ml-6 space-y-1">
       {itemsWithDefaultNames.map((item: any) => (
-        <div
-          key={item._id}
-          className={`flex items-center gap-2 p-2 rounded-lg cursor-pointer transition-colors ${selectedViewItem === item._id ? "bg-primary/10 border border-primary/20" : "hover:bg-muted/10"
-            }`}
-          onClick={() => onItemSelect(item._id, item.type, item.displayName)}
-        >
-          <span className="flex-shrink-0">{getItemIcon(item.type)}</span>
-          <span className="text-sm text-foreground">{item.displayName}</span>
-          <Badge variant="outline" className="ml-auto text-xs">
-            {item.type}
-          </Badge>
+        <div key={item._id} className={`flex flex-col gap-2 p-2 rounded-lg cursor-pointer transition-colors ${selectedViewItem === item._id ? "bg-primary/10 border border-primary/20" : "hover:bg-muted/10"}`} onClick={() => onItemSelect(item._id, item.type, item.displayName)}>
+          <div className="flex items-center gap-2 w-full">
+            <span className="flex-shrink-0">{getItemIcon(item.type)}</span>
+            <span className="text-sm text-foreground">{item.displayName}</span>
+            <Badge variant="outline" className="ml-auto text-xs">
+              {item.type}
+            </Badge>
+          </div>
+          <div className="pl-6 w-full" onClick={(e) => e.stopPropagation()}>
+            <ItemEmotionStats itemId={item._id} itemName={item.displayName} />
+          </div>
         </div>
       ))}
     </div>
