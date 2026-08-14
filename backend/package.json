@@ -14,7 +14,7 @@
     "lint": "gts lint",
     "test": "vitest --ui",
     "test:watch": "vitest run --watch",
-    "test:ci": "vitest run --coverage --reporter=html",
+    "test:ci": "vitest run --coverage --reporter=default",
     "sentry:sourcemaps": "sentry-cli sourcemaps inject --org vicharana-shala --project vibe-server ./build && sentry-cli sourcemaps upload --org vicharana-shala --project vibe-server ./build"
   },
   "imports": {
