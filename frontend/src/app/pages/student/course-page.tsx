@@ -1255,7 +1255,7 @@ export default function CoursePage() {
         );
         const isVideoToQuizTransition =
           justFinishedItem?.type?.toLowerCase() === 'video' &&
-          nextItem?.type === 'quiz';
+          nextItem?.type?.toLowerCase() === 'quiz';
         if (
           isVideoToQuizTransition &&
           proctoringData?.settings?.crowdsourcedQuestionSubmissionEnabled === true &&
