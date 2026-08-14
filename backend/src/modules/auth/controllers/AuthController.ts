@@ -190,8 +190,15 @@ export class AuthController {
     }
 
     // Proceed with Firebase authentication
+    // Route through the Auth Emulator when FIREBASE_AUTH_EMULATOR_HOST is set (tests/local dev) —
+    // sign-up already does this via the Admin SDK, which respects that env var automatically;
+    // this raw REST call doesn't, so without this it looks for real-cloud users that only exist
+    // in the emulator's local user store.
+    const identityToolkitHost = process.env.FIREBASE_AUTH_EMULATOR_HOST
+      ? `http://${process.env.FIREBASE_AUTH_EMULATOR_HOST}/identitytoolkit.googleapis.com`
+      : 'https://identitytoolkit.googleapis.com';
     const data = await fetch(
-      `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${appConfig.firebase.apiKey}`,
+      `${identityToolkitHost}/v1/accounts:signInWithPassword?key=${appConfig.firebase.apiKey}`,
       {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
