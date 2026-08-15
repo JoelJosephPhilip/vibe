@@ -820,9 +820,9 @@ export class InviteService extends BaseService {
       );
 
     const allProctorsDisabled =
-      courseSettings.settings.proctors.detectors.every(
+      courseSettings?.settings?.proctors?.detectors?.every(
         (detector: any) => detector.settings.enabled === false,
-      );
+      ) ?? true;
 
     const emailMessage = this.createInviteEmailMessage(
       invite,

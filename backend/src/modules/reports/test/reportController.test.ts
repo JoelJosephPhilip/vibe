@@ -10,9 +10,12 @@ import Express from 'express';
 import * as Current from '#root/shared/functions/currentUserChecker.js';
 import {faker} from '@faker-js/faker';
 import {reportsContainerModules, reportsModuleOptions} from '../index.js';
+import {coursesModuleOptions} from '#root/modules/courses/index.js';
+import {createCourse, createVersion} from '#root/modules/courses/tests/utils/creationFunctions.js';
 import {afterAll, afterEach, beforeAll, describe, expect, it, vi} from 'vitest';
 import {InversifyAdapter} from '#root/inversify-adapter.js';
 import {ReportBody} from '../classes/index.js';
+import {FirebaseAuthService} from '#root/modules/auth/services/FirebaseAuthService.js';
 import {sharedContainerModule} from '#root/container.js';
 import {authContainerModule} from '#root/modules/auth/container.js';
 import {usersContainerModule} from '#root/modules/users/container.js';
@@ -86,7 +89,7 @@ describe('Report Controller Integration Test', () => {
       .mockImplementation(async (action: Action) => {
         if (action.request.headers.authorization) {
           const token = action.request.headers.authorization.split(' ')[1];
-          if (token === 'user1') {
+          if (token === 'user1' || token === 'test-token') {
             return user1;
           } else if (token === 'user2') {
             return user2;
@@ -95,8 +98,25 @@ describe('Report Controller Integration Test', () => {
         return user2;
       });
 
+    // The real @Ability() decorator (unlike currentUserChecker above)
+    // verifies the bearer token itself via getCurrentUserFromToken — mock it
+    // too, keyed the same way, so 'Bearer user1'/'Bearer user2' resolve.
+    // 'test-token' is treated as user1 (admin) since the shared
+    // creationFunctions.ts course-setup helpers hardcode that token.
+    vi.spyOn(
+      FirebaseAuthService.prototype,
+      'getCurrentUserFromToken',
+    ).mockImplementation(async (token: string) => {
+      if (token === 'user1' || token === 'test-token') return user1 as any;
+      if (token === 'user2') return user2 as any;
+      return user2 as any;
+    });
+
     const options: RoutingControllersOptions = {
-      controllers: reportsModuleOptions.controllers,
+      controllers: [
+        ...(reportsModuleOptions.controllers as Function[]),
+        ...(coursesModuleOptions.controllers as Function[]),
+      ],
       middlewares: reportsModuleOptions.middlewares,
       defaultErrorHandler: reportsModuleOptions.defaultErrorHandler,
       authorizationChecker: () => true,
@@ -119,10 +139,13 @@ describe('Report Controller Integration Test', () => {
   describe('Report Creation', () => {
     describe('success', () => {
       it('should create a report', async () => {
+        const course = await createCourse(app);
+        const version = await createVersion(app, course._id.toString());
+
         const reportPayload: ReportBody = {
-          courseId: faker.database.mongodbObjectId(),
+          courseId: course._id.toString(),
           entityId: faker.database.mongodbObjectId(),
-          versionId: faker.database.mongodbObjectId(),
+          versionId: version._id.toString(),
           entityType: 'ARTICLE',
           reason: 'test flag reason',
         };

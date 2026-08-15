@@ -41,7 +41,7 @@ class QuestionRepository {
   ): Promise<BaseQuestion | null> {
     await this.init();
     const result = await this.questionCollection.findOne(
-      {_id: new ObjectId(questionId)},
+      {_id: new ObjectId(questionId), isDeleted: {$ne: true}},
       {session},
     );
     return result;

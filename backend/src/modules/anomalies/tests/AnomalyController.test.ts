@@ -5,10 +5,12 @@ import { useContainer, useExpressServer } from 'routing-controllers';
 import { faker } from '@faker-js/faker';
 import { describe, it, beforeEach, beforeAll, expect, vi } from 'vitest';
 import { AnomalyController } from '../controllers/AnomalyController.js';
+import { CloudStorageService } from '../services/CloudStorageService.js';
 import { HttpErrorHandler, ItemType } from '#shared/index.js';
 import { InversifyAdapter } from '#root/inversify-adapter.js';
 import { Container, ContainerModule } from 'inversify';
 import { AuthController } from '#root/modules/auth/controllers/AuthController.js';
+import { FirebaseAuthService } from '#root/modules/auth/services/FirebaseAuthService.js';
 import { createCourse, createVersion, createModule, createSection } from '#root/modules/courses/tests/utils/creationFunctions.js';
 import { CreateItemBody } from '#root/modules/courses/classes/index.js';
 import { CourseController } from '#root/modules/courses/controllers/CourseController.js';
@@ -79,6 +81,16 @@ describe('Anomaly Controller Integration Tests', () => {
       middlewares: [HttpErrorHandler],
       authorizationChecker: () => true, // Mock authorization for testing
     });
+    // @Ability() (unlike @Authorized()) verifies the bearer token itself via
+    // getCurrentUserFromToken — mock it so requests carrying a fake token
+    // resolve to an admin user instead of failing token verification.
+    vi.spyOn(
+      FirebaseAuthService.prototype,
+      'getCurrentUserFromToken',
+    ).mockResolvedValue({
+      _id: faker.database.mongodbObjectId(),
+      roles: ['admin'],
+    } as any);
     const course = await createCourse(app);
     const version = await createVersion(app, course._id.toString());
     const module = await createModule(app, version._id.toString());
@@ -112,6 +124,7 @@ describe('Anomaly Controller Integration Tests', () => {
       .post(
         `/courses/versions/${version._id}/modules/${module.version.modules[0].moduleId}/sections/${section.version.modules[0].sections[0].sectionId}/items`,
       )
+      .set('Authorization', 'Bearer test-token')
       .send(itemPayload);
     expect(itemResponse.status).toBe(201);
     expect(itemResponse.body.itemsGroup.items.length).toBe(1);
@@ -137,6 +150,20 @@ describe('Anomaly Controller Integration Tests', () => {
 
   beforeEach(() => {
     vi.restoreAllMocks();
+    // restoreAllMocks wipes the beforeAll spy above — re-establish it so
+    // @Ability()-gated routes keep resolving the mocked admin user.
+    vi.spyOn(
+      FirebaseAuthService.prototype,
+      'getCurrentUserFromToken',
+    ).mockResolvedValue({
+      _id: faker.database.mongodbObjectId(),
+      roles: ['admin'],
+    } as any);
+    // uploadAnomaly hits real Google Cloud Storage, which has no credentials
+    // in this test environment — mock it so the test only exercises our code.
+    vi.spyOn(CloudStorageService.prototype, 'uploadAnomaly').mockResolvedValue(
+      'mock/anomaly/path.jpg',
+    );
   });
 
   describe('ANOMALY RECORDING', () => {
@@ -144,31 +171,41 @@ describe('Anomaly Controller Integration Tests', () => {
       it('should record an anomaly with a valid image and data', async () => {
         // Act
         const response = await request(app)
-          .post('/anomalies/record')
-          .field('data', JSON.stringify(anomalyData))
+          .post('/anomalies/record/image')
+          .set('Authorization', 'Bearer test-token')
+          .field('type', anomalyData.type)
+          .field('courseId', anomalyData.courseId as string)
+          .field('versionId', anomalyData.versionId as string)
+          .field('itemId', anomalyData.itemId as string)
           .attach('image', validImageBuffer, 'test-image.jpg')
           .expect(201);
 
         // Assert
-        expect(response.body.success).toBe(true);
-        expect(response.body.hexId).toBeDefined();
-        expect(response.body.message).toBe(
-          'Anomaly recorded successfully with compressed & encrypted image',
-        );
+        expect(response.body._id).toBeDefined();
+        expect(response.body.type).toBe(anomalyData.type);
+        expect(response.body.courseId).toBe(anomalyData.courseId);
+        expect(response.body.versionId).toBe(anomalyData.versionId);
+        expect(response.body.itemId).toBe(anomalyData.itemId);
+        // fileName/fileType are deleted from the response once a file is attached
+        expect(response.body.fileName).toBeUndefined();
       }, 60000);
     });
 
     describe('Error Scenarios', () => {
-      it('should return 500 for invalid image data', async () => {
+      it('should return 404 when the course version does not exist', async () => {
         // Act
         const response = await request(app)
-          .post('/anomalies/record')
-          .field('data', JSON.stringify(anomalyData))
-          .attach('image', Buffer.from('fake-image-data'), 'test-image.jpg')
-          .expect(500);
+          .post('/anomalies/record/image')
+          .set('Authorization', 'Bearer test-token')
+          .field('type', anomalyData.type)
+          .field('courseId', anomalyData.courseId as string)
+          .field('versionId', faker.database.mongodbObjectId())
+          .field('itemId', anomalyData.itemId as string)
+          .attach('image', validImageBuffer, 'test-image.jpg')
+          .expect(404);
 
         // Assert
-        expect(response.body.message).toContain('Input buffer contains unsupported image format');
+        expect(response.body.message).toContain('Course Version not found');
       });
     });
   });

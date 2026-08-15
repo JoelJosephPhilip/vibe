@@ -16,6 +16,7 @@ import {quizzesModuleOptions} from '../index.js';
 import {coursesModuleOptions} from '#root/modules/courses/index.js';
 import {authContainerModule} from '#root/modules/auth/container.js';
 import {authModuleOptions} from '#root/modules/auth/index.js';
+import {usersModuleOptions} from '#root/modules/users/index.js';
 import {beforeAll, describe, it, expect, beforeEach, vi} from 'vitest';
 import {ItemType} from '#root/shared/interfaces/models.js';
 import {FirebaseAuthService} from '#root/modules/auth/services/FirebaseAuthService.js';
@@ -73,6 +74,7 @@ describe('QuizController', {timeout: 30000}, () => {
         ...(quizzesModuleOptions.controllers as Function[]),
         ...(coursesModuleOptions.controllers as Function[]),
         ...(authModuleOptions.controllers as Function[]),
+        ...(usersModuleOptions.controllers as Function[]),
       ],
       authorizationChecker: async () => true,
       defaultErrorHandler: true,
@@ -96,7 +98,7 @@ describe('QuizController', {timeout: 30000}, () => {
       firstName: faker.person.firstName().replace(/[^a-zA-Z]/g, ''),
       lastName: faker.person.lastName().replace(/[^a-zA-Z]/g, ''),
     };
-    const signupRes = await request(app).post('/auth/signup').send(signUpBody);
+    const signupRes = await request(app).post('/auth/signup').set('Authorization', 'Bearer test-token').send(signUpBody);
     expect(signupRes.status).toBe(201);
     userId = signupRes.body.userId;
     expect(userId).toBeTruthy();
@@ -104,14 +106,32 @@ describe('QuizController', {timeout: 30000}, () => {
       FirebaseAuthService.prototype,
       'getUserIdFromReq',
     ).mockResolvedValue(userId);
+    // @Ability() (unlike currentUserChecker above) verifies the bearer token
+    // itself via getCurrentUserFromToken — mock it so 'Bearer test-token'
+    // resolves to this same signed-up user.
+    vi.spyOn(
+      FirebaseAuthService.prototype,
+      'getCurrentUserFromToken',
+    ).mockResolvedValue({_id: userId, roles: 'admin'} as any);
   }, 900000);
+
+  beforeEach(() => {
+    // Some tests below may swap this mock to act as a different user — this
+    // re-establishes the original identity before every test.
+    vi.spyOn(
+      FirebaseAuthService.prototype,
+      'getCurrentUserFromToken',
+    ).mockResolvedValue({_id: userId, roles: 'admin'} as any);
+  });
 
   // Helper: create a quiz and question bank, return their IDs
   async function setupQuizWithBank() {
     // 1. Create course
-    const courseRes = await request(app).post('/courses').send({
+    const courseRes = await request(app).post('/courses').set('Authorization', 'Bearer test-token').send({
       name: 'Course for QuizController',
       description: 'Course for quiz controller test',
+      versionName: 'Version 1',
+      versionDescription: 'Initial version',
     });
     expect(courseRes.status).toBe(201);
     const courseId = courseRes.body._id;
@@ -119,8 +139,9 @@ describe('QuizController', {timeout: 30000}, () => {
     // 2. Create course version
     const versionRes = await request(app)
       .post(`/courses/${courseId}/versions`)
+      .set('Authorization', 'Bearer test-token')
       .send({
-        version: 'v1',
+        version: 'v1.0',
         description: 'Version for quiz controller test',
       });
     expect(versionRes.status).toBe(201);
@@ -129,6 +150,7 @@ describe('QuizController', {timeout: 30000}, () => {
     // 3. Create module
     const moduleRes = await request(app)
       .post(`/courses/versions/${versionId}/modules`)
+      .set('Authorization', 'Bearer test-token')
       .send({
         name: 'Module for QuizController',
         description: 'Module for quiz controller test',
@@ -139,6 +161,7 @@ describe('QuizController', {timeout: 30000}, () => {
     // 4. Create section
     const sectionRes = await request(app)
       .post(`/courses/versions/${versionId}/modules/${moduleId}/sections`)
+      .set('Authorization', 'Bearer test-token')
       .send({
         name: 'Section for QuizController',
         description: 'Section for quiz controller test',
@@ -155,6 +178,7 @@ describe('QuizController', {timeout: 30000}, () => {
       isParameterized: false,
       parameters: [],
       hint: 'Simple math.',
+      priority: 'LOW',
     };
     const solution = {
       decimalPrecision: 0,
@@ -162,7 +186,7 @@ describe('QuizController', {timeout: 30000}, () => {
       lowerLimit: 0,
       value: 4,
     };
-    const questionRes = await request(app).post('/quizzes/questions').send({
+    const questionRes = await request(app).post('/quizzes/questions').set('Authorization', 'Bearer test-token').send({
       question: questionData,
       solution,
     });
@@ -172,6 +196,7 @@ describe('QuizController', {timeout: 30000}, () => {
     // 6. Create question bank with the question
     const bankRes = await request(app)
       .post('/quizzes/question-bank')
+      .set('Authorization', 'Bearer test-token')
       .send({
         courseId,
         courseVersionId: versionId,
@@ -208,6 +233,7 @@ describe('QuizController', {timeout: 30000}, () => {
       .post(
         `/courses/versions/${versionId}/modules/${moduleId}/sections/${sectionId}/items`,
       )
+      .set('Authorization', 'Bearer test-token')
       .send(itemPayload);
     expect(itemRes.status).toBe(201);
     const quizId = itemRes.body.createdItem._id;
@@ -215,13 +241,55 @@ describe('QuizController', {timeout: 30000}, () => {
     // Add question bank to quiz item
     const updateQuizRes = await request(app)
       .post(`/quizzes/quiz/${quizId}/bank`)
+      .set('Authorization', 'Bearer test-token')
       .send({
         bankId: questionBankId,
         count: 1,
       });
     expect(updateQuizRes.status).toBe(200);
 
-    return {quizId, questionBankId, questionId};
+    // handleQuizeProgressAfterSubmission (run after a quiz submission)
+    // requires an initialized Progress record, which only gets created for
+    // STUDENT enrollments — the course-creator user (used for all setup
+    // above) is auto-enrolled as INSTRUCTOR and has none. Sign up and enroll
+    // a separate student so tests that attempt/submit the quiz can use them.
+    const studentSignUpRes = await request(app)
+      .post('/auth/signup')
+      .set('Authorization', 'Bearer test-token')
+      .send({
+        email: faker.internet.email(),
+        password: 'TestPassword123!',
+        firstName: faker.person.firstName().replace(/[^a-zA-Z]/g, ''),
+        lastName: faker.person.lastName().replace(/[^a-zA-Z]/g, ''),
+      });
+    expect(studentSignUpRes.status).toBe(201);
+    const studentId = studentSignUpRes.body.userId;
+    const studentEnrollRes = await request(app)
+      .post(`/users/${studentId}/enrollments/courses/${courseId}/versions/${versionId}`)
+      .set('Authorization', 'Bearer test-token')
+      .send({role: 'STUDENT'});
+    expect(studentEnrollRes.status).toBe(200);
+
+    return {quizId, questionBankId, questionId, courseId, versionId, studentId};
+  }
+
+  // Switches getCurrentUserFromToken to resolve as the given student so
+  // subsequent requests (e.g. creating/submitting an attempt) act as them.
+  function actAsStudent(studentId: string) {
+    vi.spyOn(
+      FirebaseAuthService.prototype,
+      'getCurrentUserFromToken',
+    ).mockResolvedValue({_id: studentId, roles: 'user'} as any);
+  }
+
+  // Switches back to the course-creator/instructor identity — call after
+  // actAsStudent() once the attempt/submit steps are done, since viewing
+  // another user's metrics/analytics/submissions requires instructor rights.
+  function actAsInstructor() {
+    vi.spyOn(
+      FirebaseAuthService.prototype,
+      'getCurrentUserFromToken',
+    ).mockResolvedValue({_id: userId, roles: 'admin'} as any);
   }
 
   describe('POST /quizzes/quiz/:quizId/bank', () => {
@@ -229,6 +297,7 @@ describe('QuizController', {timeout: 30000}, () => {
       const {quizId, questionBankId} = await setupQuizWithBank();
       const res = await request(app)
         .post(`/quizzes/quiz/${quizId}/bank`)
+        .set('Authorization', 'Bearer test-token')
         .send({bankId: questionBankId, count: 1});
       expect(res.status).toBe(500);
       expect(res.body.message).toMatch(
@@ -242,10 +311,11 @@ describe('QuizController', {timeout: 30000}, () => {
       const {quizId, questionBankId} = await setupQuizWithBank();
       await request(app)
         .post(`/quizzes/quiz/${quizId}/bank`)
+        .set('Authorization', 'Bearer test-token')
         .send({bankId: questionBankId, count: 1});
       const res = await request(app).delete(
         `/quizzes/quiz/${quizId}/bank/${questionBankId}`,
-      );
+      ).set('Authorization', 'Bearer test-token');
       expect(res.status).toBe(200);
     });
   });
@@ -255,6 +325,7 @@ describe('QuizController', {timeout: 30000}, () => {
       const {quizId, questionBankId} = await setupQuizWithBank();
       const res = await request(app)
         .patch(`/quizzes/quiz/${quizId}/bank`)
+        .set('Authorization', 'Bearer test-token')
         .send({bankId: questionBankId, count: 2});
       expect(res.status).toBe(200);
     });
@@ -263,7 +334,7 @@ describe('QuizController', {timeout: 30000}, () => {
   describe('GET /quizzes/quiz/:quizId/bank', () => {
     it('should get all question banks for a quiz', async () => {
       const {quizId, questionBankId} = await setupQuizWithBank();
-      const res = await request(app).get(`/quizzes/quiz/${quizId}/bank`);
+      const res = await request(app).get(`/quizzes/quiz/${quizId}/bank`).set('Authorization', 'Bearer test-token');
       expect(res.status).toBe(200);
       expect(res.body[0].bankId).toBe(questionBankId);
     });
@@ -271,12 +342,14 @@ describe('QuizController', {timeout: 30000}, () => {
 
   describe('GET /quizzes/quiz/:quizId/user/:userId', () => {
     it('should get user metrics for a quiz', async () => {
-      const {quizId, questionId} = await setupQuizWithBank();
-      const attemptRes = await request(app).post(`/quizzes/${quizId}/attempt`);
+      const {quizId, questionId, courseId, versionId, studentId} = await setupQuizWithBank();
+      actAsStudent(studentId);
+      const attemptRes = await request(app).post(`/quizzes/${quizId}/attempt`).set('Authorization', 'Bearer test-token');
       const attemptId = attemptRes.body.attemptId;
       // Attempt the question
       const submitRes = await request(app)
         .post(`/quizzes/${quizId}/attempt/${attemptId}/submit`)
+        .set('Authorization', 'Bearer test-token')
         .send({
           answers: [
             {
@@ -285,11 +358,14 @@ describe('QuizController', {timeout: 30000}, () => {
               answer: {value: 9},
             },
           ],
+          courseId,
+          courseVersionId: versionId,
         });
       expect(submitRes.status).toBe(200);
+      actAsInstructor();
       const res = await request(app).get(
-        `/quizzes/quiz/${quizId}/user/${userId}`,
-      );
+        `/quizzes/quiz/${quizId}/user/${studentId}`,
+      ).set('Authorization', 'Bearer test-token');
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty('quizId');
       expect(res.body).toHaveProperty('userId');
@@ -298,14 +374,16 @@ describe('QuizController', {timeout: 30000}, () => {
 
   describe('GET /quizzes/quiz/attempts/:attemptId', () => {
     it('should get quiz attempt details', async () => {
-      const {quizId, questionId} = await setupQuizWithBank();
+      const {quizId, questionId, courseId, versionId, studentId} = await setupQuizWithBank();
       // Create attempt
-      const attemptRes = await request(app).post(`/quizzes/${quizId}/attempt`);
+      actAsStudent(studentId);
+      const attemptRes = await request(app).post(`/quizzes/${quizId}/attempt`).set('Authorization', 'Bearer test-token');
       expect(attemptRes.status).toBe(200);
       const attemptId = attemptRes.body.attemptId;
       // Save answers (optional, but makes attempt more realistic)
       await request(app)
         .post(`/quizzes/${quizId}/attempt/${attemptId}/save`)
+        .set('Authorization', 'Bearer test-token')
         .send({
           answers: [
             {
@@ -316,7 +394,8 @@ describe('QuizController', {timeout: 30000}, () => {
           ],
         });
 
-      const res = await request(app).get(`/quizzes/quiz/attempts/${attemptId}`);
+      actAsInstructor();
+      const res = await request(app).get(`/quizzes/quiz/${quizId}/attempts/${attemptId}`).set('Authorization', 'Bearer test-token');
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty('quizId');
     });
@@ -324,14 +403,16 @@ describe('QuizController', {timeout: 30000}, () => {
 
   describe('GET /quizzes/quiz/submissions/:submissionId', () => {
     it('should get quiz submission details', async () => {
-      const {quizId, questionId} = await setupQuizWithBank();
+      const {quizId, questionId, courseId, versionId, studentId} = await setupQuizWithBank();
       // Create attempt
-      const attemptRes = await request(app).post(`/quizzes/${quizId}/attempt`);
+      actAsStudent(studentId);
+      const attemptRes = await request(app).post(`/quizzes/${quizId}/attempt`).set('Authorization', 'Bearer test-token');
       expect(attemptRes.status).toBe(200);
       const attemptId = attemptRes.body.attemptId;
       // Submit answers
       const submitRes = await request(app)
         .post(`/quizzes/${quizId}/attempt/${attemptId}/submit`)
+        .set('Authorization', 'Bearer test-token')
         .send({
           answers: [
             {
@@ -340,19 +421,22 @@ describe('QuizController', {timeout: 30000}, () => {
               answer: {value: 4},
             },
           ],
+          courseId,
+          courseVersionId: versionId,
         });
       expect(submitRes.status).toBe(200);
+      actAsInstructor();
       // get submissions for quiz
       const quizSubmissionRes = await request(app).get(
         `/quizzes/quiz/${quizId}/submissions`,
-      );
+      ).set('Authorization', 'Bearer test-token');
       expect(quizSubmissionRes.status).toBe(200);
-      expect(Array.isArray(quizSubmissionRes.body)).toBe(true);
+      expect(Array.isArray(quizSubmissionRes.body.data)).toBe(true);
       const submissionId =
-        quizSubmissionRes.body[0]._id || quizSubmissionRes.body[0].submissionId;
+        quizSubmissionRes.body.data[0]._id;
       const res = await request(app).get(
-        `/quizzes/quiz/submissions/${submissionId}`,
-      );
+        `/quizzes/quiz/${quizId}/submissions/${submissionId}`,
+      ).set('Authorization', 'Bearer test-token');
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty('quizId');
     });
@@ -361,7 +445,7 @@ describe('QuizController', {timeout: 30000}, () => {
   describe('GET /quizzes/quiz/:quizId/details', () => {
     it('should get quiz details', async () => {
       const {quizId} = await setupQuizWithBank();
-      const res = await request(app).get(`/quizzes/quiz/${quizId}/details`);
+      const res = await request(app).get(`/quizzes/quiz/${quizId}/details`).set('Authorization', 'Bearer test-token');
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty('name');
     });
@@ -369,12 +453,14 @@ describe('QuizController', {timeout: 30000}, () => {
 
   describe('GET /quizzes/quiz/:quizId/analytics', () => {
     it('should get quiz analytics', async () => {
-      const {quizId, questionId} = await setupQuizWithBank();
-      const attemptRes = await request(app).post(`/quizzes/${quizId}/attempt`);
+      const {quizId, questionId, courseId, versionId, studentId} = await setupQuizWithBank();
+      actAsStudent(studentId);
+      const attemptRes = await request(app).post(`/quizzes/${quizId}/attempt`).set('Authorization', 'Bearer test-token');
       const attemptId = attemptRes.body.attemptId;
       // Attempt the question
       const submitRes = await request(app)
         .post(`/quizzes/${quizId}/attempt/${attemptId}/submit`)
+        .set('Authorization', 'Bearer test-token')
         .send({
           answers: [
             {
@@ -383,9 +469,12 @@ describe('QuizController', {timeout: 30000}, () => {
               answer: {value: 9},
             },
           ],
+          courseId,
+          courseVersionId: versionId,
         });
       expect(submitRes.status).toBe(200);
-      const res = await request(app).get(`/quizzes/quiz/${quizId}/analytics`);
+      actAsInstructor();
+      const res = await request(app).get(`/quizzes/quiz/${quizId}/analytics`).set('Authorization', 'Bearer test-token');
       console.dir(res.body, {depth: null});
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty('totalAttempts');
@@ -394,12 +483,14 @@ describe('QuizController', {timeout: 30000}, () => {
 
   describe('GET /quizzes/quiz/:quizId/performance', () => {
     it('should get quiz performance stats', async () => {
-      const {quizId, questionId} = await setupQuizWithBank();
-      const attemptRes = await request(app).post(`/quizzes/${quizId}/attempt`);
+      const {quizId, questionId, courseId, versionId, studentId} = await setupQuizWithBank();
+      actAsStudent(studentId);
+      const attemptRes = await request(app).post(`/quizzes/${quizId}/attempt`).set('Authorization', 'Bearer test-token');
       const attemptId = attemptRes.body.attemptId;
       // Attempt the question
       const submitRes = await request(app)
         .post(`/quizzes/${quizId}/attempt/${attemptId}/submit`)
+        .set('Authorization', 'Bearer test-token')
         .send({
           answers: [
             {
@@ -408,9 +499,12 @@ describe('QuizController', {timeout: 30000}, () => {
               answer: {value: 9},
             },
           ],
+          courseId,
+          courseVersionId: versionId,
         });
       expect(submitRes.status).toBe(200);
-      const res = await request(app).get(`/quizzes/quiz/${quizId}/performance`);
+      actAsInstructor();
+      const res = await request(app).get(`/quizzes/quiz/${quizId}/performance`).set('Authorization', 'Bearer test-token');
       expect(res.status).toBe(200);
       expect(Array.isArray(res.body)).toBe(true);
     });
@@ -418,12 +512,14 @@ describe('QuizController', {timeout: 30000}, () => {
 
   describe('GET /quizzes/quiz/:quizId/results', () => {
     it('should get quiz results', async () => {
-      const {quizId, questionId} = await setupQuizWithBank();
-      const attemptRes = await request(app).post(`/quizzes/${quizId}/attempt`);
+      const {quizId, questionId, courseId, versionId, studentId} = await setupQuizWithBank();
+      actAsStudent(studentId);
+      const attemptRes = await request(app).post(`/quizzes/${quizId}/attempt`).set('Authorization', 'Bearer test-token');
       const attemptId = attemptRes.body.attemptId;
       // Attempt the question
       const submitRes = await request(app)
         .post(`/quizzes/${quizId}/attempt/${attemptId}/submit`)
+        .set('Authorization', 'Bearer test-token')
         .send({
           answers: [
             {
@@ -432,9 +528,12 @@ describe('QuizController', {timeout: 30000}, () => {
               answer: {value: 9},
             },
           ],
+          courseId,
+          courseVersionId: versionId,
         });
       expect(submitRes.status).toBe(200);
-      const res = await request(app).get(`/quizzes/quiz/${quizId}/results`);
+      actAsInstructor();
+      const res = await request(app).get(`/quizzes/quiz/${quizId}/results`).set('Authorization', 'Bearer test-token');
       expect(res.status).toBe(200);
       expect(Array.isArray(res.body)).toBe(true);
     });
@@ -443,7 +542,7 @@ describe('QuizController', {timeout: 30000}, () => {
   describe('GET /quizzes/quiz/:quizId/flagged', () => {
     it('should get flagged questions for a quiz', async () => {
       // const { quizId } = await setupQuizWithBank();
-      // const res = await request(app).get(`/quizzes/quiz/${quizId}/flagged`);
+      // const res = await request(app).get(`/quizzes/quiz/${quizId}/flagged`).set('Authorization', 'Bearer test-token');
       // expect(res.status).toBe(201);
       // No further assertion as flagged questions may not exist
     });
@@ -451,15 +550,17 @@ describe('QuizController', {timeout: 30000}, () => {
 
   describe('POST /quizzes/quiz/submission/:submissionId/score/:score', () => {
     it('should update quiz submission score', async () => {
-      const {quizId, questionId} = await setupQuizWithBank();
+      const {quizId, questionId, courseId, versionId, studentId} = await setupQuizWithBank();
       // Create attempt
-      const attemptRes = await request(app).post(`/quizzes/${quizId}/attempt`);
+      actAsStudent(studentId);
+      const attemptRes = await request(app).post(`/quizzes/${quizId}/attempt`).set('Authorization', 'Bearer test-token');
       expect(attemptRes.status).toBe(200);
       const attemptId = attemptRes.body.attemptId;
 
       // Submit answers
       const submitRes = await request(app)
         .post(`/quizzes/${quizId}/attempt/${attemptId}/submit`)
+        .set('Authorization', 'Bearer test-token')
         .send({
           answers: [
             {
@@ -468,30 +569,35 @@ describe('QuizController', {timeout: 30000}, () => {
               answer: {value: 4},
             },
           ],
+          courseId,
+          courseVersionId: versionId,
         });
       expect(submitRes.status).toBe(200);
+      actAsInstructor();
       // Get submission ID
       const quizSubmissionRes = await request(app).get(
         `/quizzes/quiz/${quizId}/submissions`,
-      );
+      ).set('Authorization', 'Bearer test-token');
       expect(quizSubmissionRes.status).toBe(200);
-      expect(Array.isArray(quizSubmissionRes.body)).toBe(true);
-      const submissionId = quizSubmissionRes.body[0]._id;
+      expect(Array.isArray(quizSubmissionRes.body.data)).toBe(true);
+      const submissionId = quizSubmissionRes.body.data[0]._id;
 
       // Update score
       const res = await request(app).post(
-        `/quizzes/quiz/submission/${submissionId}/score/5`,
-      );
+        `/quizzes/quiz/${quizId}/submission/${submissionId}/score/5`,
+      ).set('Authorization', 'Bearer test-token');
       expect(res.status).toBe(200);
     });
   });
 
   describe('POST /quizzes/quiz/submission/:submissionId/regrade', () => {
     it('should regrade a quiz submission', async () => {
-      const {quizId, questionId} = await setupQuizWithBank();
+      const {quizId, questionId, courseId, versionId, studentId} = await setupQuizWithBank();
       // Create attempt
+      actAsStudent(studentId);
       const attemptRes = await request(app)
         .post(`/quizzes/${quizId}/attempt`)
+        .set('Authorization', 'Bearer test-token')
         .send();
       expect(attemptRes.status).toBe(200);
       const attemptId = attemptRes.body.attemptId;
@@ -499,6 +605,7 @@ describe('QuizController', {timeout: 30000}, () => {
       // Submit answers
       const submitRes = await request(app)
         .post(`/quizzes/${quizId}/attempt/${attemptId}/submit`)
+        .set('Authorization', 'Bearer test-token')
         .send({
           answers: [
             {
@@ -507,24 +614,28 @@ describe('QuizController', {timeout: 30000}, () => {
               answer: {value: 4},
             },
           ],
+          courseId,
+          courseVersionId: versionId,
         });
       expect(submitRes.status).toBe(200);
+      actAsInstructor();
       // Get submission ID
       const quizSubmissionRes = await request(app).get(
         `/quizzes/quiz/${quizId}/submissions`,
-      );
+      ).set('Authorization', 'Bearer test-token');
       expect(quizSubmissionRes.status).toBe(200);
-      expect(Array.isArray(quizSubmissionRes.body)).toBe(true);
-      const submissionId = quizSubmissionRes.body[0]._id;
+      expect(Array.isArray(quizSubmissionRes.body.data)).toBe(true);
+      const submissionId = quizSubmissionRes.body.data[0]._id;
       // Regrade
       const res = await request(app)
-        .post(`/quizzes/quiz/submission/${submissionId}/regrade`)
+        .post(`/quizzes/quiz/${quizId}/submission/${submissionId}/regrade`)
+        .set('Authorization', 'Bearer test-token')
         .send({gradingStatus: 'FAILED'});
       expect(res.status).toBe(200);
       // get grading result
       const gradingRes = await request(app).get(
-        `/quizzes/quiz/submissions/${submissionId}`,
-      );
+        `/quizzes/quiz/${quizId}/submissions/${submissionId}`,
+      ).set('Authorization', 'Bearer test-token');
       expect(gradingRes.status).toBe(200);
       expect(gradingRes.body.gradingResult).toBeDefined();
       expect(gradingRes.body.gradingResult.gradingStatus).toBe('FAILED');
@@ -533,10 +644,12 @@ describe('QuizController', {timeout: 30000}, () => {
 
   describe('POST /quizzes/quiz/submission/:submissionId/question/:questionId/feedback', () => {
     it('should add feedback to a question in a submission', async () => {
-      const {quizId, questionId} = await setupQuizWithBank();
+      const {quizId, questionId, courseId, versionId, studentId} = await setupQuizWithBank();
       // Create attempt
+      actAsStudent(studentId);
       const attemptRes = await request(app)
         .post(`/quizzes/${quizId}/attempt`)
+        .set('Authorization', 'Bearer test-token')
         .send();
       expect(attemptRes.status).toBe(200);
       const attemptId = attemptRes.body.attemptId;
@@ -544,6 +657,7 @@ describe('QuizController', {timeout: 30000}, () => {
       // Submit answers
       const submitRes = await request(app)
         .post(`/quizzes/${quizId}/attempt/${attemptId}/submit`)
+        .set('Authorization', 'Bearer test-token')
         .send({
           answers: [
             {
@@ -552,27 +666,31 @@ describe('QuizController', {timeout: 30000}, () => {
               answer: {value: 4},
             },
           ],
+          courseId,
+          courseVersionId: versionId,
         });
       expect(submitRes.status).toBe(200);
+      actAsInstructor();
       // Get submission ID
       const quizSubmissionRes = await request(app).get(
         `/quizzes/quiz/${quizId}/submissions`,
-      );
+      ).set('Authorization', 'Bearer test-token');
       expect(quizSubmissionRes.status).toBe(200);
-      expect(Array.isArray(quizSubmissionRes.body)).toBe(true);
-      const submissionId = quizSubmissionRes.body[0]._id;
+      expect(Array.isArray(quizSubmissionRes.body.data)).toBe(true);
+      const submissionId = quizSubmissionRes.body.data[0]._id;
       // Add feedback
       const res = await request(app)
         .post(
-          `/quizzes/quiz/submission/${submissionId}/question/${questionId}/feedback`,
+          `/quizzes/quiz/${quizId}/submission/${submissionId}/question/${questionId}/feedback`,
         )
+        .set('Authorization', 'Bearer test-token')
         .send({feedback: 'Good job!'});
       expect(res.status).toBe(200);
 
       // get submission to verify feedback
       const submissionRes = await request(app).get(
-        `/quizzes/quiz/submissions/${submissionId}`,
-      );
+        `/quizzes/quiz/${quizId}/submissions/${submissionId}`,
+      ).set('Authorization', 'Bearer test-token');
       expect(submissionRes.status).toBe(200);
       expect(
         submissionRes.body.gradingResult.overallFeedback[0].answerFeedback,

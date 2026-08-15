@@ -61,16 +61,18 @@ async function createCourseWithModulesSectionsAndItems(
     .send({
       name: allData.name,
       description: allData.description,
+      versionName: 'Version 1',
+      versionDescription: 'Initial version',
     })
-    .set('Authorization', 'userAdmin');
-  // .expect(201);
+    .set('Authorization', 'Bearer test-token')
+    .expect(201);
   allData.courseId = courseRes.body._id;
 
   // Create Course Version
   const versionRes = await request(app)
     .post(`/courses/${allData.courseId}/versions`)
     .send({version: allData.version, description: 'Initial version'})
-    .set('Authorization', 'userAdmin')
+    .set('Authorization', 'Bearer test-token')
     .expect(201);
   allData.courseVersionId = versionRes.body._id;
 
@@ -90,7 +92,7 @@ async function createCourseWithModulesSectionsAndItems(
         name: moduleData.name,
         description: moduleData.description,
       })
-      .set('Authorization', 'userAdmin')
+      .set('Authorization', 'Bearer test-token')
       .expect(201);
     moduleData.moduleId = moduleRes.body.version.modules[i].moduleId;
 
@@ -112,7 +114,7 @@ async function createCourseWithModulesSectionsAndItems(
           name: sectionData.name,
           description: sectionData.description,
         })
-        .set('Authorization', 'userAdmin')
+        .set('Authorization', 'Bearer test-token')
         .expect(201);
       sectionData.sectionId =
         sectionRes.body.version.modules[i].sections[j].sectionId;
@@ -138,7 +140,7 @@ async function createCourseWithModulesSectionsAndItems(
             `/courses/versions/${allData.courseVersionId}/modules/${moduleData.moduleId}/sections/${sectionData.sectionId}/items`,
           )
           .send(itemData)
-          .set('Authorization', 'userAdmin')
+          .set('Authorization', 'Bearer test-token')
           .expect(201);
         //   .expect(201);
         expect(itemRes.statusCode).toBe(201);

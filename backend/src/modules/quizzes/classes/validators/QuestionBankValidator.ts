@@ -1,5 +1,7 @@
 import {ID, IQuestionBankRef} from '#root/shared/interfaces/models.js';
 import {IQuestionBank} from '#root/shared/interfaces/quiz.js';
+import {Transform} from 'class-transformer';
+import {ObjectIdArrayToStringArray} from '#root/shared/constants/transformerConstants.js';
 import {
   IsMongoId,
   IsOptional,
@@ -34,6 +36,7 @@ class CreateQuestionBankBody implements Partial<IQuestionBank> {
   @IsMongoId({each: true})
   @IsArray()
   @IsOptional()
+  @Transform(ObjectIdArrayToStringArray.transformer, {toPlainOnly: true})
   @JSONSchema({
     description: 'Array of question IDs',
     type: 'array',
@@ -152,6 +155,7 @@ class QuestionBankResponse implements Partial<IQuestionBank> {
 
   @IsArray()
   @IsOptional()
+  @Transform(ObjectIdArrayToStringArray.transformer, {toPlainOnly: true})
   @JSONSchema({
     description: 'Array of question IDs',
     type: 'array',

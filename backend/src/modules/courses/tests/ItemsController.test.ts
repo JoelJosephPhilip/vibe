@@ -1,10 +1,5 @@
 import { coursesContainerModules, coursesModuleOptions, setupCoursesContainer } from '../index.js';
 import { useExpressServer, useContainer, RoutingControllersOptions } from 'routing-controllers';
-import { sharedContainerModule } from '#root/container.js';
-import { authContainerModule } from '#root/modules/auth/container.js';
-import { usersContainerModule } from '#root/modules/users/container.js';
-import { quizzesContainerModule } from '#root/modules/quizzes/container.js';
-import { notificationsContainerModule } from '#root/modules/notifications/container.js';
 import { anomaliesContainerModule } from '#root/modules/anomalies/container.js';
 import { settingContainerModule } from '#root/modules/setting/container.js';
 import { courseRegistrationContainerModule } from '#root/modules/courseRegistration/container.js';
@@ -50,6 +45,7 @@ import { ModuleController } from '../controllers/ModuleController.js';
 import { SectionController } from '../controllers/SectionController.js';
 import { AuthController } from '#root/modules/auth/controllers/AuthController.js';
 import { EnrollmentController } from '#root/modules/users/controllers/EnrollmentController.js';
+import { FirebaseAuthService } from '#root/modules/auth/services/FirebaseAuthService.js';
 import { afterEach } from 'node:test';
 
 const controllers: Function[] = [
@@ -79,12 +75,11 @@ describe('Item Controller Integration Tests', () => {
     process.env.NODE_ENV = 'test';
     const container = new Container();
     await container.load(
+      // coursesContainerModules already includes sharedContainerModule,
+      // authContainerModule, usersContainerModule, quizzesContainerModule,
+      // and notificationsContainerModule — re-adding them causes
+      // "Ambiguous bindings" errors from inversify.
       ...coursesContainerModules,
-      sharedContainerModule,
-      authContainerModule,
-      usersContainerModule,
-      quizzesContainerModule,
-      notificationsContainerModule,
       anomaliesContainerModule,
       settingContainerModule,
       courseRegistrationContainerModule,
@@ -134,6 +129,16 @@ describe('Item Controller Integration Tests', () => {
       lastName,
       roles: 'admin',
     });
+    // authorizationChecker (real, unmocked here) and @Ability() both verify
+    // the bearer token via getCurrentUserFromToken — mock it too, so the
+    // 'Bearer test-token' the helpers send resolves to an admin user.
+    vi.spyOn(
+      FirebaseAuthService.prototype,
+      'getCurrentUserFromToken',
+    ).mockResolvedValue({
+      _id: userId,
+      roles: 'admin',
+    } as any);
 
     course = await createCourse(app);
     courseId = course._id.toString();
@@ -148,15 +153,9 @@ describe('Item Controller Integration Tests', () => {
     );
     sectionId = section.version.modules[0].sections[0].sectionId.toString();
 
-    // Enroll the user as a teacher in the course
-    const enrollmentResponse = await request(app)
-      .post(
-        `/users/${userId}/enrollments/courses/${courseId}/versions/${versionId}`,
-      )
-      .send({
-        role: 'INSTRUCTOR',
-      });
-    expect(enrollmentResponse.status).toBe(200);
+    // createCourse() already auto-enrolls its creator (userId) as
+    // INSTRUCTOR — see CourseController.create / CourseService.createCourse —
+    // so no separate enrollment call is needed here.
     vi.resetAllMocks();
     vi.spyOn(CurrentUser, 'currentUserChecker').mockResolvedValue({
       _id: userId,
@@ -166,6 +165,16 @@ describe('Item Controller Integration Tests', () => {
       lastName,
       roles: 'user',
     });
+    // resetAllMocks above wipes the getCurrentUserFromToken spy — the real
+    // authorizationChecker and @Ability() both need it re-established for
+    // the test bodies that run after this beforeEach.
+    vi.spyOn(
+      FirebaseAuthService.prototype,
+      'getCurrentUserFromToken',
+    ).mockResolvedValue({
+      _id: userId,
+      roles: 'admin',
+    } as any);
   });
 
   describe('ITEM CREATION', () => {
@@ -197,6 +206,7 @@ describe('Item Controller Integration Tests', () => {
             .post(
               `/courses/versions/${versionId}/modules/${moduleId}/sections/${sectionId}/items`,
             )
+            .set('Authorization', 'Bearer test-token')
             .send(itemPayload);
           expect(itemResponse.status).toBe(201);
           expect(itemResponse.body.itemsGroup.items.length).toBe(1);
@@ -220,6 +230,7 @@ describe('Item Controller Integration Tests', () => {
             .post(
               `/courses/versions/${versionId}/modules/${moduleId}/sections/${sectionId}/items`,
             )
+            .set('Authorization', 'Bearer test-token')
             .send(itemPayload);
           expect(itemsGroupResponse.status === 201);
 
@@ -254,6 +265,7 @@ describe('Item Controller Integration Tests', () => {
           .post(
             `/users/${newUserId}/enrollments/courses/${courseId}/versions/${versionId}`,
           )
+          .set('Authorization', 'Bearer test-token')
           .send({
             role: 'STUDENT',
           });
@@ -267,6 +279,13 @@ describe('Item Controller Integration Tests', () => {
           lastName,
           roles: 'user',
         });
+        vi.spyOn(
+          FirebaseAuthService.prototype,
+          'getCurrentUserFromToken',
+        ).mockResolvedValue({
+          _id: newUserId,
+          roles: 'user',
+        } as any);
         // try to create an item as a student
         const itemPayload: CreateItemBody = {
           name: faker.commerce.productName(),
@@ -292,6 +311,7 @@ describe('Item Controller Integration Tests', () => {
           .post(
             `/courses/versions/${versionId}/modules/${moduleId}/sections/${sectionId}/items`,
           )
+          .set('Authorization', 'Bearer test-token')
           .send(itemPayload)
           .expect(403);
       });
@@ -346,6 +366,7 @@ describe('Item Controller Integration Tests', () => {
         .post(
           `/courses/versions/${versionId}/modules/${moduleId}/sections/${sectionId}/items`,
         )
+        .set('Authorization', 'Bearer test-token')
         .send(itemPayload1)
         .expect(201);
 
@@ -353,6 +374,7 @@ describe('Item Controller Integration Tests', () => {
         .post(
           `/courses/versions/${versionId}/modules/${moduleId}/sections/${sectionId}/items`,
         )
+        .set('Authorization', 'Bearer test-token')
         .send(itemPayload2)
         .expect(201);
 
@@ -361,6 +383,7 @@ describe('Item Controller Integration Tests', () => {
         .get(
           `/courses/versions/${versionId}/modules/${moduleId}/sections/${sectionId}/items`,
         )
+        .set('Authorization', 'Bearer test-token')
         .expect(200);
       expect(readAllResponse.body.length).toBeGreaterThanOrEqual(2);
       const ids = readAllResponse.body.map(i => i._id);
@@ -397,17 +420,20 @@ describe('Item Controller Integration Tests', () => {
         .post(
           `/courses/versions/${versionId}/modules/${moduleId}/sections/${sectionId}/items`,
         )
+        .set('Authorization', 'Bearer test-token')
         .send(itemPayload)
         .expect(201);
 
       const itemId = itemResponse.body.itemsGroup.items[0]._id;
 
       // Update item
-      const updatePayload: CreateItemBody = {
+      // UpdateItemBody (unlike CreateItemBody) nests type-specific details
+      // under `details`, not `quizDetails`/`videoDetails`/etc.
+      const updatePayload = {
         name: 'Updated Item Name',
         description: 'Updated Item Description',
         type: ItemType.QUIZ,
-        quizDetails: {
+        details: {
           questionVisibility: 3,
           allowPartialGrading: true,
           allowSkip: true,
@@ -425,16 +451,15 @@ describe('Item Controller Integration Tests', () => {
       };
 
       const updateResponse = await request(app)
-        .put(
-          `/courses/versions/${versionId}/modules/${moduleId}/sections/${sectionId}/items/${itemId}`,
-        )
+        .put(`/courses/${courseId}/versions/${versionId}/items/${itemId}`)
+        .set('Authorization', 'Bearer test-token')
         .send(updatePayload)
         .expect(200);
 
-      expect(updateResponse.body.itemsGroup.items[0].name).toBe(
-        updatePayload.name,
-      );
-      expect(updateResponse.body.itemsGroup.items[0].description).toBe(
+      // updateItem returns the updated item directly (not wrapped in an
+      // itemsGroup, unlike create/readAll).
+      expect(updateResponse.body.name).toBe(updatePayload.name);
+      expect(updateResponse.body.description).toBe(
         updatePayload.description,
       );
     }, 90000);
@@ -499,13 +524,15 @@ describe('Item Controller Integration Tests', () => {
           .post(
             `/courses/versions/${versionId}/modules/${moduleId}/sections/${sectionId}/items`,
           )
+          .set('Authorization', 'Bearer test-token')
           .send(itemPayload)
           .expect(201);
 
         const itemsResponse = await request(app)
           .delete(
-            `/courses/itemGroups/${itemsGroupId}/items/${itemsGroupResponse.body.itemsGroup.items[0]._id}`,
+            `/courses/${courseId}/itemGroups/${itemsGroupId}/items/${itemsGroupResponse.body.itemsGroup.items[0]._id}`,
           )
+          .set('Authorization', 'Bearer test-token')
           .expect(200);
 
         expect(itemsResponse.body.deletedItemId).toBe(
@@ -527,7 +554,8 @@ describe('Item Controller Integration Tests', () => {
         // Testing for Invalid params
 
         const itemsResponse = await request(app)
-          .delete('/courses/itemGroups/123/items/123')
+          .delete(`/courses/${courseId}/itemGroups/123/items/123`)
+          .set('Authorization', 'Bearer test-token')
           .expect(400);
       }, 90000);
 
@@ -545,6 +573,7 @@ describe('Item Controller Integration Tests', () => {
           .delete(
             '/courses/itemGroups/62341aeb5be816967d8fc2db/items/62341aeb5be816967d8fc2db',
           )
+          .set('Authorization', 'Bearer test-token')
           .expect(404);
       }, 90000);
     });
@@ -599,6 +628,7 @@ describe('Item Controller Integration Tests', () => {
           .post(
             `/courses/versions/${versionId}/modules/${moduleId}/sections/${sectionId}/items`,
           )
+          .set('Authorization', 'Bearer test-token')
           .send(itemPayload1)
           .expect(201);
         const item1Id = item1Response.body.itemsGroup.items[0]._id;
@@ -607,6 +637,7 @@ describe('Item Controller Integration Tests', () => {
           .post(
             `/courses/versions/${versionId}/modules/${moduleId}/sections/${sectionId}/items`,
           )
+          .set('Authorization', 'Bearer test-token')
           .send(itemPayload2)
           .expect(201);
         const item2Id = item2Response.body.itemsGroup.items[1]._id;
@@ -616,6 +647,7 @@ describe('Item Controller Integration Tests', () => {
           .put(
             `/courses/versions/${versionId}/modules/${moduleId}/sections/${sectionId}/items/${item2Id}/move`,
           )
+          .set('Authorization', 'Bearer test-token')
           .send({ beforeItemId: item1Id })
           .expect(200);
 
@@ -635,6 +667,7 @@ describe('Item Controller Integration Tests', () => {
           .post(
             `/courses/versions/${versionId}/modules/${moduleId}/sections/${sectionId}/items`,
           )
+          .set('Authorization', 'Bearer test-token')
           .send(itemPayload1)
           .expect(201);
         const item1Id = item1Response.body.itemsGroup.items[0]._id;
@@ -643,6 +676,7 @@ describe('Item Controller Integration Tests', () => {
           .post(
             `/courses/versions/${versionId}/modules/${moduleId}/sections/${sectionId}/items`,
           )
+          .set('Authorization', 'Bearer test-token')
           .send(itemPayload2)
           .expect(201);
         const item2Id = item2Response.body.itemsGroup.items[1]._id;
@@ -672,6 +706,7 @@ describe('Item Controller Integration Tests', () => {
           .post(
             `/courses/versions/${versionId}/modules/${moduleId}/sections/${sectionId}/items`,
           )
+          .set('Authorization', 'Bearer test-token')
           .send(itemPayload3)
           .expect(201);
         const item3Id = item3Response.body.itemsGroup.items[2]._id;
@@ -681,6 +716,7 @@ describe('Item Controller Integration Tests', () => {
           .put(
             `/courses/versions/${versionId}/modules/${moduleId}/sections/${sectionId}/items/${item3Id}/move`,
           )
+          .set('Authorization', 'Bearer test-token')
           .send({ beforeItemId: item1Id })
           .expect(200);
 
@@ -721,14 +757,22 @@ describe('Item Controller Integration Tests', () => {
       },
     };
     beforeEach(async () => {
+      const errorPathUserId = faker.database.mongodbObjectId();
       vi.spyOn(CurrentUser, 'currentUserChecker').mockResolvedValue({
-        _id: faker.database.mongodbObjectId(),
+        _id: errorPathUserId,
         firebaseUID: faker.string.uuid(),
         email: faker.internet.email(),
         firstName: faker.person.firstName(),
         lastName: faker.person.lastName(),
         roles: 'admin',
       });
+      vi.spyOn(
+        FirebaseAuthService.prototype,
+        'getCurrentUserFromToken',
+      ).mockResolvedValue({
+        _id: errorPathUserId,
+        roles: 'admin',
+      } as any);
     });
 
     afterEach(() => {
@@ -740,6 +784,7 @@ describe('Item Controller Integration Tests', () => {
         .post(
           `/courses/versions/62341aeb5be816967d8fc2db/modules/${moduleId}/sections/${sectionId}/items`,
         )
+        .set('Authorization', 'Bearer test-token')
         .send(itemPayload)
         .expect(404);
     }, 90000);
@@ -749,6 +794,7 @@ describe('Item Controller Integration Tests', () => {
         .post(
           `/courses/versions/${versionId}/modules/${moduleId}/sections/62341aeb5be816967d8fc2db/items`,
         )
+        .set('Authorization', 'Bearer test-token')
         .send(itemPayload)
         .expect(404);
     }, 90000);
@@ -758,46 +804,46 @@ describe('Item Controller Integration Tests', () => {
         .post(
           `/courses/versions/${versionId}/modules/${moduleId}/sections/${sectionId}/items`,
         )
+        .set('Authorization', 'Bearer test-token')
         .send({}) // missing required fields
         .expect(400);
     }, 90000);
 
     it('should return 400 if version does not exist on updateItem', async () => {
       await request(app)
-        .put(
-          `/courses/versions/fakeVersionId/modules/${moduleId}/sections/${sectionId}/items/fakeItemId`,
-        )
+        .put(`/courses/${courseId}/versions/fakeVersionId/items/fakeItemId`)
+        .set('Authorization', 'Bearer test-token')
         .send({ name: 'x' })
         .expect(400);
     }, 90000);
 
     it('should return 400 if item does not exist on updateItem', async () => {
       await request(app)
-        .put(
-          `/courses/versions/${versionId}/modules/${moduleId}/sections/${sectionId}/items/fakeItemId`,
-        )
+        .put(`/courses/${courseId}/versions/${versionId}/items/fakeItemId`)
+        .set('Authorization', 'Bearer test-token')
         .send({ name: 'x' })
         .expect(400);
     }, 90000);
 
     it('should return 400 if invalid payload on updateItem', async () => {
       await request(app)
-        .put(
-          `/courses/versions/${versionId}/modules/${moduleId}/sections/${sectionId}/items/fakeItemId`,
-        )
+        .put(`/courses/${courseId}/versions/${versionId}/items/fakeItemId`)
+        .set('Authorization', 'Bearer test-token')
         .send({}) // missing required fields
         .expect(400);
     }, 90000);
 
     it('should return 400 if invalid itemGroupId or itemId on deleteItem', async () => {
       await request(app)
-        .delete('/courses/itemGroups/123/items/123')
+        .delete(`/courses/${courseId}/itemGroups/123/items/123`)
+        .set('Authorization', 'Bearer test-token')
         .expect(400);
     }, 90000);
 
     it('should return 400 if item not found on deleteItem', async () => {
       await request(app)
-        .delete(`/courses/itemGroups/${itemsGroupId}/items/fakeItemId`)
+        .delete(`/courses/${courseId}/itemGroups/${itemsGroupId}/items/fakeItemId`)
+        .set('Authorization', 'Bearer test-token')
         .expect(400);
     }, 90000);
 
@@ -806,6 +852,7 @@ describe('Item Controller Integration Tests', () => {
         .put(
           `/courses/versions/${versionId}/modules/${moduleId}/sections/${sectionId}/items/fakeItemId/move`,
         )
+        .set('Authorization', 'Bearer test-token')
         .send({})
         .expect(400);
     }, 90000);
@@ -815,6 +862,7 @@ describe('Item Controller Integration Tests', () => {
         .put(
           `/courses/versions/${versionId}/modules/${moduleId}/sections/${sectionId}/items/fakeItemId/move`,
         )
+        .set('Authorization', 'Bearer test-token')
         .send({ beforeItemId: '62341aeb5be816967d8fc2db' })
         .expect(400);
     }, 90000);

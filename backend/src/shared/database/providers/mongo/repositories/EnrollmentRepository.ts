@@ -531,7 +531,7 @@ export class EnrollmentRepository {
         {
           $match: {
             userId: { $in: [userObjectId, userId] },
-            role,
+            ...(role ? {role} : {}),
             isDeleted: { $ne: true },
             status: 'ACTIVE',
           },
@@ -721,7 +721,7 @@ export class EnrollmentRepository {
       {
         $match: {
           userId: { $in: [userObjectId, userId] },
-          role,
+          ...(role ? {role} : {}),
           isDeleted: { $ne: true },
           status: { $regex: /^active$/i },
         },
@@ -1016,7 +1016,7 @@ export class EnrollmentRepository {
       {
         $match: {
           userId: { $in: [new ObjectId(userId), userId] },
-          role,
+          ...(role ? {role} : {}),
           isDeleted: { $ne: true },
           status: { $regex: /^active$/i },
         },
@@ -2216,7 +2216,7 @@ export class EnrollmentRepository {
     await this.init();
     const matchStage: any = {
       userId: { $in: [new ObjectId(userId), userId] },
-      role,
+      ...(role ? {role} : {}),
       isDeleted: { $ne: true },
       status: { $regex: /^active$/i },
     };
@@ -2316,7 +2316,7 @@ export class EnrollmentRepository {
 
     const matchStage: any = {
       userId: { $in: [new ObjectId(userId), userId] },
-      role,
+      ...(role ? {role} : {}),
       isDeleted: { $ne: true },
       status: { $regex: /^active$/i },
     };
@@ -2368,7 +2368,7 @@ export class EnrollmentRepository {
 
     const matchStage: any = {
       userId: { $in: [new ObjectId(userId), userId] },
-      role,
+      ...(role ? {role} : {}),
       isDeleted: { $ne: true },
       status: { $regex: /^active$/i },
     };
@@ -4181,7 +4181,7 @@ export class EnrollmentRepository {
     const userObjectId = new ObjectId(userId);
     const matchStage: any = {
       userId: userObjectId,
-      role,
+      ...(role ? {role} : {}),
       isDeleted: { $ne: true },
       status: { $regex: /^active$/i },
     };
@@ -4475,7 +4475,7 @@ export class EnrollmentRepository {
     await this.init();
     const matchStage: any = {
       userId: new ObjectId(userId),
-      role,
+      ...(role ? {role} : {}),
       isDeleted: { $ne: true },
       status: { $regex: /^active$/i },
     };

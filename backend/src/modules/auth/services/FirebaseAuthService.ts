@@ -189,6 +189,10 @@ export class FirebaseAuthService extends BaseService implements IAuthService {
   }
 
   async signup(body: SignUpBody): Promise<any> {
+    // Invite lookups (InviteService) normalize email to lowercase — store it
+    // the same way here so a signup always matches its pending invites.
+    body = {...body, email: body.email.toLowerCase().trim()};
+
     // ==========================================================
     // FIX: Check if user already exists by email
     // ==========================================================

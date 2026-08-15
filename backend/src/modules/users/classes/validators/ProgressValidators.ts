@@ -687,7 +687,12 @@ export class WatchTimeParams {
   @IsNotEmpty()
   @IsString()
   @IsEnum(ItemType)
-  type: ItemType;
+  // Typed as string (not ItemType) so routing-controllers' design:type
+  // reflection sees the String constructor here, not the ItemType enum
+  // object — the enum object has no .name, and normalizeParamValue's
+  // `ParamType.name.toLowerCase()` crashes on every request otherwise.
+  // @IsEnum(ItemType) still fully validates the value against the enum.
+  type: string;
 }
 
 export class WatchTimeResponse {

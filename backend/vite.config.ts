@@ -39,5 +39,12 @@ export default defineConfig({
     include: ['src/**/*.test.ts'],
     hookTimeout: 30000,
     globalSetup: ['./test/globalSetup.ts'],
+    // globalSetup spins up a single-node mongodb-memory-server replica set
+    // shared by every test file in the run. Running files in parallel worker
+    // threads floods that one mongod with concurrent multi-document
+    // transactions, producing intermittent "transaction number does not
+    // match any in-progress transactions" / connection-closed errors.
+    // Sequential file execution removes the cross-file race.
+    fileParallelism: false,
   }
 });

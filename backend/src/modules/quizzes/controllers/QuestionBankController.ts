@@ -87,8 +87,12 @@ class QuestionBankController {
         role: user.roles,
       },
       context:{
-        courseId: ObjectId.createFromHexString(body.courseId.toString()),
-        courseVersionId: ObjectId.createFromHexString(body.courseVersionId.toString()),
+        courseId: body.courseId
+          ? ObjectId.createFromHexString(body.courseId.toString())
+          : undefined,
+        courseVersionId: body.courseVersionId
+          ? ObjectId.createFromHexString(body.courseVersionId.toString())
+          : undefined,
       },
       changes:{
         after:{
