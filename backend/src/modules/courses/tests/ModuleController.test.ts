@@ -39,6 +39,7 @@ import {
 } from '#root/modules/users/tests/utils/createCourse.js';
 import {faker} from '@faker-js/faker';
 import {before} from 'node:test';
+import {FirebaseAuthService} from '#root/modules/auth/services/FirebaseAuthService.js';
 
 describe('Module Controller Integration Tests', () => {
   const App = Express();
@@ -74,6 +75,18 @@ describe('Module Controller Integration Tests', () => {
     app = useExpressServer(App, coursesModuleOptions);
   });
 
+  beforeEach(() => {
+    // The real authorizationChecker and @Ability() verify the bearer token
+    // via getCurrentUserFromToken — mock it so 'Bearer test-token' resolves.
+    vi.spyOn(
+      FirebaseAuthService.prototype,
+      'getCurrentUserFromToken',
+    ).mockResolvedValue({
+      _id: faker.database.mongodbObjectId(),
+      roles: 'admin',
+    } as any);
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -84,6 +97,8 @@ describe('Module Controller Integration Tests', () => {
         const coursePayload = {
           name: 'Module Creation Course',
           description: 'Course description',
+          versionName: 'Version 1',
+          versionDescription: 'Initial version',
         };
         const courseVersionPayload = {
           version: 'Module Creation Version',
@@ -97,6 +112,7 @@ describe('Module Controller Integration Tests', () => {
         // Create a course
         const response = await request(app)
           .post('/courses/')
+          .set('Authorization', 'Bearer test-token')
           .send(coursePayload)
           .expect(201);
 
@@ -106,6 +122,7 @@ describe('Module Controller Integration Tests', () => {
         // Create a version
         const versionResponse = await request(app)
           .post(`/courses/${courseId}/versions`)
+          .set('Authorization', 'Bearer test-token')
           .send(courseVersionPayload)
           .expect(201);
 
@@ -118,6 +135,7 @@ describe('Module Controller Integration Tests', () => {
 
         const moduleResponse = await request(app)
           .post(endPoint)
+          .set('Authorization', 'Bearer test-token')
           .send(modulePayload)
           .expect(201);
 
@@ -154,6 +172,7 @@ describe('Module Controller Integration Tests', () => {
 
         const moduleResponse = await request(app)
           .post(endPoint)
+          .set('Authorization', 'Bearer test-token')
           .send(modulePayload)
           .expect(400);
 
@@ -165,10 +184,13 @@ describe('Module Controller Integration Tests', () => {
         const coursePayload = {
           name: 'Error 400 Course',
           description: 'Course description',
+          versionName: 'Version 1',
+          versionDescription: 'Initial version',
         };
 
         const response = await request(app)
           .post('/courses/')
+          .set('Authorization', 'Bearer test-token')
           .send(coursePayload)
           .expect(201);
 
@@ -184,6 +206,7 @@ describe('Module Controller Integration Tests', () => {
 
         const versionResponse = await request(app)
           .post(`/courses/${courseId}/versions`)
+          .set('Authorization', 'Bearer test-token')
           .send(courseVersionPayload)
           .expect(201);
 
@@ -196,6 +219,7 @@ describe('Module Controller Integration Tests', () => {
 
         const moduleResponse = await request(app)
           .post(`/courses/versions/${versionId}/modules`)
+          .set('Authorization', 'Bearer test-token')
           .send(invalidPayload)
           .expect(400);
 
@@ -208,21 +232,26 @@ describe('Module Controller Integration Tests', () => {
         const coursePayload = {
           name: 'Missing Name Course',
           description: 'desc',
+          versionName: 'Version 1',
+          versionDescription: 'Initial version',
         };
         const courseRes = await request(app)
           .post('/courses/')
+          .set('Authorization', 'Bearer test-token')
           .send(coursePayload)
           .expect(201);
         const courseId = courseRes.body._id;
-        const versionPayload = {version: 'v1', description: 'desc'};
+        const versionPayload = {version: 'v1.0', description: 'desc'};
         const versionRes = await request(app)
           .post(`/courses/${courseId}/versions`)
+          .set('Authorization', 'Bearer test-token')
           .send(versionPayload)
           .expect(201);
         const versionId = versionRes.body._id;
         const modulePayload = {description: 'desc'}; // missing name
         await request(app)
           .post(`/courses/versions/${versionId}/modules`)
+          .set('Authorization', 'Bearer test-token')
           .send(modulePayload)
           .expect(400);
       }, 90000);
@@ -232,8 +261,33 @@ describe('Module Controller Integration Tests', () => {
   // Tests for moving a module
   describe('MODULE MOVE', () => {
     let data: CourseData;
+    // The course is created once in beforeAll as this user, so every test
+    // below must keep authenticating as the same user — otherwise the
+    // outer beforeEach's fresh random id won't be enrolled in it.
+    const moveTestUserId = faker.database.mongodbObjectId();
     beforeAll(async () => {
+      // Runs before the outer beforeEach's auth mock is (re-)established —
+      // set it up here too so this setup call is authenticated.
+      vi.spyOn(
+        FirebaseAuthService.prototype,
+        'getCurrentUserFromToken',
+      ).mockResolvedValue({
+        _id: moveTestUserId,
+        roles: 'admin',
+      } as any);
       data = await createCourseWithModulesSectionsAndItems(2, 1, 1, app);
+    });
+
+    beforeEach(() => {
+      // Overrides the outer beforeEach's fresh random user id so requests
+      // in this block authenticate as the same user who owns the course.
+      vi.spyOn(
+        FirebaseAuthService.prototype,
+        'getCurrentUserFromToken',
+      ).mockResolvedValue({
+        _id: moveTestUserId,
+        roles: 'admin',
+      } as any);
     });
     describe('Success Scenario', () => {
       it('should move a module before another module within a course version', async () => {
@@ -248,6 +302,7 @@ describe('Module Controller Integration Tests', () => {
           .put(
             `/courses/versions/${data.courseVersionId}/modules/${moduleIdToMove}/move`,
           )
+          .set('Authorization', 'Bearer test-token')
           .send(movePayload)
           .expect(200);
 
@@ -277,6 +332,7 @@ describe('Module Controller Integration Tests', () => {
         // Act & Assert: Should return 400 Bad Request
         await request(app)
           .put('/courses/versions/invalidVersion/modules/invalidModule/move')
+          .set('Authorization', 'Bearer test-token')
           .send(movePayload)
           .expect(400);
       });
@@ -290,6 +346,7 @@ describe('Module Controller Integration Tests', () => {
           .put(
             `/courses/versions/${data.courseVersionId}/modules/${nonExistentModuleId}/move`,
           )
+          .set('Authorization', 'Bearer test-token')
           .send({beforeModuleId: faker.database.mongodbObjectId()})
           .expect(404);
       });
@@ -303,6 +360,7 @@ describe('Module Controller Integration Tests', () => {
           .put(
             `/courses/versions/${data.courseVersionId}/modules/${validModuleId}/move`,
           )
+          .set('Authorization', 'Bearer test-token')
           .send({})
           .expect(400);
       });
@@ -316,6 +374,7 @@ describe('Module Controller Integration Tests', () => {
           .put(
             `/courses/versions/${data.courseVersionId}/modules/${validModuleId}/move`,
           )
+          .set('Authorization', 'Bearer test-token')
           .send({
             beforeModuleId: faker.database.mongodbObjectId(),
             afterModuleId: faker.database.mongodbObjectId(),
@@ -332,6 +391,8 @@ describe('Module Controller Integration Tests', () => {
         const coursePayload = {
           name: 'Module Delete Course',
           description: 'Course description',
+          versionName: 'Version 1',
+          versionDescription: 'Initial version',
         };
         const versionPayload = {
           version: 'Module Delete Version',
@@ -345,6 +406,7 @@ describe('Module Controller Integration Tests', () => {
         // Create a course
         const courseRes = await request(app)
           .post('/courses/')
+          .set('Authorization', 'Bearer test-token')
           .send(coursePayload)
           .expect(201);
         const courseId = courseRes.body._id;
@@ -352,6 +414,7 @@ describe('Module Controller Integration Tests', () => {
         // Create a version
         const versionRes = await request(app)
           .post(`/courses/${courseId}/versions`)
+          .set('Authorization', 'Bearer test-token')
           .send(versionPayload)
           .expect(201);
         const versionId = versionRes.body._id || versionRes.body.version._id;
@@ -359,6 +422,7 @@ describe('Module Controller Integration Tests', () => {
         // Create a module
         const moduleRes = await request(app)
           .post(`/courses/versions/${versionId}/modules`)
+          .set('Authorization', 'Bearer test-token')
           .send(modulePayload)
           .expect(201);
         const moduleId = moduleRes.body.version.modules[0].moduleId;
@@ -366,6 +430,7 @@ describe('Module Controller Integration Tests', () => {
         // Delete the module
         const deleteRes = await request(app)
           .delete(`/courses/versions/${versionId}/modules/${moduleId}`)
+          .set('Authorization', 'Bearer test-token')
           .expect(200);
 
         expect(deleteRes.body.message).toContain(`Module ${moduleId} deleted`);
@@ -376,6 +441,7 @@ describe('Module Controller Integration Tests', () => {
       it('should return 400 for invalid delete params', async () => {
         await request(app)
           .delete('/courses/versions/invalidVersion/modules/invalidModule')
+          .set('Authorization', 'Bearer test-token')
           .expect(400);
       }, 90000);
       it('should return 404 if module does not exist', async () => {
@@ -383,6 +449,7 @@ describe('Module Controller Integration Tests', () => {
         const fakeModuleId = '60d21b4967d0d8992e610c86';
         await request(app)
           .delete(`/courses/versions/${fakeVersionId}/modules/${fakeModuleId}`)
+          .set('Authorization', 'Bearer test-token')
           .expect(404);
       }, 90000);
     });
@@ -395,6 +462,8 @@ describe('Module Controller Integration Tests', () => {
         const coursePayload = {
           name: 'Module Update Course',
           description: 'Course description',
+          versionName: 'Version 1',
+          versionDescription: 'Initial version',
         };
         const versionPayload = {
           version: 'Module Update Version',
@@ -408,6 +477,7 @@ describe('Module Controller Integration Tests', () => {
         // Create a course
         const courseRes = await request(app)
           .post('/courses/')
+          .set('Authorization', 'Bearer test-token')
           .send(coursePayload)
           .expect(201);
         const courseId = courseRes.body._id;
@@ -415,6 +485,7 @@ describe('Module Controller Integration Tests', () => {
         // Create a version
         const versionRes = await request(app)
           .post(`/courses/${courseId}/versions`)
+          .set('Authorization', 'Bearer test-token')
           .send(versionPayload)
           .expect(201);
         const versionId = versionRes.body._id || versionRes.body.version._id;
@@ -422,6 +493,7 @@ describe('Module Controller Integration Tests', () => {
         // Create a module
         const moduleRes = await request(app)
           .post(`/courses/versions/${versionId}/modules`)
+          .set('Authorization', 'Bearer test-token')
           .send(modulePayload)
           .expect(201);
         const moduleId = moduleRes.body.version.modules[0].moduleId;
@@ -433,6 +505,7 @@ describe('Module Controller Integration Tests', () => {
         };
         const updateRes = await request(app)
           .put(`/courses/versions/${versionId}/modules/${moduleId}`)
+          .set('Authorization', 'Bearer test-token')
           .send(updatePayload)
           .expect(200);
 
@@ -449,6 +522,7 @@ describe('Module Controller Integration Tests', () => {
       it('should return 400 for invalid update params', async () => {
         await request(app)
           .put('/courses/versions/invalidVersion/modules/invalidModule')
+          .set('Authorization', 'Bearer test-token')
           .send({name: 'x'})
           .expect(400);
       }, 90000);
@@ -457,6 +531,7 @@ describe('Module Controller Integration Tests', () => {
         const fakeModuleId = '60d21b4967d0d8992e610c86';
         await request(app)
           .put(`/courses/versions/${fakeVersionId}/modules/${fakeModuleId}`)
+          .set('Authorization', 'Bearer test-token')
           .send({name: 'x', description: 'y'})
           .expect(404);
       }, 90000);
@@ -465,15 +540,19 @@ describe('Module Controller Integration Tests', () => {
         const coursePayload = {
           name: 'Update Error Course',
           description: 'desc',
+          versionName: 'Version 1',
+          versionDescription: 'Initial version',
         };
         const courseRes = await request(app)
           .post('/courses/')
+          .set('Authorization', 'Bearer test-token')
           .send(coursePayload)
           .expect(201);
         const courseId = courseRes.body._id;
-        const versionPayload = {version: 'v1', description: 'desc'};
+        const versionPayload = {version: 'v1.0', description: 'desc'};
         const versionRes = await request(app)
           .post(`/courses/${courseId}/versions`)
+          .set('Authorization', 'Bearer test-token')
           .send(versionPayload)
           .expect(201);
         const versionId = versionRes.body._id;
@@ -483,11 +562,13 @@ describe('Module Controller Integration Tests', () => {
         };
         const moduleRes = await request(app)
           .post(`/courses/versions/${versionId}/modules`)
+          .set('Authorization', 'Bearer test-token')
           .send(modulePayload)
           .expect(201);
         const moduleId = moduleRes.body.version.modules[0].moduleId;
         await request(app)
           .put(`/courses/versions/${versionId}/modules/${moduleId}`)
+          .set('Authorization', 'Bearer test-token')
           .send({name: ''})
           .expect(400);
       }, 90000);
@@ -501,16 +582,18 @@ describe('Module Controller Integration Tests', () => {
 
     beforeEach(async () => {
       // Create a course and version for each test
-      const coursePayload = {name: 'Error Path Course', description: 'desc'};
+      const coursePayload = {name: 'Error Path Course', description: 'desc', versionName: 'Version 1', versionDescription: 'Initial version'};
       const courseRes = await request(app)
         .post('/courses/')
+        .set('Authorization', 'Bearer test-token')
         .send(coursePayload)
         .expect(201);
       courseId = courseRes.body._id;
 
-      const versionPayload = {version: 'v1', description: 'desc'};
+      const versionPayload = {version: 'v1.0', description: 'desc'};
       const versionRes = await request(app)
         .post(`/courses/${courseId}/versions`)
+        .set('Authorization', 'Bearer test-token')
         .send(versionPayload)
         .expect(201);
       versionId = versionRes.body._id || versionRes.body.version._id;
@@ -518,6 +601,7 @@ describe('Module Controller Integration Tests', () => {
       const modulePayload = {name: 'mod', description: 'desc'};
       const moduleRes = await request(app)
         .post(`/courses/versions/${versionId}/modules`)
+        .set('Authorization', 'Bearer test-token')
         .send(modulePayload)
         .expect(201);
       moduleId = moduleRes.body.version.modules[0].moduleId;
@@ -526,6 +610,7 @@ describe('Module Controller Integration Tests', () => {
     it('should return 400 if both afterModuleId and beforeModuleId are missing in moveModule', async () => {
       await request(app)
         .put(`/courses/versions/${versionId}/modules/${moduleId}/move`)
+        .set('Authorization', 'Bearer test-token')
         .send({})
         .expect(400);
     }, 90000);
@@ -535,6 +620,7 @@ describe('Module Controller Integration Tests', () => {
         .put(
           `/courses/versions/${versionId}/modules/62341aeb5be816967d8fc2db/move`,
         )
+        .set('Authorization', 'Bearer test-token')
         .send({beforeModuleId: '62341aeb5be816967d8fc2db'})
         .expect(404);
     }, 90000);
@@ -544,6 +630,7 @@ describe('Module Controller Integration Tests', () => {
         .put(
           '/courses/versions/62341aeb5be816967d8fc2db/modules/62341aeb5be816967d8fc2db/move',
         )
+        .set('Authorization', 'Bearer test-token')
         .send({beforeModuleId: '62341aeb5be816967d8fc2db'})
         .expect(404);
     }, 90000);
@@ -553,6 +640,7 @@ describe('Module Controller Integration Tests', () => {
         .delete(
           '/courses/versions/62341aeb5be816967d8fc2db/modules/62341aeb5be816967d8fc2db',
         )
+        .set('Authorization', 'Bearer test-token')
         .expect(404);
     }, 90000);
 
@@ -561,6 +649,7 @@ describe('Module Controller Integration Tests', () => {
         .delete(
           `/courses/versions/${versionId}/modules/62341aeb5be816967d8fc2db`,
         )
+        .set('Authorization', 'Bearer test-token')
         .expect(404);
     }, 90000);
   });

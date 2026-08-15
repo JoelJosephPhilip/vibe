@@ -153,6 +153,7 @@ export class CourseRepository implements ICourseRepository {
     const course = await this.courseCollection.findOne(
       {
         _id: new ObjectId(id),
+        isDeleted: { $ne: true },
       },
       { session },
     );
@@ -525,6 +526,7 @@ export class CourseRepository implements ICourseRepository {
       const courseVersion = await this.courseVersionCollection.findOne(
         {
           _id: new ObjectId(versionId),
+          isDeleted: { $ne: true },
         },
         { session },
       );
@@ -613,6 +615,7 @@ export class CourseRepository implements ICourseRepository {
       {
         $match: {
           _id: new ObjectId(versionId),
+          isDeleted: { $ne: true },
         },
       },
       {

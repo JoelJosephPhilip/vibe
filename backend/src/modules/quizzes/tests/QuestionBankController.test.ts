@@ -29,7 +29,9 @@ import {InversifyAdapter} from '#root/inversify-adapter.js';
 import {quizzesModuleOptions} from '../index.js';
 import {coursesModuleOptions} from '#root/modules/courses/index.js';
 import request from 'supertest';
-import {beforeAll, describe, it, expect} from 'vitest';
+import {beforeAll, beforeEach, describe, it, expect, vi} from 'vitest';
+import {faker} from '@faker-js/faker';
+import {FirebaseAuthService} from '#root/modules/auth/services/FirebaseAuthService.js';
 
 describe('QuestionBankController', {timeout: 30000}, () => {
   const appInstance = Express();
@@ -74,25 +76,40 @@ describe('QuestionBankController', {timeout: 30000}, () => {
     app = useExpressServer(appInstance, options);
   }, 900000);
 
+  beforeEach(() => {
+    // The real @Ability() decorator verifies the bearer token itself via
+    // getCurrentUserFromToken — mock it so 'Bearer test-token' resolves.
+    vi.spyOn(
+      FirebaseAuthService.prototype,
+      'getCurrentUserFromToken',
+    ).mockResolvedValue({
+      _id: faker.database.mongodbObjectId(),
+      roles: 'admin',
+    } as any);
+  });
+
   describe('POST /quizzes/question-bank', () => {
     it('success: creates a question bank', async () => {
-      const courseRes = await request(app).post('/courses').send({
+      const courseRes = await request(app).post('/courses').set('Authorization', 'Bearer test-token').send({
         name: 'Course for Bank A',
         description: 'Course for POST success',
+        versionName: 'Version 1',
+        versionDescription: 'Initial version',
       });
       expect(courseRes.status).toBe(201);
       const courseId = courseRes.body._id;
 
       const versionRes = await request(app)
         .post(`/courses/${courseId}/versions`)
+        .set('Authorization', 'Bearer test-token')
         .send({
-          version: 'v1',
+          version: 'v1.0',
           description: 'Version for POST success',
         });
       expect(versionRes.status).toBe(201);
       const courseVersionId = versionRes.body._id;
 
-      const res = await request(app).post('/quizzes/question-bank').send({
+      const res = await request(app).post('/quizzes/question-bank').set('Authorization', 'Bearer test-token').send({
         courseId,
         courseVersionId,
         questions: [],
@@ -104,30 +121,33 @@ describe('QuestionBankController', {timeout: 30000}, () => {
     });
 
     it('failure: missing required fields', async () => {
-      const res = await request(app).post('/quizzes/question-bank').send({});
+      const res = await request(app).post('/quizzes/question-bank').set('Authorization', 'Bearer test-token').send({});
       expect(res.status).toBe(400);
     });
   });
 
   describe('GET /quizzes/question-bank/:questionBankId', () => {
     it('success: gets a question bank by id', async () => {
-      const courseRes = await request(app).post('/courses/').send({
+      const courseRes = await request(app).post('/courses/').set('Authorization', 'Bearer test-token').send({
         name: 'Course for Bank B',
         description: 'Course for GET success',
+        versionName: 'Version 1',
+        versionDescription: 'Initial version',
       });
       expect(courseRes.status).toBe(201);
       const courseId = courseRes.body._id;
 
       const versionRes = await request(app)
         .post(`/courses/${courseId}/versions`)
+        .set('Authorization', 'Bearer test-token')
         .send({
-          version: 'v1',
+          version: 'v1.0',
           description: 'Version for GET success',
         });
       expect(versionRes.status).toBe(201);
       const courseVersionId = versionRes.body._id;
 
-      const createRes = await request(app).post('/quizzes/question-bank').send({
+      const createRes = await request(app).post('/quizzes/question-bank').set('Authorization', 'Bearer test-token').send({
         courseId,
         courseVersionId,
         questions: [],
@@ -135,36 +155,39 @@ describe('QuestionBankController', {timeout: 30000}, () => {
         description: 'Bank for GET success',
       });
       const bankId = createRes.body.questionBankId;
-      const res = await request(app).get(`/quizzes/question-bank/${bankId}`);
+      const res = await request(app).get(`/quizzes/question-bank/${bankId}`).set('Authorization', 'Bearer test-token');
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty('title', 'Bank B');
     });
 
     it('failure: invalid id', async () => {
-      const res = await request(app).get('/quizzes/question-bank/invalidid');
+      const res = await request(app).get('/quizzes/question-bank/invalidid').set('Authorization', 'Bearer test-token');
       expect(res.status).toBe(400);
     });
   });
 
   describe('PATCH /quizzes/question-bank/:questionBankId/questions/:questionId/add', () => {
     it('success: adds a question to the bank', async () => {
-      const courseRes = await request(app).post('/courses/').send({
+      const courseRes = await request(app).post('/courses/').set('Authorization', 'Bearer test-token').send({
         name: 'Course for Bank C',
         description: 'Course for ADD success',
+        versionName: 'Version 1',
+        versionDescription: 'Initial version',
       });
       expect(courseRes.status).toBe(201);
       const courseId = courseRes.body._id;
 
       const versionRes = await request(app)
         .post(`/courses/${courseId}/versions`)
+        .set('Authorization', 'Bearer test-token')
         .send({
-          version: 'v1',
+          version: 'v1.0',
           description: 'Version for ADD success',
         });
       expect(versionRes.status).toBe(201);
       const courseVersionId = versionRes.body._id;
 
-      const bankRes = await request(app).post('/quizzes/question-bank').send({
+      const bankRes = await request(app).post('/quizzes/question-bank').set('Authorization', 'Bearer test-token').send({
         courseId,
         courseVersionId,
         questions: [],
@@ -174,6 +197,7 @@ describe('QuestionBankController', {timeout: 30000}, () => {
 
       const questionRes = await request(app)
         .post('/quizzes/questions')
+        .set('Authorization', 'Bearer test-token')
         .send({
           question: {
             text: 'Question C',
@@ -183,6 +207,7 @@ describe('QuestionBankController', {timeout: 30000}, () => {
             isParameterized: false,
             parameters: [],
             hint: 'Hint C',
+          priority: 'LOW',
           },
           solution: {
             correctLotItem: {text: 'Correct', explaination: 'Correct'},
@@ -193,7 +218,7 @@ describe('QuestionBankController', {timeout: 30000}, () => {
       const questionId = questionRes.body.questionId;
       const res = await request(app).patch(
         `/quizzes/question-bank/${bankId}/questions/${questionId}/add`,
-      );
+      ).set('Authorization', 'Bearer test-token');
       expect(res.status).toBe(200);
       expect(res.body.questions).toContain(questionId);
     });
@@ -201,30 +226,33 @@ describe('QuestionBankController', {timeout: 30000}, () => {
     it('failure: invalid ids', async () => {
       const res = await request(app).patch(
         '/quizzes/question-bank/invalidbank/questions/invalidquestion/add',
-      );
+      ).set('Authorization', 'Bearer test-token');
       expect(res.status).toBe(400);
     });
   });
 
   describe('PATCH /quizzes/question-bank/:questionBankId/questions/:questionId/remove', () => {
     it('success: removes a question from the bank', async () => {
-      const courseRes = await request(app).post('/courses/').send({
+      const courseRes = await request(app).post('/courses/').set('Authorization', 'Bearer test-token').send({
         name: 'Course for Bank D',
         description: 'Course for REMOVE success',
+        versionName: 'Version 1',
+        versionDescription: 'Initial version',
       });
       expect(courseRes.status).toBe(201);
       const courseId = courseRes.body._id;
 
       const versionRes = await request(app)
         .post(`/courses/${courseId}/versions`)
+        .set('Authorization', 'Bearer test-token')
         .send({
-          version: 'v1',
+          version: 'v1.0',
           description: 'Version for REMOVE success',
         });
       expect(versionRes.status).toBe(201);
       const courseVersionId = versionRes.body._id;
 
-      const bankRes = await request(app).post('/quizzes/question-bank').send({
+      const bankRes = await request(app).post('/quizzes/question-bank').set('Authorization', 'Bearer test-token').send({
         courseId,
         courseVersionId,
         questions: [],
@@ -234,6 +262,7 @@ describe('QuestionBankController', {timeout: 30000}, () => {
 
       const questionRes = await request(app)
         .post('/quizzes/questions')
+        .set('Authorization', 'Bearer test-token')
         .send({
           question: {
             text: 'Question D',
@@ -243,6 +272,7 @@ describe('QuestionBankController', {timeout: 30000}, () => {
             isParameterized: false,
             parameters: [],
             hint: 'Hint D',
+          priority: 'LOW',
           },
           solution: {
             correctLotItem: {text: 'Correct', explaination: 'Correct'},
@@ -254,42 +284,53 @@ describe('QuestionBankController', {timeout: 30000}, () => {
       // Add first
       await request(app).patch(
         `/quizzes/question-bank/${bankId}/questions/${questionId}/add`,
-      );
-      // Remove
+      ).set('Authorization', 'Bearer test-token');
+      // Remove — this soft-deletes the question itself (QuestionRepository
+      // marks it isDeleted) but deliberately keeps its ID in the bank's
+      // questions array, so a bank's history still reflects what it once
+      // contained. See the comment in QuestionBankService.removeQuestion.
       const res = await request(app).patch(
         `/quizzes/question-bank/${bankId}/questions/${questionId}/remove`,
-      );
+      ).set('Authorization', 'Bearer test-token');
       expect(res.status).toBe(200);
-      expect(res.body.questions).not.toContain(questionId);
+      expect(res.body.questions).toContain(questionId);
+
+      const getRes = await request(app)
+        .get(`/quizzes/questions/${questionId}`)
+        .set('Authorization', 'Bearer test-token');
+      expect(getRes.status).toBe(404);
     });
 
     it('failure: invalid ids', async () => {
       const res = await request(app).patch(
         '/quizzes/question-bank/invalidbank/questions/invalidquestion/remove',
-      );
+      ).set('Authorization', 'Bearer test-token');
       expect(res.status).toBe(400);
     });
   });
 
   describe('PATCH /quizzes/question-bank/:questionBankId/questions/:questionId/replace-duplicate', () => {
     it('success: replaces a question with its duplicate', async () => {
-      const courseRes = await request(app).post('/courses/').send({
+      const courseRes = await request(app).post('/courses/').set('Authorization', 'Bearer test-token').send({
         name: 'Course for Bank E',
         description: 'Course for REPLACE success',
+        versionName: 'Version 1',
+        versionDescription: 'Initial version',
       });
       expect(courseRes.status).toBe(201);
       const courseId = courseRes.body._id;
 
       const versionRes = await request(app)
         .post(`/courses/${courseId}/versions`)
+        .set('Authorization', 'Bearer test-token')
         .send({
-          version: 'v1',
+          version: 'v1.0',
           description: 'Version for REPLACE success',
         });
       expect(versionRes.status).toBe(201);
       const courseVersionId = versionRes.body._id;
 
-      const bankRes = await request(app).post('/quizzes/question-bank').send({
+      const bankRes = await request(app).post('/quizzes/question-bank').set('Authorization', 'Bearer test-token').send({
         courseId,
         courseVersionId,
         questions: [],
@@ -299,6 +340,7 @@ describe('QuestionBankController', {timeout: 30000}, () => {
 
       const questionRes = await request(app)
         .post('/quizzes/questions')
+        .set('Authorization', 'Bearer test-token')
         .send({
           question: {
             text: 'Question E',
@@ -308,6 +350,7 @@ describe('QuestionBankController', {timeout: 30000}, () => {
             isParameterized: false,
             parameters: [],
             hint: 'Hint E',
+          priority: 'LOW',
           },
           solution: {
             correctLotItem: {text: 'Correct', explaination: 'Correct'},
@@ -319,11 +362,11 @@ describe('QuestionBankController', {timeout: 30000}, () => {
       // Add first
       await request(app).patch(
         `/quizzes/question-bank/${bankId}/questions/${questionId}/add`,
-      );
+      ).set('Authorization', 'Bearer test-token');
       // Replace
       const res = await request(app).patch(
         `/quizzes/question-bank/${bankId}/questions/${questionId}/replace-duplicate`,
-      );
+      ).set('Authorization', 'Bearer test-token');
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty('newQuestionId');
       expect(res.body.newQuestionId).not.toBe(questionId);
@@ -332,7 +375,7 @@ describe('QuestionBankController', {timeout: 30000}, () => {
     it('failure: invalid ids', async () => {
       const res = await request(app).patch(
         '/quizzes/question-bank/invalidbank/questions/invalidquestion/replace-duplicate',
-      );
+      ).set('Authorization', 'Bearer test-token');
       expect(res.status).toBe(400);
     });
   });

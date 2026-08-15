@@ -15,6 +15,7 @@ import request from 'supertest';
 import { quizzesModuleOptions } from '../index.js';
 import { coursesModuleOptions } from '#courses/index.js';
 import { authModuleOptions } from '#auth/index.js';
+import { usersModuleOptions } from '#users/index.js';
 import { faker } from '@faker-js/faker';
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import { ItemType } from '#root/shared/interfaces/models.js';
@@ -85,6 +86,7 @@ describe('AttemptController', async () => {
         ...(quizzesModuleOptions.controllers as Function[]),
         ...(coursesModuleOptions.controllers as Function[]),
         ...(authModuleOptions.controllers as Function[]),
+        ...(usersModuleOptions.controllers as Function[]),
       ],
       authorizationChecker: async () => true,
       defaultErrorHandler: true,
@@ -106,19 +108,38 @@ describe('AttemptController', async () => {
       firstName: faker.person.firstName().replace(/[^a-zA-Z]/g, ''),
       lastName: faker.person.lastName().replace(/[^a-zA-Z]/g, ''),
     };
-    const signupRes = await request(app).post('/auth/signup').send(signUpBody);
+    const signupRes = await request(app).post('/auth/signup').set('Authorization', 'Bearer test-token').send(signUpBody);
     expect(signupRes.status).toBe(201);
     userId = signupRes.body.userId;
     expect(userId).toBeTruthy();
     vi.spyOn(FirebaseAuthService.prototype, 'getUserIdFromReq').mockResolvedValue(userId);
+    // @Ability() (unlike currentUserChecker above) verifies the bearer token
+    // itself via getCurrentUserFromToken — mock it so 'Bearer test-token'
+    // resolves to this same signed-up user.
+    vi.spyOn(
+      FirebaseAuthService.prototype,
+      'getCurrentUserFromToken',
+    ).mockResolvedValue({_id: userId, roles: 'admin'} as any);
   }, 900000);
+
+  beforeEach(() => {
+    // Some tests below swap this mock to act as a separate student user for
+    // the attempt/submit steps — re-establish the course-creator identity
+    // before every test so that swap doesn't leak into the next one.
+    vi.spyOn(
+      FirebaseAuthService.prototype,
+      'getCurrentUserFromToken',
+    ).mockResolvedValue({_id: userId, roles: 'admin'} as any);
+  });
 
   describe('POST /quizzes/:quizId/attempt', () => {
     it('should create an attempt for a quiz', { timeout: 30000 }, async () => {
       // Create course
-      const courseRes = await request(app).post('/courses').send({
+      const courseRes = await request(app).post('/courses').set('Authorization', 'Bearer test-token').send({
         name: 'Course for Attempt',
         description: 'Course for attempt test',
+        versionName: 'Version 1',
+        versionDescription: 'Initial version',
       });
       expect(courseRes.status).toBe(201);
       const courseId = courseRes.body._id;
@@ -126,8 +147,9 @@ describe('AttemptController', async () => {
       // Create course version
       const versionRes = await request(app)
         .post(`/courses/${courseId}/versions`)
+        .set('Authorization', 'Bearer test-token')
         .send({
-          version: 'v1',
+          version: 'v1.0',
           description: 'Version for attempt test',
         });
       expect(versionRes.status).toBe(201);
@@ -136,6 +158,7 @@ describe('AttemptController', async () => {
       // Create module
       const moduleRes = await request(app)
         .post(`/courses/versions/${versionId}/modules`)
+        .set('Authorization', 'Bearer test-token')
         .send({
           name: 'Module for Attempt',
           description: 'Module for attempt test',
@@ -146,6 +169,7 @@ describe('AttemptController', async () => {
       // Create section
       const sectionRes = await request(app)
         .post(`/courses/versions/${versionId}/modules/${moduleId}/sections`)
+        .set('Authorization', 'Bearer test-token')
         .send({
           name: 'Section for Attempt',
           description: 'Section for attempt test',
@@ -180,12 +204,13 @@ describe('AttemptController', async () => {
         .post(
           `/courses/versions/${versionId}/modules/${moduleId}/sections/${sectionId}/items`,
         )
+        .set('Authorization', 'Bearer test-token')
         .send(itemPayload);
       expect(itemRes.status).toBe(201);
       const quizId = itemRes.body.createdItem._id;
 
       // Create attempt
-      const res = await request(app).post(`/quizzes/${quizId}/attempt`).send();
+      const res = await request(app).post(`/quizzes/${quizId}/attempt`).set('Authorization', 'Bearer test-token').send();
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty('attemptId');
     });
@@ -194,9 +219,11 @@ describe('AttemptController', async () => {
   describe('POST /quizzes/:quizId/attempt/:attemptId/save', () => {
     it('should save and retrieve answers for an attempt with a question from a question bank', { timeout: 30000 }, async () => {
       // 1. Create course
-      const courseRes = await request(app).post('/courses').send({
+      const courseRes = await request(app).post('/courses').set('Authorization', 'Bearer test-token').send({
         name: 'Course for Attempt Save Real',
         description: 'Course for attempt save test (real question)',
+        versionName: 'Version 1',
+        versionDescription: 'Initial version',
       });
       expect(courseRes.status).toBe(201);
       const courseId = courseRes.body._id;
@@ -204,8 +231,9 @@ describe('AttemptController', async () => {
       // 2. Create course version
       const versionRes = await request(app)
         .post(`/courses/${courseId}/versions`)
+        .set('Authorization', 'Bearer test-token')
         .send({
-          version: 'v1',
+          version: 'v1.0',
           description: 'Version for attempt save test',
         });
       expect(versionRes.status).toBe(201);
@@ -214,6 +242,7 @@ describe('AttemptController', async () => {
       // 3. Create module
       const moduleRes = await request(app)
         .post(`/courses/versions/${versionId}/modules`)
+        .set('Authorization', 'Bearer test-token')
         .send({
           name: 'Module for Attempt Save Real',
           description: 'Module for attempt save test',
@@ -224,6 +253,7 @@ describe('AttemptController', async () => {
       // 4. Create section
       const sectionRes = await request(app)
         .post(`/courses/versions/${versionId}/modules/${moduleId}/sections`)
+        .set('Authorization', 'Bearer test-token')
         .send({
           name: 'Section for Attempt Save Real',
           description: 'Section for attempt save test',
@@ -232,7 +262,7 @@ describe('AttemptController', async () => {
       const sectionId =
         sectionRes.body.version.modules[0].sections[0].sectionId;
 
-      const questionRes = await request(app).post('/quizzes/questions').send({
+      const questionRes = await request(app).post('/quizzes/questions').set('Authorization', 'Bearer test-token').send({
         question: NATquestionData,
         solution: NATsolution,
       });
@@ -242,6 +272,7 @@ describe('AttemptController', async () => {
       // 6. Create question bank with the question
       const bankRes = await request(app)
         .post('/quizzes/question-bank')
+        .set('Authorization', 'Bearer test-token')
         .send({
           courseId,
           courseVersionId: versionId,
@@ -279,6 +310,7 @@ describe('AttemptController', async () => {
         .post(
           `/courses/versions/${versionId}/modules/${moduleId}/sections/${sectionId}/items`,
         )
+        .set('Authorization', 'Bearer test-token')
         .send(itemPayload);
       expect(itemRes.status).toBe(201);
       const quizId = itemRes.body.createdItem._id;
@@ -286,6 +318,7 @@ describe('AttemptController', async () => {
       // 8. Create attempt
       const attemptRes = await request(app)
         .post(`/quizzes/${quizId}/attempt`)
+        .set('Authorization', 'Bearer test-token')
         .send();
       expect(attemptRes.status).toBe(200);
       const attemptId = attemptRes.body.attemptId;
@@ -293,6 +326,7 @@ describe('AttemptController', async () => {
       // 9. Save answers for the question
       const saveRes = await request(app)
         .post(`/quizzes/${quizId}/attempt/${attemptId}/save`)
+        .set('Authorization', 'Bearer test-token')
         .send({
           answers: [
             {
@@ -305,9 +339,9 @@ describe('AttemptController', async () => {
       expect(saveRes.status).toBe(200);
 
       // 10. Retrieve the attempt to check saved answers
-      const getAttemptRes = await request(app).get(
-        `/quizzes/${quizId}/attempt/${attemptId}`,
-      );
+      const getAttemptRes = await request(app)
+        .get(`/quizzes/${quizId}/attempt/${attemptId}`)
+        .set('Authorization', 'Bearer test-token');
       expect(getAttemptRes.status).toBe(200);
       expect(getAttemptRes.body).toHaveProperty('answers');
     });
@@ -316,9 +350,11 @@ describe('AttemptController', async () => {
   describe('POST /quizzes/:quizId/attempt/:attemptId/submit', () => {
     it('should submit answers for an attempt with a real question from a question bank', { timeout: 30000 }, async () => {
       // 1. Create course
-      const courseRes = await request(app).post('/courses').send({
+      const courseRes = await request(app).post('/courses').set('Authorization', 'Bearer test-token').send({
         name: 'Course for Attempt Submit Real',
         description: 'Course for attempt submit test (real question)',
+        versionName: 'Version 1',
+        versionDescription: 'Initial version',
       });
       expect(courseRes.status).toBe(201);
       const courseId = courseRes.body._id;
@@ -326,8 +362,9 @@ describe('AttemptController', async () => {
       // 2. Create course version
       const versionRes = await request(app)
         .post(`/courses/${courseId}/versions`)
+        .set('Authorization', 'Bearer test-token')
         .send({
-          version: 'v1',
+          version: 'v1.0',
           description: 'Version for attempt submit test (real question)',
         });
       expect(versionRes.status).toBe(201);
@@ -336,6 +373,7 @@ describe('AttemptController', async () => {
       // 3. Create module
       const moduleRes = await request(app)
         .post(`/courses/versions/${versionId}/modules`)
+        .set('Authorization', 'Bearer test-token')
         .send({
           name: 'Module for Attempt Submit Real',
           description: 'Module for attempt submit test (real question)',
@@ -346,6 +384,7 @@ describe('AttemptController', async () => {
       // 4. Create section
       const sectionRes = await request(app)
         .post(`/courses/versions/${versionId}/modules/${moduleId}/sections`)
+        .set('Authorization', 'Bearer test-token')
         .send({
           name: 'Section for Attempt Submit Real',
           description: 'Section for attempt submit test (real question)',
@@ -363,6 +402,7 @@ describe('AttemptController', async () => {
         isParameterized: false,
         parameters: [],
         hint: 'Simple math.',
+        priority: 'LOW',
       };
       const solution = {
         decimalPrecision: 0,
@@ -370,7 +410,7 @@ describe('AttemptController', async () => {
         lowerLimit: 0,
         value: 6,
       };
-      const questionRes = await request(app).post('/quizzes/questions').send({
+      const questionRes = await request(app).post('/quizzes/questions').set('Authorization', 'Bearer test-token').send({
         question: questionData,
         solution,
       });
@@ -380,6 +420,7 @@ describe('AttemptController', async () => {
       // 6. Create question bank with the question
       const bankRes = await request(app)
         .post('/quizzes/question-bank')
+        .set('Authorization', 'Bearer test-token')
         .send({
           courseId,
           courseVersionId: versionId,
@@ -416,6 +457,7 @@ describe('AttemptController', async () => {
         .post(
           `/courses/versions/${versionId}/modules/${moduleId}/sections/${sectionId}/items`,
         )
+        .set('Authorization', 'Bearer test-token')
         .send(itemPayload);
       expect(itemRes.status).toBe(201);
       const quizId = itemRes.body.createdItem._id;
@@ -423,22 +465,51 @@ describe('AttemptController', async () => {
       // Add question bank to quiz item
       const updateQuizRes = await request(app)
         .post(`/quizzes/quiz/${quizId}/bank`)
+        .set('Authorization', 'Bearer test-token')
         .send({
           bankId: questionBankId,
           count: 1,
         });
       expect(updateQuizRes.status).toBe(200);
 
-      // 8. Create attempt
+      // 8. handleQuizeProgressAfterSubmission requires an initialized Progress
+      // record, which only gets created for STUDENT enrollments — the
+      // course-creator user (used for all setup above) is auto-enrolled as
+      // INSTRUCTOR and has none. Sign up and enroll a separate student to
+      // actually take the quiz.
+      const studentSignUpRes = await request(app)
+        .post('/auth/signup')
+        .set('Authorization', 'Bearer test-token')
+        .send({
+          email: faker.internet.email(),
+          password: 'TestPassword123!',
+          firstName: faker.person.firstName().replace(/[^a-zA-Z]/g, ''),
+          lastName: faker.person.lastName().replace(/[^a-zA-Z]/g, ''),
+        });
+      expect(studentSignUpRes.status).toBe(201);
+      const studentId = studentSignUpRes.body.userId;
+      const studentEnrollRes = await request(app)
+        .post(`/users/${studentId}/enrollments/courses/${courseId}/versions/${versionId}`)
+        .set('Authorization', 'Bearer test-token')
+        .send({role: 'STUDENT'});
+      expect(studentEnrollRes.status).toBe(200);
+      vi.spyOn(
+        FirebaseAuthService.prototype,
+        'getCurrentUserFromToken',
+      ).mockResolvedValue({_id: studentId, roles: 'user'} as any);
+
+      // 9. Create attempt
       const attemptRes = await request(app)
         .post(`/quizzes/${quizId}/attempt`)
+        .set('Authorization', 'Bearer test-token')
         .send();
       expect(attemptRes.status).toBe(200);
       const attemptId = attemptRes.body.attemptId;
 
-      // 9. Submit answers for the real question
+      // 10. Submit answers for the real question
       const submitRes = await request(app)
         .post(`/quizzes/${quizId}/attempt/${attemptId}/submit`)
+        .set('Authorization', 'Bearer test-token')
         .send({
           answers: [
             {
@@ -447,6 +518,8 @@ describe('AttemptController', async () => {
               answer: { value: 6 },
             },
           ],
+          courseId,
+          courseVersionId: versionId,
         });
       expect(submitRes.status).toBe(200);
       expect(submitRes.body).toHaveProperty('totalScore');
@@ -457,9 +530,11 @@ describe('AttemptController', async () => {
   describe('POST /quizzes/:quizId/attempt/:attemptId/submit', () => {
     it('should submit answers for all question types in a single quiz', { timeout: 30000 }, async () => {
       // 1. Create course
-      const courseRes = await request(app).post('/courses').send({
+      const courseRes = await request(app).post('/courses').set('Authorization', 'Bearer test-token').send({
         name: 'Course for Multi-Type Submit',
         description: 'Course for multi-type question submit test',
+        versionName: 'Version 1',
+        versionDescription: 'Initial version',
       });
       expect(courseRes.status).toBe(201);
       const courseId = courseRes.body._id;
@@ -467,8 +542,9 @@ describe('AttemptController', async () => {
       // 2. Create course version
       const versionRes = await request(app)
         .post(`/courses/${courseId}/versions`)
+        .set('Authorization', 'Bearer test-token')
         .send({
-          version: 'v1',
+          version: 'v1.0',
           description: 'Version for multi-type submit test',
         });
       expect(versionRes.status).toBe(201);
@@ -477,6 +553,7 @@ describe('AttemptController', async () => {
       // 3. Create module
       const moduleRes = await request(app)
         .post(`/courses/versions/${versionId}/modules`)
+        .set('Authorization', 'Bearer test-token')
         .send({
           name: 'Module for Multi-Type Submit',
           description: 'Module for multi-type submit test',
@@ -487,6 +564,7 @@ describe('AttemptController', async () => {
       // 4. Create section
       const sectionRes = await request(app)
         .post(`/courses/versions/${versionId}/modules/${moduleId}/sections`)
+        .set('Authorization', 'Bearer test-token')
         .send({
           name: 'Section for Multi-Type Submit',
           description: 'Section for multi-type submit test',
@@ -498,30 +576,35 @@ describe('AttemptController', async () => {
       // 5. Create questions of each type
       const natRes = await request(app)
         .post('/quizzes/questions')
+        .set('Authorization', 'Bearer test-token')
         .send({ question: NATquestionData, solution: NATsolution });
       expect(natRes.status).toBe(201);
       const natId = natRes.body.questionId;
 
       const solRes = await request(app)
         .post('/quizzes/questions')
+        .set('Authorization', 'Bearer test-token')
         .send({ question: SOLquestionData, solution: SOLsolution });
       expect(solRes.status).toBe(201);
       const solId = solRes.body.questionId;
 
       const smlRes = await request(app)
         .post('/quizzes/questions')
+        .set('Authorization', 'Bearer test-token')
         .send({ question: SMLquestionData, solution: SMLsolution });
       expect(smlRes.status).toBe(201);
       const smlId = smlRes.body.questionId;
 
       const otlRes = await request(app)
         .post('/quizzes/questions')
+        .set('Authorization', 'Bearer test-token')
         .send({ question: OTLquestionData, solution: OTLsolution });
       expect(otlRes.status).toBe(201);
       const otlId = otlRes.body.questionId;
 
       const desRes = await request(app)
         .post('/quizzes/questions')
+        .set('Authorization', 'Bearer test-token')
         .send({ question: DESquestionData, solution: DESsolution });
       expect(desRes.status).toBe(201);
       const desId = desRes.body.questionId;
@@ -529,6 +612,7 @@ describe('AttemptController', async () => {
       // 6. Create only two question banks
       const mainBankRes = await request(app)
         .post('/quizzes/question-bank')
+        .set('Authorization', 'Bearer test-token')
         .send({
           courseId,
           courseVersionId: versionId,
@@ -541,6 +625,7 @@ describe('AttemptController', async () => {
 
       const desBankRes = await request(app)
         .post('/quizzes/question-bank')
+        .set('Authorization', 'Bearer test-token')
         .send({
           courseId,
           courseVersionId: versionId,
@@ -577,6 +662,7 @@ describe('AttemptController', async () => {
         .post(
           `/courses/versions/${versionId}/modules/${moduleId}/sections/${sectionId}/items`,
         )
+        .set('Authorization', 'Bearer test-token')
         .send(itemPayload);
       expect(itemRes.status).toBe(201);
       const quizId = itemRes.body.createdItem._id;
@@ -585,23 +671,63 @@ describe('AttemptController', async () => {
 
       const updateQuizRes = await request(app)
         .post(`/quizzes/quiz/${quizId}/bank`)
+        .set('Authorization', 'Bearer test-token')
         .send({ bankId: mainBankId, count: 4 });
       expect(updateQuizRes.status).toBe(200);
       const updateDesQuizRes = await request(app)
         .post(`/quizzes/quiz/${quizId}/bank`)
+        .set('Authorization', 'Bearer test-token')
         .send({ bankId: desBankId, count: 1 });
       expect(updateDesQuizRes.status).toBe(200);
+
+      // handleQuizeProgressAfterSubmission requires an initialized Progress
+      // record, which only gets created for STUDENT enrollments — the
+      // course-creator user (used for all setup above) is auto-enrolled as
+      // INSTRUCTOR and has none. Sign up and enroll a separate student to
+      // actually take the quiz.
+      const studentSignUpRes = await request(app)
+        .post('/auth/signup')
+        .set('Authorization', 'Bearer test-token')
+        .send({
+          email: faker.internet.email(),
+          password: 'TestPassword123!',
+          firstName: faker.person.firstName().replace(/[^a-zA-Z]/g, ''),
+          lastName: faker.person.lastName().replace(/[^a-zA-Z]/g, ''),
+        });
+      expect(studentSignUpRes.status).toBe(201);
+      const studentId = studentSignUpRes.body.userId;
+      const studentEnrollRes = await request(app)
+        .post(`/users/${studentId}/enrollments/courses/${courseId}/versions/${versionId}`)
+        .set('Authorization', 'Bearer test-token')
+        .send({role: 'STUDENT'});
+      expect(studentEnrollRes.status).toBe(200);
+      vi.spyOn(
+        FirebaseAuthService.prototype,
+        'getCurrentUserFromToken',
+      ).mockResolvedValue({_id: studentId, roles: 'user'} as any);
 
       // 8. Create attempt
       const attemptRes = await request(app)
         .post(`/quizzes/${quizId}/attempt`)
+        .set('Authorization', 'Bearer test-token')
         .send();
       expect(attemptRes.status).toBe(200);
       const attemptId = attemptRes.body.attemptId;
 
-      const solDetails = await request(app).get(`/quizzes/questions/${solId}`);
-      const smlDetails = await request(app).get(`/quizzes/questions/${smlId}`);
-      const otlDetails = await request(app).get(`/quizzes/questions/${otlId}`);
+      // GET /quizzes/questions/:id returns the raw stored question — it never
+      // has parameterMap (that's only resolved per-attempt). The resolved,
+      // parameter-substituted views (with lotItems and parameterMap) are in
+      // the attempt-creation response instead.
+      const questionRenderViews = attemptRes.body.questionRenderViews;
+      const solDetails = {
+        body: questionRenderViews.find((q: any) => q._id === solId),
+      };
+      const smlDetails = {
+        body: questionRenderViews.find((q: any) => q._id === smlId),
+      };
+      const otlDetails = {
+        body: questionRenderViews.find((q: any) => q._id === otlId),
+      };
 
       // For SOL (SELECT_ONE_IN_LOT)
       // Only the correct lot item will have the value of 'name' in its text
@@ -659,6 +785,7 @@ describe('AttemptController', async () => {
       // 9. Submit answers for all questions
       const submitRes = await request(app)
         .post(`/quizzes/${quizId}/attempt/${attemptId}/submit`)
+        .set('Authorization', 'Bearer test-token')
         .send({
           answers: [
             // NUMERIC_ANSWER_TYPE
@@ -692,6 +819,8 @@ describe('AttemptController', async () => {
               answer: { answerText: 'Compiling is the process...' },
             },
           ],
+          courseId,
+          courseVersionId: versionId,
         });
       expect(submitRes.status).toBe(200);
       expect(submitRes.body).toHaveProperty('totalScore');

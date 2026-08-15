@@ -28,6 +28,7 @@ export async function verifyProgressInDatabase({
     .get(
       `/users/progress/courses/${courseId}/versions/${courseVersionId}`,
     )
+    .set('Authorization', 'Bearer default')
     .expect(200);
 
   // Validate progress data

@@ -22,12 +22,21 @@ export async function startStopAndUpdateProgress({
   sectionId: string;
   app: typeof Express;
 }) {
+  // /stop validates watch time against real elapsed wall-clock time (see
+  // ProgressService.isValidWatchTime) — a near-instant start->stop in a test
+  // never accrues enough on its own, so mock it here. There is no separate
+  // /update endpoint; /stop handles both validation and progress advancement.
+  vi.spyOn(ProgressService.prototype as any, 'isValidWatchTime')
+    .mockReset()
+    .mockReturnValue(true);
+
   // Start the item progress
   const startItemBody = {itemId, moduleId, sectionId};
   const startItemResponse = await request(app)
     .post(
       `/users/progress/courses/${courseId}/versions/${courseVersionId}/start`,
     )
+    .set('Authorization', 'Bearer default')
     .send(startItemBody)
     .expect(200);
 
@@ -42,28 +51,9 @@ export async function startStopAndUpdateProgress({
     .post(
       `/users/progress/courses/${courseId}/versions/${courseVersionId}/stop`,
     )
+    .set('Authorization', 'Bearer default')
     .send(stopItemBody)
     .expect(200);
 
-  // Update the progress
-  const updateProgressBody = {
-    moduleId,
-    sectionId,
-    itemId,
-    watchItemId: startItemResponse.body.watchItemId,
-  };
-
-  vi.spyOn(
-    ProgressService.prototype as any,
-    'isValidWatchTime',
-  ).mockReturnValueOnce(true);
-
-  const updateProgressResponse = await request(app)
-    .patch(
-      `/users/progress/courses/${courseId}/versions/${courseVersionId}/update`,
-    )
-    .send(updateProgressBody)
-    .expect(200);
-
-  return {startItemResponse, stopItemResponse, updateProgressResponse};
+  return {startItemResponse, stopItemResponse};
 }

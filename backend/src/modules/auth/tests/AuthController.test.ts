@@ -97,8 +97,10 @@ describe('Auth Controller Integration Tests', () => {
       expect(response.status).toBe(400);
       expect(response.body).toHaveProperty('errors');
       expect(response.body.errors[0].constraints.isEmail).toBeDefined();
+      // SignUpBody.email carries a custom @IsEmail message (see
+      // AuthValidators.ts), overriding class-validator's default text.
       expect(response.body.errors[0].constraints.isEmail).toBe(
-        'email must be an email',
+        'Invalid email address',
       );
     }, 30000);
 

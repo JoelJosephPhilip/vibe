@@ -114,6 +114,17 @@ describe('Enrollment Controller Integration Tests', () => {
         return user1;
       },
     );
+    // The real @Ability() decorator (unlike currentUserChecker above)
+    // verifies the bearer token itself via getCurrentUserFromToken — mock it
+    // too, keyed the same way, so 'Bearer user1'/'Bearer student' resolve.
+    vi.spyOn(
+      FirebaseAuthService.prototype,
+      'getCurrentUserFromToken',
+    ).mockImplementation(async (token: string) => {
+      if (token === 'user1') return user1 as any;
+      if (token === 'student') return user2 as any;
+      return user1 as any;
+    });
     app = useExpressServer(appInstance, {
       controllers: [
         ...(usersModuleOptions.controllers as Function[]),
@@ -153,10 +164,13 @@ describe('Enrollment Controller Integration Tests', () => {
       const courseBody: CourseBody = {
         name: faker.commerce.productName(),
         description: faker.commerce.productDescription(),
+        versionName: 'Version 1',
+        versionDescription: 'Initial version',
       };
 
       const courseResponse = await request(app)
         .post('/courses')
+        .set('Authorization', 'Bearer user1')
         .send(courseBody);
 
       // Expect the response to contain the course ID
@@ -176,6 +190,7 @@ describe('Enrollment Controller Integration Tests', () => {
 
       const createCourseVersionResponse = await request(app)
         .post(`/courses/${courseVersionParams.courseId}/versions`)
+        .set('Authorization', 'Bearer user1')
         .send(courseVersionBody)
         .expect(201);
       // Expect the response to contain the course version ID
@@ -194,6 +209,7 @@ describe('Enrollment Controller Integration Tests', () => {
 
       const createModuleResponse = await request(app)
         .post(`/courses/versions/${moduleParams.versionId}/modules`)
+        .set('Authorization', 'Bearer user1')
         .send(moduleBody);
 
       expect(createModuleResponse.status).toBe(201);
@@ -222,6 +238,7 @@ describe('Enrollment Controller Integration Tests', () => {
         .post(
           `/courses/versions/${sectionParams.versionId}/modules/${sectionParams.moduleId}/sections`,
         )
+        .set('Authorization', 'Bearer user1')
         .send(sectionBody)
         .expect(201);
 
@@ -265,6 +282,7 @@ describe('Enrollment Controller Integration Tests', () => {
         .post(
           `/courses/versions/${itemParams.versionId}/modules/${itemParams.moduleId}/sections/${itemParams.sectionId}/items`,
         )
+        .set('Authorization', 'Bearer user1')
         .send(itemPayload);
       expect(createItemResponse.status).toBe(201);
       // Expect the response to contain the item ID
@@ -287,6 +305,7 @@ describe('Enrollment Controller Integration Tests', () => {
         .post(
           `/users/${createEnrollmentParams.userId}/enrollments/courses/${createEnrollmentParams.courseId}/versions/${createEnrollmentParams.courseVersionId}`,
         )
+        .set('Authorization', 'Bearer user1')
         .send({
           role: 'STUDENT',
         });
@@ -356,10 +375,13 @@ describe('Enrollment Controller Integration Tests', () => {
       const courseBody: CourseBody = {
         name: faker.commerce.productName(),
         description: faker.commerce.productDescription(),
+        versionName: 'Version 1',
+        versionDescription: 'Initial version',
       };
 
       const courseResponse = await request(app)
         .post('/courses')
+        .set('Authorization', 'Bearer user1')
         .send(courseBody)
         .expect(201);
       const courseId: string = courseResponse.body._id;
@@ -372,6 +394,7 @@ describe('Enrollment Controller Integration Tests', () => {
 
       const createCourseVersionResponse = await request(app)
         .post(`/courses/${courseId}/versions`)
+        .set('Authorization', 'Bearer user1')
         .send(courseVersionBody)
         .expect(201);
       const courseVersionId = createCourseVersionResponse.body._id;
@@ -384,6 +407,7 @@ describe('Enrollment Controller Integration Tests', () => {
 
       const createModuleResponse = await request(app)
         .post(`/courses/versions/${courseVersionId}/modules`)
+        .set('Authorization', 'Bearer user1')
         .send(moduleBody)
         .expect(201);
       const moduleId = createModuleResponse.body.version.modules[0].moduleId;
@@ -398,6 +422,7 @@ describe('Enrollment Controller Integration Tests', () => {
         .post(
           `/courses/versions/${courseVersionId}/modules/${moduleId}/sections`,
         )
+        .set('Authorization', 'Bearer user1')
         .send(sectionBody)
         .expect(201);
       const sectionId =
@@ -429,6 +454,7 @@ describe('Enrollment Controller Integration Tests', () => {
         .post(
           `/courses/versions/${courseVersionId}/modules/${moduleId}/sections/${sectionId}/items`,
         )
+        .set('Authorization', 'Bearer user1')
         .send(itemPayload)
         .expect(201);
       const itemId = createItemResponse.body.itemsGroup.items[0].itemId;
@@ -438,6 +464,7 @@ describe('Enrollment Controller Integration Tests', () => {
         .post(
           `/users/${userId}/enrollments/courses/${courseId}/versions/${courseVersionId}`,
         )
+        .set('Authorization', 'Bearer user1')
         .send({
           role: 'STUDENT',
         });
@@ -446,9 +473,11 @@ describe('Enrollment Controller Integration Tests', () => {
       expect(enrollmentResponse.body).toHaveProperty('progress');
 
       // 8. Unenroll the user
-      const unenrollResponse = await request(app).post(
-        `/users/${userId}/enrollments/courses/${courseId}/versions/${courseVersionId}/unenroll`,
-      );
+      const unenrollResponse = await request(app)
+        .post(
+          `/users/${userId}/enrollments/courses/${courseId}/versions/${courseVersionId}/unenroll`,
+        )
+        .set('Authorization', 'Bearer user1');
       expect(unenrollResponse.status).toBe(200);
       expect(unenrollResponse.body.enrollment).toBeNull();
       expect(unenrollResponse.body.progress).toBeNull();
@@ -458,6 +487,7 @@ describe('Enrollment Controller Integration Tests', () => {
         .post(
           `/users/${userId}/enrollments/courses/${courseId}/versions/${courseVersionId}`,
         )
+        .set('Authorization', 'Bearer user1')
         .send({
           role: 'STUDENT',
         });
@@ -489,7 +519,10 @@ describe('Enrollment Controller Integration Tests', () => {
         .send(signUpBody)
         .expect(201);
       const userId = signUpResponse.body.userId;
-      const userInfo = await request(app).get(`/users/${userId}`).expect(200);
+      const userInfo = await request(app)
+        .get(`/users/${userId}`)
+        .set('Authorization', 'Bearer user1')
+        .expect(200);
       user2 = userInfo.body;
       vi.spyOn(
         FirebaseAuthService.prototype,
@@ -502,9 +535,12 @@ describe('Enrollment Controller Integration Tests', () => {
         const courseBody: CourseBody = {
           name: faker.commerce.productName(),
           description: faker.commerce.productDescription(),
+          versionName: 'Version 1',
+          versionDescription: 'Initial version',
         };
         const courseResponse = await request(app)
           .post('/courses')
+          .set('Authorization', 'Bearer user1')
           .send(courseBody)
           .expect(201);
         const courseId: string = courseResponse.body._id;
@@ -516,6 +552,7 @@ describe('Enrollment Controller Integration Tests', () => {
         };
         const createCourseVersionResponse = await request(app)
           .post(`/courses/${courseId}/versions`)
+          .set('Authorization', 'Bearer user1')
           .send(courseVersionBody)
           .expect(201);
         const courseVersionId = createCourseVersionResponse.body._id;
@@ -527,6 +564,7 @@ describe('Enrollment Controller Integration Tests', () => {
         };
         const createModuleResponse = await request(app)
           .post(`/courses/versions/${courseVersionId}/modules`)
+          .set('Authorization', 'Bearer user1')
           .send(moduleBody)
           .expect(201);
         const moduleId = createModuleResponse.body.version.modules[0].moduleId;
@@ -540,6 +578,7 @@ describe('Enrollment Controller Integration Tests', () => {
           .post(
             `/courses/versions/${courseVersionId}/modules/${moduleId}/sections`,
           )
+          .set('Authorization', 'Bearer user1')
           .send(sectionBody)
           .expect(201);
         const sectionId =
@@ -570,6 +609,7 @@ describe('Enrollment Controller Integration Tests', () => {
           .post(
             `/courses/versions/${courseVersionId}/modules/${moduleId}/sections/${sectionId}/items`,
           )
+          .set('Authorization', 'Bearer user1')
           .send(itemPayload)
           .expect(201);
         const itemId = createItemResponse.body.itemsGroup.items[0]._id;
@@ -579,6 +619,7 @@ describe('Enrollment Controller Integration Tests', () => {
           .post(
             `/users/${userId}/enrollments/courses/${courseId}/versions/${courseVersionId}`,
           )
+          .set('Authorization', 'Bearer user1')
           .send({
             role: 'STUDENT',
           });
@@ -603,6 +644,7 @@ describe('Enrollment Controller Integration Tests', () => {
       // 4. Fetch enrollments with pagination (limit 1, page 2)
       const getEnrollmentsResponsePage2 = await request(app)
         .get(`/users/enrollments?page=2&limit=1`)
+        .set('Authorization', 'Bearer student')
         .expect(200);
 
       expect(getEnrollmentsResponsePage2.body).toHaveProperty(

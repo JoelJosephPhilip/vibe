@@ -23,6 +23,7 @@ export async function createEnrollment(
     .post(
       `/users/${userId}/enrollments/courses/${courseId}/versions/${courseVersionId}`,
     )
+    .set('Authorization', 'Bearer test-token')
     .send({role: 'STUDENT'})
     .expect(200);
 

@@ -8,11 +8,7 @@ import {coursesContainerModules, coursesModuleOptions, setupCoursesContainer} fr
 import { InversifyAdapter } from '#root/inversify-adapter.js';
 import { Container } from 'inversify';
 import * as Current from '#root/shared/functions/currentUserChecker.js';
-import { sharedContainerModule } from '#root/container.js';
-import { authContainerModule } from '#root/modules/auth/container.js';
-import { usersContainerModule } from '#root/modules/users/container.js';
-import { quizzesContainerModule } from '#root/modules/quizzes/container.js';
-import { notificationsContainerModule } from '#root/modules/notifications/container.js';
+import { FirebaseAuthService } from '#root/modules/auth/services/FirebaseAuthService.js';
 import { anomaliesContainerModule } from '#root/modules/anomalies/container.js';
 import { settingContainerModule } from '#root/modules/setting/container.js';
 import { courseRegistrationContainerModule } from '#root/modules/courseRegistration/container.js';
@@ -53,12 +49,11 @@ describe('Course Controller Integration Tests', () => {
   beforeAll(async () => {
     const container = new Container();
     await container.load(
+      // coursesContainerModules already includes sharedContainerModule,
+      // authContainerModule, usersContainerModule, quizzesContainerModule,
+      // and notificationsContainerModule — re-adding them causes
+      // "Ambiguous bindings" errors from inversify.
       ...coursesContainerModules,
-      sharedContainerModule,
-      authContainerModule,
-      usersContainerModule,
-      quizzesContainerModule,
-      notificationsContainerModule,
       anomaliesContainerModule,
       settingContainerModule,
       courseRegistrationContainerModule,
@@ -92,6 +87,18 @@ describe('Course Controller Integration Tests', () => {
       }
     );
 
+    // The real authorizationChecker and @Ability() (unlike currentUserChecker
+    // above) verify the bearer token via getCurrentUserFromToken — mock it
+    // too, keyed the same way, so 'Bearer user1'/'Bearer user2' resolve.
+    vi.spyOn(
+      FirebaseAuthService.prototype,
+      'getCurrentUserFromToken',
+    ).mockImplementation(async (token: string) => {
+      if (token === 'user1') return user1 as any;
+      if (token === 'user2') return user2 as any;
+      return user2 as any;
+    });
+
     const options: RoutingControllersOptions = {
       controllers: coursesModuleOptions.controllers,
       middlewares: coursesModuleOptions.middlewares,
@@ -100,7 +107,7 @@ describe('Course Controller Integration Tests', () => {
       currentUserChecker: Current.currentUserChecker, // Use the spied function
       validation: coursesModuleOptions.validation,
     }
-    
+
     app = useExpressServer(App, options);
   });
 
@@ -119,6 +126,8 @@ describe('Course Controller Integration Tests', () => {
         const coursePayload: CourseBody = {
           name: 'New Course',
           description: 'Course description',
+          versionName: 'Version 1',
+          versionDescription: 'Initial version',
         };
 
         const response = await request(app)
@@ -138,6 +147,8 @@ describe('Course Controller Integration Tests', () => {
         const coursePayload: CourseBody = {
           name: 'New Course',
           description: 'Course description',
+          versionName: 'Version 1',
+          versionDescription: 'Initial version',
         };
 
         const response = await request(app)
@@ -147,7 +158,7 @@ describe('Course Controller Integration Tests', () => {
           .expect(403);
 
         expect(response.body.message).toContain(
-          'Access is denied for request on POST /courses/',
+          'You do not have permission to create courses',
         );
       })
       it('should return 400 for invalid course data', async () => {
@@ -172,6 +183,8 @@ describe('Course Controller Integration Tests', () => {
         const coursePayload = {
           name: 'Existing Course',
           description: 'Course description',
+          versionName: 'Version 1',
+          versionDescription: 'Initial version',
         };
 
         const createdCourseResponse = await request(app)
@@ -212,6 +225,8 @@ describe('Course Controller Integration Tests', () => {
         const coursePayload = {
           name: 'Existing Course',
           description: 'Course description',
+          versionName: 'Version 1',
+          versionDescription: 'Initial version',
         };
 
         const createdCourseResponse = await request(app)
@@ -228,7 +243,7 @@ describe('Course Controller Integration Tests', () => {
         };
 
         const response = await request(app)
-          .put(`/courses/${courseId}`)
+          .patch(`/courses/${courseId}`)
           .set('Authorization', 'Bearer user1')
           .send(updatedCoursePayload)
           .expect(200);
@@ -264,6 +279,8 @@ describe('Course Controller Integration Tests', () => {
         const coursePayload = {
           name: 'Existing Course',
           description: 'Course description',
+          versionName: 'Version 1',
+          versionDescription: 'Initial version',
         };
 
         const createdCourseResponse = await request(app)
@@ -277,7 +294,7 @@ describe('Course Controller Integration Tests', () => {
         const invalidPayload = {name: ''};
 
         const response = await request(app)
-          .put(`/courses/${courseId}`)
+          .patch(`/courses/${courseId}`)
           .set('Authorization', 'Bearer user1')
           .send(invalidPayload)
           .expect(400);
@@ -289,7 +306,7 @@ describe('Course Controller Integration Tests', () => {
         const invalidPayload2 = {description: ''};
 
         const response2 = await request(app)
-          .put(`/courses/${courseId}`)
+          .patch(`/courses/${courseId}`)
           .set('Authorization', 'Bearer user1')
           .send(invalidPayload2)
           .expect(400);
@@ -301,7 +318,7 @@ describe('Course Controller Integration Tests', () => {
         const invalidPayload3 = {};
 
         const response3 = await request(app)
-          .put(`/courses/${courseId}`)
+          .patch(`/courses/${courseId}`)
           .set('Authorization', 'Bearer user1')
           .send(invalidPayload3)
           .expect(400);
@@ -319,6 +336,8 @@ describe('Course Controller Integration Tests', () => {
         const coursePayload = {
           name: 'Course To Be Deleted',
           description: 'This course will be deleted',
+          versionName: 'Version 1',
+          versionDescription: 'Initial version',
         };
 
         const createdCourseResponse = await request(app)

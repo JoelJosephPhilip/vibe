@@ -170,6 +170,9 @@ class QuestionBankRepository {
       return null;
     }
     result._id = result._id.toString(); // Convert ObjectId to string
+    if (Array.isArray(result.questions)) {
+      result.questions = result.questions.map(q => q.toString());
+    }
     return result;
   }
 

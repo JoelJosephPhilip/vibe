@@ -24,7 +24,9 @@ import {studentQuestionsContainerModule} from '#root/modules/studentQuestions/co
 import {announcementsContainerModule} from '#root/modules/announcements/container.js';
 import {auditTrailsContainerModule} from '#root/modules/auditTrails/container.js';
 import request from 'supertest';
-import {describe, expect, it, beforeAll} from 'vitest';
+import {describe, expect, it, beforeAll, beforeEach, vi} from 'vitest';
+import {faker} from '@faker-js/faker';
+import {FirebaseAuthService} from '#root/modules/auth/services/FirebaseAuthService.js';
 
 describe('Section Controller Integration Tests', () => {
   const App = Express();
@@ -60,11 +62,25 @@ describe('Section Controller Integration Tests', () => {
     app = useExpressServer(App, coursesModuleOptions);
   });
 
+  beforeEach(() => {
+    // The real authorizationChecker and @Ability() verify the bearer token
+    // via getCurrentUserFromToken — mock it so 'Bearer test-token' resolves.
+    vi.spyOn(
+      FirebaseAuthService.prototype,
+      'getCurrentUserFromToken',
+    ).mockResolvedValue({
+      _id: faker.database.mongodbObjectId(),
+      roles: 'admin',
+    } as any);
+  });
+
   describe('SECTION CREATION', () => {
     describe('Success Scenario', () => {
       const coursePayload = {
         name: 'New Course',
         description: 'Course description',
+        versionName: 'Version 1',
+        versionDescription: 'Initial version',
       };
 
       const courseVersionPayload = {
@@ -85,6 +101,7 @@ describe('Section Controller Integration Tests', () => {
       it('should create a section', async () => {
         const courseResponse = await request(app)
           .post('/courses/')
+          .set('Authorization', 'Bearer test-token')
           .send(coursePayload)
           .expect(201);
 
@@ -92,6 +109,7 @@ describe('Section Controller Integration Tests', () => {
 
         const versionResponse = await request(app)
           .post(`/courses/${courseId}/versions`)
+          .set('Authorization', 'Bearer test-token')
           .send(courseVersionPayload)
           .expect(201);
 
@@ -99,6 +117,7 @@ describe('Section Controller Integration Tests', () => {
 
         const moduleResponse = await request(app)
           .post(`/courses/versions/${versionId}/modules`)
+          .set('Authorization', 'Bearer test-token')
           .send(modulePayload)
           .expect(201);
 
@@ -106,6 +125,7 @@ describe('Section Controller Integration Tests', () => {
 
         const sectionResponse = await request(app)
           .post(`/courses/versions/${versionId}/modules/${moduleId}/sections`)
+          .set('Authorization', 'Bearer test-token')
           .send(sectionPayload)
           .expect(201);
         expect(sectionResponse.body.version.modules[0].sections.length).toBe(1);
@@ -121,6 +141,8 @@ describe('Section Controller Integration Tests', () => {
       const coursePayload = {
         name: 'New Course',
         description: 'Course description',
+        versionName: 'Version 1',
+        versionDescription: 'Initial version',
       };
 
       const courseVersionPayload = {
@@ -153,6 +175,7 @@ describe('Section Controller Integration Tests', () => {
       it('should delete a section', async () => {
         const courseResponse = await request(app)
           .post('/courses/')
+          .set('Authorization', 'Bearer test-token')
           .send(coursePayload)
           .expect(201);
 
@@ -160,6 +183,7 @@ describe('Section Controller Integration Tests', () => {
 
         const versionResponse = await request(app)
           .post(`/courses/${courseId}/versions`)
+          .set('Authorization', 'Bearer test-token')
           .send(courseVersionPayload)
           .expect(201);
 
@@ -167,6 +191,7 @@ describe('Section Controller Integration Tests', () => {
 
         const moduleResponse = await request(app)
           .post(`/courses/versions/${versionId}/modules`)
+          .set('Authorization', 'Bearer test-token')
           .send(modulePayload)
           .expect(201);
 
@@ -174,6 +199,7 @@ describe('Section Controller Integration Tests', () => {
 
         const sectionResponse = await request(app)
           .post(`/courses/versions/${versionId}/modules/${moduleId}/sections`)
+          .set('Authorization', 'Bearer test-token')
           .send(sectionPayload)
           .expect(201);
 
@@ -184,6 +210,7 @@ describe('Section Controller Integration Tests', () => {
           .delete(
             `/courses/versions/${versionId}/modules/${moduleId}/sections/${sectionId}`,
           )
+          .set('Authorization', 'Bearer test-token')
           .expect(200);
       }, 90000);
     });
@@ -194,6 +221,7 @@ describe('Section Controller Integration Tests', () => {
 
         const sectionResponse = await request(app)
           .delete('/courses/versions/123/modules/123/sections/123')
+          .set('Authorization', 'Bearer test-token')
           .expect(400);
       }, 90000);
 
@@ -203,6 +231,7 @@ describe('Section Controller Integration Tests', () => {
           .delete(
             '/courses/versions/62341aeb5be816967d8fc2db/modules/62341aeb5be816967d8fc2db/sections/62341aeb5be816967d8fc2db',
           )
+          .set('Authorization', 'Bearer test-token')
           .expect(404);
       }, 90000);
     });
@@ -212,6 +241,8 @@ describe('Section Controller Integration Tests', () => {
       const coursePayload = {
         name: 'New Course',
         description: 'Course description',
+        versionName: 'Version 1',
+        versionDescription: 'Initial version',
       };
 
       const courseVersionPayload = {
@@ -234,38 +265,65 @@ describe('Section Controller Integration Tests', () => {
         description: 'Section 2 description',
       };
 
+      const itemPayload = {
+        name: 'Item1',
+        description: 'This an item',
+        type: 'VIDEO',
+        videoDetails: {
+          URL: 'http://url.com',
+          startTime: '00:00:00',
+          endTime: '00:00:40',
+          points: 10.5,
+        },
+      };
+
       it('should move a section after another item', async () => {
         // Create course, version, module, section
         const courseResponse = await request(app)
           .post('/courses/')
+          .set('Authorization', 'Bearer test-token')
           .send(coursePayload)
           .expect(201);
         const courseId = courseResponse.body._id;
 
         const versionResponse = await request(app)
           .post(`/courses/${courseId}/versions`)
+          .set('Authorization', 'Bearer test-token')
           .send(courseVersionPayload)
           .expect(201);
         const versionId = versionResponse.body._id;
 
         const moduleResponse = await request(app)
           .post(`/courses/versions/${versionId}/modules`)
+          .set('Authorization', 'Bearer test-token')
           .send(modulePayload)
           .expect(201);
         const moduleId = moduleResponse.body.version.modules[0].moduleId;
 
         const section1Response = await request(app)
           .post(`/courses/versions/${versionId}/modules/${moduleId}/sections`)
+          .set('Authorization', 'Bearer test-token')
           .send(sectionPayload1)
-          .expect(201);
-
-        const section2Response = await request(app)
-          .post(`/courses/versions/${versionId}/modules/${moduleId}/sections`)
-          .send(sectionPayload2)
           .expect(201);
 
         const section1Id =
           section1Response.body.version.modules[0].sections[0].sectionId;
+
+        // A section must have at least one item before another section can
+        // be created (SectionService enforces this).
+        await request(app)
+          .post(
+            `/courses/versions/${versionId}/modules/${moduleId}/sections/${section1Id}/items`,
+          )
+          .set('Authorization', 'Bearer test-token')
+          .send(itemPayload)
+          .expect(201);
+
+        const section2Response = await request(app)
+          .post(`/courses/versions/${versionId}/modules/${moduleId}/sections`)
+          .set('Authorization', 'Bearer test-token')
+          .send(sectionPayload2)
+          .expect(201);
 
         const section2Id =
           section2Response.body.version.modules[0].sections[1].sectionId;
@@ -275,6 +333,7 @@ describe('Section Controller Integration Tests', () => {
           .put(
             `/courses/versions/${versionId}/modules/${moduleId}/sections/${section2Id}/move`,
           )
+          .set('Authorization', 'Bearer test-token')
           .send({beforeSectionId: section1Id});
         // .expect(200);
 
@@ -292,37 +351,60 @@ describe('Section Controller Integration Tests', () => {
         // Create course, version, module, section
         const courseResponse = await request(app)
           .post('/courses/')
+          .set('Authorization', 'Bearer test-token')
           .send(coursePayload)
           .expect(201);
         const courseId = courseResponse.body._id;
 
         const versionResponse = await request(app)
           .post(`/courses/${courseId}/versions`)
+          .set('Authorization', 'Bearer test-token')
           .send(courseVersionPayload)
           .expect(201);
         const versionId = versionResponse.body._id;
 
         const moduleResponse = await request(app)
           .post(`/courses/versions/${versionId}/modules`)
+          .set('Authorization', 'Bearer test-token')
           .send(modulePayload)
           .expect(201);
         const moduleId = moduleResponse.body.version.modules[0].moduleId;
 
         const sectionResponse1 = await request(app)
           .post(`/courses/versions/${versionId}/modules/${moduleId}/sections`)
+          .set('Authorization', 'Bearer test-token')
           .send(sectionPayload1)
           .expect(201);
 
         const sectionId1 =
           sectionResponse1.body.version.modules[0].sections[0].sectionId;
 
+        // A section must have at least one item before another section can
+        // be created (SectionService enforces this).
+        await request(app)
+          .post(
+            `/courses/versions/${versionId}/modules/${moduleId}/sections/${sectionId1}/items`,
+          )
+          .set('Authorization', 'Bearer test-token')
+          .send(itemPayload)
+          .expect(201);
+
         const sectionResponse2 = await request(app)
           .post(`/courses/versions/${versionId}/modules/${moduleId}/sections`)
+          .set('Authorization', 'Bearer test-token')
           .send(sectionPayload2)
           .expect(201);
 
         const sectionId2 =
           sectionResponse2.body.version.modules[0].sections[1].sectionId;
+
+        await request(app)
+          .post(
+            `/courses/versions/${versionId}/modules/${moduleId}/sections/${sectionId2}/items`,
+          )
+          .set('Authorization', 'Bearer test-token')
+          .send(itemPayload)
+          .expect(201);
 
         const sectionPayload3 = {
           name: 'New Section 3',
@@ -331,6 +413,7 @@ describe('Section Controller Integration Tests', () => {
 
         const sectionResponse3 = await request(app)
           .post(`/courses/versions/${versionId}/modules/${moduleId}/sections`)
+          .set('Authorization', 'Bearer test-token')
           .send(sectionPayload3)
           .expect(201);
 
@@ -342,6 +425,7 @@ describe('Section Controller Integration Tests', () => {
           .put(
             `/courses/versions/${versionId}/modules/${moduleId}/sections/${sectionId3}/move`,
           )
+          .set('Authorization', 'Bearer test-token')
           .send({beforeSectionId: sectionId1});
         // .expect(200);
 

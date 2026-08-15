@@ -839,9 +839,10 @@ export class EnrollmentFilterQuery {
   @IsString()
   search: string = '';
 
+  @IsOptional()
   @IsString()
   @IsIn(['STUDENT', 'INSTRUCTOR', 'MANAGER', 'TA', 'STAFF'])
-  role: EnrollmentRole;
+  role?: EnrollmentRole;
 
   @IsOptional()
   @IsString()

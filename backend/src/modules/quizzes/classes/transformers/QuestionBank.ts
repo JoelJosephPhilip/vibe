@@ -18,9 +18,15 @@ class QuestionBank implements IQuestionBank {
 
   constructor(questionBank: Partial<IQuestionBank>) {
     this._id = questionBank._id ?? new ObjectId();
-    this.courseId = new ObjectId(questionBank.courseId) ?? undefined;
-    this.courseVersionId =
-      new ObjectId(questionBank.courseVersionId) ?? undefined;
+    // new ObjectId(undefined) generates a fresh random id rather than
+    // returning null/undefined, so `?? undefined` never fires — only
+    // construct one when a value was actually provided.
+    this.courseId = questionBank.courseId
+      ? new ObjectId(questionBank.courseId)
+      : undefined;
+    this.courseVersionId = questionBank.courseVersionId
+      ? new ObjectId(questionBank.courseVersionId)
+      : undefined;
     this.questions = questionBank.questions || [];
     this.tags = questionBank.tags || [];
     this.title = questionBank.title;

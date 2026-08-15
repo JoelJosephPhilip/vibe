@@ -220,6 +220,7 @@ describe('CourseSettingController — follow-up invite backfill', () => {
     userId: string,
     courseId: string,
     courseVersionId: string,
+    percentCompleted = 0,
   ): Promise<void> {
     await enrollmentCollection.insertOne({
       userId: new ObjectId(userId),
@@ -228,7 +229,7 @@ describe('CourseSettingController — follow-up invite backfill', () => {
       role: 'STUDENT',
       status: 'ACTIVE',
       enrollmentDate: new Date(),
-      percentCompleted: 0,
+      percentCompleted,
     } as IEnrollment);
   }
 
@@ -268,9 +269,15 @@ describe('CourseSettingController — follow-up invite backfill', () => {
     // One completer already enrolled in the target → should be skipped.
     const userC = await seedUser();
 
+    // The backfill selects completers by enrollment percentCompleted (>= the
+    // follow-up threshold) in the source course, not the progress `completed`
+    // flag — see ProgressService.backfillFollowUpInvites.
     await markCompleted(userA.userId, source.courseId, source.versionId);
     await markCompleted(userB.userId, source.courseId, source.versionId);
     await markCompleted(userC.userId, source.courseId, source.versionId);
+    await enrollActive(userA.userId, source.courseId, source.versionId, 100);
+    await enrollActive(userB.userId, source.courseId, source.versionId, 100);
+    await enrollActive(userC.userId, source.courseId, source.versionId, 100);
     await enrollActive(userC.userId, target.courseId, target.versionId);
 
     const res = await request(app)

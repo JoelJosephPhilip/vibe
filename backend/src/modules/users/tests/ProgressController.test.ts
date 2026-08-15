@@ -18,6 +18,7 @@ import { createEnrollment } from './utils/createEnrollment.js';
 import { startStopAndUpdateProgress } from './utils/startStopAndUpdateProgress.js';
 import { verifyProgressInDatabase } from './utils/verifyProgressInDatabase.js';
 import { InversifyAdapter } from '#root/inversify-adapter.js';
+import { setContainer } from '#root/bootstrap/loadModules.js';
 import { Container } from 'inversify';
 import { sharedContainerModule } from '#root/container.js';
 import { faker } from '@faker-js/faker';
@@ -28,7 +29,6 @@ import {
   ResetCourseProgressBody,
   StartItemBody,
   StopItemBody,
-  UpdateProgressBody,
 } from '../classes/validators/ProgressValidators.js';
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import { FirebaseAuthService } from '#root/modules/auth/services/FirebaseAuthService.js';
@@ -55,6 +55,10 @@ describe('Progress Controller Integration Tests', { timeout: 90000 }, () => {
   let userIdUser: string;
   let userIdAdmin: string;
   let courseData: CourseData;
+  // Stable identity for 'test-token' (used by createCourse.ts's course/module/
+  // section/item setup calls) — must stay the same across calls so the
+  // creator's auto-instructor-enrollment carries over between requests.
+  const testTokenUserId = faker.database.mongodbObjectId();
 
   beforeAll(async () => {
     //Set env variables
@@ -83,6 +87,10 @@ describe('Progress Controller Integration Tests', { timeout: 90000 }, () => {
     );
     const inversifyAdapter = new InversifyAdapter(container);
     useContainer(inversifyAdapter);
+    // ProgressService resolves some collaborators (e.g. CourseSettingService)
+    // via the service-locator getContainer() — register this container as
+    // the global one so those lookups don't throw "Container not initialized".
+    setContainer(container);
     const db = container.get<MongoDatabase>(GLOBAL_TYPES.Database);
     await db.connect();
     app = useExpressServer(appInstance, {
@@ -100,19 +108,6 @@ describe('Progress Controller Integration Tests', { timeout: 90000 }, () => {
     userIdUser = await createUser(app, 'user');
     userIdAdmin = await createUser(app, 'admin');
 
-    courseData = await createCourseWithModulesSectionsAndItems(2, 2, 3, app);
-
-    // Create enrollment
-    await createEnrollment(
-      app,
-      userIdUser,
-      courseData.courseId,
-      courseData.courseVersionId,
-      courseData.modules[0].moduleId,
-      courseData.modules[0].sections[0].sectionId,
-      courseData.modules[0].sections[0].items[0].itemId,
-    );
-
     vi.spyOn(FirebaseAuthService.prototype, 'getUserIdFromReq').mockImplementation(
     async (req: Express.Request): Promise<string> => {
       if (req.headers.authorization === 'no') {
@@ -126,6 +121,41 @@ describe('Progress Controller Integration Tests', { timeout: 90000 }, () => {
       }
       return userIdUser;
     });
+
+    // The real @Ability() decorator (unlike getUserIdFromReq above) verifies
+    // the bearer token itself via getCurrentUserFromToken — mock it too,
+    // keyed the same way so every 'Bearer <token>' header used below resolves.
+    vi.spyOn(
+      FirebaseAuthService.prototype,
+      'getCurrentUserFromToken',
+    ).mockImplementation(async (token: string): Promise<any> => {
+      if (token === 'no') {
+        throw new BadRequestError('Invalid request');
+      }
+      if (token === 'fake') {
+        return {_id: faker.database.mongodbObjectId(), roles: 'user'};
+      }
+      if (token === 'userAdmin') {
+        return {_id: userIdAdmin, roles: 'admin'};
+      }
+      if (token === 'test-token') {
+        return {_id: testTokenUserId, roles: 'admin'};
+      }
+      return {_id: userIdUser, roles: 'user'};
+    });
+
+    courseData = await createCourseWithModulesSectionsAndItems(2, 2, 3, app);
+
+    // Create enrollment
+    await createEnrollment(
+      app,
+      userIdUser,
+      courseData.courseId,
+      courseData.courseVersionId,
+      courseData.modules[0].moduleId,
+      courseData.modules[0].sections[0].sectionId,
+      courseData.modules[0].sections[0].items[0].itemId,
+    );
   });
 
   // ------Tests for Create <ModuleName>------
@@ -144,44 +174,69 @@ describe('Progress Controller Integration Tests', { timeout: 90000 }, () => {
     });
 
     it('Should fetch the Watch Time', async () => {
+      // isValidWatchTime checks real elapsed wall-clock time — an
+      // instant start->stop in a test never accrues enough on its own.
+      vi.spyOn(ProgressService.prototype as any, 'isValidWatchTime')
+        .mockReset()
+        .mockReturnValue(true);
+
+      // Uses a freshly created course (still the shared userIdUser identity,
+      // since that's what 'Bearer default' resolves to) rather than the
+      // describe-level courseData — starting+stopping the shared item there
+      // would advance userIdUser's progress position out from under the
+      // sibling "Start Item"/"Stop Item" tests, which assume it's untouched.
+      const localCourseData = await createCourseWithModulesSectionsAndItems(
+        1,
+        1,
+        1,
+        app,
+      );
+      await createEnrollment(
+        app,
+        userIdUser,
+        localCourseData.courseId,
+        localCourseData.courseVersionId,
+        localCourseData.modules[0].moduleId,
+        localCourseData.modules[0].sections[0].sectionId,
+        localCourseData.modules[0].sections[0].items[0].itemId,
+      );
+
       const startItemBody: StartItemBody = {
-        itemId: courseData.modules[0].sections[0].items[0].itemId,
-        moduleId: courseData.modules[0].moduleId,
-        sectionId: courseData.modules[0].sections[0].sectionId,
+        itemId: localCourseData.modules[0].sections[0].items[0].itemId,
+        moduleId: localCourseData.modules[0].moduleId,
+        sectionId: localCourseData.modules[0].sections[0].sectionId,
       };
       // Start the item progress
       const startItemResponse = await request(app)
         .post(
-          `/users/progress/courses/${courseData.courseId}/versions/${courseData.courseVersionId}/start`,
+          `/users/progress/courses/${localCourseData.courseId}/versions/${localCourseData.courseVersionId}/start`,
         )
-        .set('authorization', 'yes')
+        .set('Authorization', 'Bearer default')
         .send(startItemBody)
-        // .expect(200);
-
-      const startItemResponseBody = startItemResponse;
+        .expect(200);
 
       const stopItemBody: StopItemBody = {
-        sectionId: courseData.modules[0].sections[0].sectionId,
-        moduleId: courseData.modules[0].moduleId,
-        itemId: courseData.modules[0].sections[0].items[0].itemId,
+        sectionId: localCourseData.modules[0].sections[0].sectionId,
+        moduleId: localCourseData.modules[0].moduleId,
+        itemId: localCourseData.modules[0].sections[0].items[0].itemId,
         watchItemId: startItemResponse.body.watchItemId,
       };
 
       const stopItemResponse = await request(app)
         .post(
-          `/users/progress/courses/${courseData.courseId}/versions/${courseData.courseVersionId}/stop`,
+          `/users/progress/courses/${localCourseData.courseId}/versions/${localCourseData.courseVersionId}/stop`,
         )
-        .set('authorization', 'yes')
+        .set('Authorization', 'Bearer default')
         .send(stopItemBody)
         .expect(200);
 
       const watchTimeResponse = await request(app)
-        .get(`/users/watchTime/item/${courseData.modules[0].sections[0].items[0].itemId}`)
-        .set('authorization', 'yes')
-      // .expect(200)
-
-      const watchTimeResponseBody = watchTimeResponse;
-    })
+        .get(
+          `/users/${userIdUser}/watchTime/course/${localCourseData.courseId}/version/${localCourseData.courseVersionId}/item/${localCourseData.modules[0].sections[0].items[0].itemId}/type/VIDEO`,
+        )
+        .set('Authorization', 'Bearer default')
+        .expect(200);
+    });
 
     it('should return 400 if userId is invalid', async () => {
       const invalidUserId = 'invalidUserId';
@@ -192,7 +247,7 @@ describe('Progress Controller Integration Tests', { timeout: 90000 }, () => {
         .get(
           `/users/progress/courses/${courseId}/versions/${courseVersionId}`,
         )
-        .set('Authorization', 'no')
+        .set('Authorization', 'Bearer no')
         .expect(400);
     });
 
@@ -204,6 +259,7 @@ describe('Progress Controller Integration Tests', { timeout: 90000 }, () => {
         .get(
           `/users/progress/courses/${invalidCourseId}/versions/${courseVersionId}`,
         )
+        .set('Authorization', 'Bearer default')
         .expect(400);
 
       //expect body.errors to be truthy
@@ -221,6 +277,7 @@ describe('Progress Controller Integration Tests', { timeout: 90000 }, () => {
         .get(
           `/users/progress/courses/${courseId}/versions/${invalidCourseVersionId}`,
         )
+        .set('Authorization', 'Bearer default')
         .expect(400);
       //expect body.errors to be truthy
       expect(response.body).toHaveProperty('errors');
@@ -228,23 +285,28 @@ describe('Progress Controller Integration Tests', { timeout: 90000 }, () => {
       expect(response.body.errors[0].constraints).toHaveProperty('isMongoId');
     });
 
-    it('should return 404 if progress not found when courseId and courseVersionId are fake', async () => {
+    it('should return 403 when courseId and courseVersionId are fake (user has no enrollment there)', async () => {
       const courseId = faker.database.mongodbObjectId();
       const courseVersionId = faker.database.mongodbObjectId();
 
+      // Progress-view is enrollment-scoped (see progressAbilities.ts): the
+      // ability check for a course/version the user isn't enrolled in fails
+      // before the "not found" data lookup is ever reached.
       const response = await request(app)
         .get(
           `/users/progress/courses/${courseId}/versions/${courseVersionId}`,
         )
-        .expect(404);
-      //expect body.errors to be truthy
+        .set('Authorization', 'Bearer default')
+        .expect(403);
       expect(response.body).toHaveProperty('name');
-      expect(response.body.name).toBe('NotFoundError');
+      expect(response.body.name).toBe('ForbiddenError');
       expect(response.body).toHaveProperty('message');
-      expect(response.body.message).toBe('Course not found');
+      expect(response.body.message).toBe(
+        'You do not have permission to view this progress',
+      );
     });
 
-    it('should return 404 if progress not found when userId is fake', async () => {
+    it('should return 403 when userId is fake (no enrollments anywhere)', async () => {
       const courseId = courseData.courseId;
       const courseVersionId = courseData.courseVersionId;
 
@@ -252,17 +314,18 @@ describe('Progress Controller Integration Tests', { timeout: 90000 }, () => {
         .get(
           `/users/progress/courses/${courseId}/versions/${courseVersionId}`,
         )
-        .set('Authorization', 'fake')
-        .expect(404);
+        .set('Authorization', 'Bearer fake')
+        .expect(403);
 
-      //expect body.errors to be truthy
       expect(response.body).toHaveProperty('name');
-      expect(response.body.name).toBe('NotFoundError');
+      expect(response.body.name).toBe('ForbiddenError');
       expect(response.body).toHaveProperty('message');
-      expect(response.body.message).toBe('User not found');
+      expect(response.body.message).toBe(
+        'You do not have permission to view this progress',
+      );
     });
 
-    it('should return 404 if progress not found when all params are fake', async () => {
+    it('should return 403 when all params are fake', async () => {
       const courseId = faker.database.mongodbObjectId();
       const courseVersionId = faker.database.mongodbObjectId();
 
@@ -270,14 +333,15 @@ describe('Progress Controller Integration Tests', { timeout: 90000 }, () => {
         .get(
           `/users/progress/courses/${courseId}/versions/${courseVersionId}`,
         )
-        .set('Authorization', 'fake')
-        .expect(404);
+        .set('Authorization', 'Bearer fake')
+        .expect(403);
 
-      //expect body.errors to be truthy
       expect(response.body).toHaveProperty('name');
-      expect(response.body.name).toBe('NotFoundError');
+      expect(response.body.name).toBe('ForbiddenError');
       expect(response.body).toHaveProperty('message');
-      expect(response.body.message).toBe('User not found');
+      expect(response.body.message).toBe(
+        'You do not have permission to view this progress',
+      );
     });
   });
 
@@ -293,6 +357,7 @@ describe('Progress Controller Integration Tests', { timeout: 90000 }, () => {
         .post(
           `/users/progress/courses/${courseData.courseId}/versions/${courseData.courseVersionId}/start`,
         )
+        .set('Authorization', 'Bearer default')
         .send(startItemBody)
         .expect(200);
 
@@ -305,6 +370,10 @@ describe('Progress Controller Integration Tests', { timeout: 90000 }, () => {
 
   describe('Stop Item', () => {
     it('should stop the item tracking for recording progress', async () => {
+      vi.spyOn(ProgressService.prototype as any, 'isValidWatchTime')
+        .mockReset()
+        .mockReturnValue(true);
+
       const startItemBody: StartItemBody = {
         itemId: courseData.modules[0].sections[0].items[0].itemId,
         moduleId: courseData.modules[0].moduleId,
@@ -315,6 +384,7 @@ describe('Progress Controller Integration Tests', { timeout: 90000 }, () => {
         .post(
           `/users/progress/courses/${courseData.courseId}/versions/${courseData.courseVersionId}/start`,
         )
+        .set('Authorization', 'Bearer default')
         .send(startItemBody)
         .expect(200);
 
@@ -330,6 +400,7 @@ describe('Progress Controller Integration Tests', { timeout: 90000 }, () => {
         .post(
           `/users/progress/courses/${courseData.courseId}/versions/${courseData.courseVersionId}/stop`,
         )
+        .set('Authorization', 'Bearer default')
         .send(stopItemBody)
         .expect(200);
     });
@@ -365,41 +436,30 @@ describe('Progress Controller Integration Tests', { timeout: 90000 }, () => {
         .post(
           `/users/progress/courses/${courseData.courseId}/versions/${courseData.courseVersionId}/start`,
         )
+        .set('Authorization', 'Bearer default')
         .send(startItemBody)
         .expect(200);
 
       // Stop the item progress
+      vi.spyOn(ProgressService.prototype as any, 'isValidWatchTime')
+        .mockReset()
+        .mockReturnValue(true);
+
       const stopItemBody: StopItemBody = {
         sectionId: courseData.modules[0].sections[0].sectionId,
         moduleId: courseData.modules[0].moduleId,
         itemId: courseData.modules[0].sections[0].items[0].itemId,
         watchItemId: startItemResponse.body.watchItemId,
       };
+      // Watch-time validation (and the resulting progress advancement) is
+      // handled entirely within /stop now — there is no separate /update
+      // endpoint (ProgressController has no PATCH .../update route).
       const stopItemResponse = await request(app)
         .post(
           `/users/progress/courses/${courseData.courseId}/versions/${courseData.courseVersionId}/stop`,
         )
+        .set('Authorization', 'Bearer default')
         .send(stopItemBody)
-        .expect(200);
-
-      // Update the progress
-      const updateProgressBody: UpdateProgressBody = {
-        moduleId: courseData.modules[0].moduleId,
-        sectionId: courseData.modules[0].sections[0].sectionId,
-        itemId: courseData.modules[0].sections[0].items[0].itemId,
-        watchItemId: startItemResponse.body.watchItemId,
-      };
-
-      vi.spyOn(
-        ProgressService.prototype as any,
-        'isValidWatchTime',
-      ).mockReturnValueOnce(true);
-
-      const updateProgressResponse = await request(app)
-        .patch(
-          `/users/progress/courses/${courseData.courseId}/versions/${courseData.courseVersionId}/update`,
-        )
-        .send(updateProgressBody)
         .expect(200);
     });
     it('should not update the progress, if isValidWatchTime is false', async () => {
@@ -413,9 +473,14 @@ describe('Progress Controller Integration Tests', { timeout: 90000 }, () => {
         .post(
           `/users/progress/courses/${courseData.courseId}/versions/${courseData.courseVersionId}/start`,
         )
+        .set('Authorization', 'Bearer default')
         .send(startItemBody);
 
-      // Stop the item progress
+      // Watch-time validation happens inside /stop itself (there is no
+      // separate /update endpoint) — mock it false so /stop rejects.
+      vi.spyOn(ProgressService.prototype as any, 'isValidWatchTime')
+        .mockReset()
+        .mockReturnValueOnce(false);
 
       const stopItemBody: StopItemBody = {
         sectionId: courseData.modules[0].sections[0].sectionId,
@@ -428,36 +493,14 @@ describe('Progress Controller Integration Tests', { timeout: 90000 }, () => {
         .post(
           `/users/progress/courses/${courseData.courseId}/versions/${courseData.courseVersionId}/stop`,
         )
-        .send(stopItemBody)
-        .expect(200);
+        .set('Authorization', 'Bearer default')
+        .send(stopItemBody);
 
-      // Update the progress
-
-      const updateProgressBody: UpdateProgressBody = {
-        moduleId: courseData.modules[0].moduleId,
-        sectionId: courseData.modules[0].sections[0].sectionId,
-        itemId: courseData.modules[0].sections[0].items[0].itemId,
-        watchItemId: startItemResponse.body.watchItemId,
-      };
-
-      vi.spyOn(
-        ProgressService.prototype as any,
-        'isValidWatchTime',
-      ).mockReturnValueOnce(false);
-
-      const updateProgressResponse = await request(app)
-        .patch(
-          `/users/progress/courses/${courseData.courseId}/versions/${courseData.courseVersionId}/update`,
-        )
-        .send(updateProgressBody);
-
-      expect(updateProgressResponse.status).toBe(400);
-      expect(updateProgressResponse.body).toHaveProperty('name');
-      expect(updateProgressResponse.body.name).toBe('BadRequestError');
-      expect(updateProgressResponse.body).toHaveProperty('message');
-      expect(updateProgressResponse.body.message).toBe(
-        'Watch time is not valid, the user did not watch the item long enough',
-      );
+      expect(stopItemResponse.status).toBe(400);
+      expect(stopItemResponse.body).toHaveProperty('name');
+      expect(stopItemResponse.body.name).toBe('BadRequestError');
+      expect(stopItemResponse.body).toHaveProperty('message');
+      expect(stopItemResponse.body.message).toBe('Invalid watch time');
     });
 
     it('should update the progress, if watch time is actually greater than or equal to 0.5 times video length', async () => {
@@ -471,9 +514,37 @@ describe('Progress Controller Integration Tests', { timeout: 90000 }, () => {
         .post(
           `/users/progress/courses/${courseData.courseId}/versions/${courseData.courseVersionId}/start`,
         )
+        .set('Authorization', 'Bearer default')
         .send(startItemBody)
         .expect(200);
-      // Stop the item progress
+      // Watch-time validation runs inside /stop itself, using whatever
+      // record stopItemTracking() returns — not a separate /update call
+      // (ProgressController has no PATCH .../update route). isValidWatchTime
+      // is left unmocked here so its real >= 0.15*duration-or-30s threshold
+      // actually runs; mock the repository call it reads from instead, so
+      // the reported duration is long enough to satisfy that threshold
+      // (a real instant start->stop in a test never accrues enough on its
+      // own).
+      const originalStop = ProgressRepository.prototype.stopItemTracking;
+      vi.spyOn(
+        ProgressRepository.prototype,
+        'stopItemTracking',
+      ).mockImplementation(async function (
+        watchTimeId: string,
+        session?: unknown,
+      ) {
+        const watchTime: IWatchTime = await originalStop.call(
+          this,
+          watchTimeId,
+          session as never,
+        );
+        if (watchTime) {
+          watchTime.startTime = new Date(
+            watchTime.endTime.getTime() - 45 * 1000,
+          );
+        }
+        return watchTime;
+      });
 
       const stopItemBody: StopItemBody = {
         sectionId: courseData.modules[0].sections[0].sectionId,
@@ -486,55 +557,16 @@ describe('Progress Controller Integration Tests', { timeout: 90000 }, () => {
         .post(
           `/users/progress/courses/${courseData.courseId}/versions/${courseData.courseVersionId}/stop`,
         )
-        .send(stopItemBody)
-        .expect(200);
-
-      // Update the progress
-      const updateProgressBody: UpdateProgressBody = {
-        moduleId: courseData.modules[0].moduleId,
-        sectionId: courseData.modules[0].sections[0].sectionId,
-        itemId: courseData.modules[0].sections[0].items[0].itemId,
-        watchItemId: startItemResponse.body.watchItemId,
-      };
-
-      // jest
-      //   .spyOn(ProgressService.prototype as any, 'isValidWatchTime')
-      //   .mockReturnValueOnce(false);
-
-      const originalGet = ProgressRepository.prototype.getWatchTimeById;
-
-      vi.spyOn(
-        ProgressRepository.prototype,
-        'getWatchTimeById',
-      ).mockImplementation(async function (id: string) {
-        // 1. Call the real implementation:
-        const watchTime: IWatchTime = await originalGet.call(this, id);
-
-        if (watchTime) {
-          // 2. Compute new endTime = startTime + 10min
-          const newEnd = new Date(
-            watchTime.startTime.getTime() + 1 * 45 * 1000,
-          );
-          // 3. Either mutate or clone—here we mutate:
-          watchTime.endTime = newEnd;
-        }
-
-        // 4. Return the modified document:
-        return watchTime;
-      });
-
-      const updateProgressResponse = await request(app)
-        .patch(
-          `/users/progress/courses/${courseData.courseId}/versions/${courseData.courseVersionId}/update`,
-        )
-        .send(updateProgressBody);
-      expect(updateProgressResponse.status).toBe(200);
+        .set('Authorization', 'Bearer default')
+        .send(stopItemBody);
+      expect(stopItemResponse.status).toBe(200);
 
       // fetch the progress of the user
       const progressResponse = await request(app)
         .get(
           `/users/progress/courses/${courseData.courseId}/versions/${courseData.courseVersionId}`,
         )
+        .set('Authorization', 'Bearer default')
         .expect(200);
 
       // Expect the response to contain the progress data
@@ -577,8 +609,9 @@ describe('Progress Controller Integration Tests', { timeout: 90000 }, () => {
     describe('Reset Entire Course Progress', () => {
       describe('Success Scenario', () => {
         it('should reset progress correctly for a user in a course', async () => {
-          // Start Stop and Update Progress
-          const { startItemResponse, stopItemResponse, updateProgressResponse } =
+          // Start and stop progress tracking (/stop also validates watch
+          // time and advances progress — there is no separate /update call)
+          const { startItemResponse, stopItemResponse } =
             await startStopAndUpdateProgress({
               userId: userIdUser as string,
               courseId: courseData.courseId,
@@ -601,9 +634,11 @@ describe('Progress Controller Integration Tests', { timeout: 90000 }, () => {
           });
 
           // Reset the progress
-          const resetResponse = await request(app).patch(
-            `/users/${userIdUser}/progress/courses/${courseData.courseId}/versions/${courseData.courseVersionId}/reset`,
-          );
+          const resetResponse = await request(app)
+            .patch(
+              `/users/${userIdUser}/progress/courses/${courseData.courseId}/versions/${courseData.courseVersionId}/reset`,
+            )
+            .set('Authorization', 'Bearer default');
 
           expect(resetResponse.status).toBe(200);
           expect(resetResponse.body).toBe('');
@@ -634,6 +669,7 @@ describe('Progress Controller Integration Tests', { timeout: 90000 }, () => {
             .patch(
               `/users/${userIdUser}/progress/courses/${courseData.courseId}/versions/${courseData.courseVersionId}/reset`,
             )
+            .set('Authorization', 'Bearer default')
             .send(resetBody);
 
           expect(resetResponse.status).toBe(200);
@@ -664,12 +700,16 @@ describe('Progress Controller Integration Tests', { timeout: 90000 }, () => {
             .patch(
               `/users/${userIdUser}/progress/courses/${courseData.courseId}/versions/${courseData.courseVersionId}/reset`,
             )
+            .set('Authorization', 'Bearer default')
             .send(resetBody)
             .expect(404);
 
+          // ProgressService.resetCourseProgressToModule looks up the module via
+          // the private findModule() helper, which throws this exact message
+          // before initializeProgressToModule's own (unreachable) check runs.
           const expectedResponse = {
             name: 'NotFoundError',
-            message: 'Module not found in the specified course version.',
+            message: `Module not found: ${resetBody.moduleId}`,
           };
 
           expect(resetResponse.body).toMatchObject(expectedResponse);
@@ -690,6 +730,7 @@ describe('Progress Controller Integration Tests', { timeout: 90000 }, () => {
             .patch(
               `/users/${userIdUser}/progress/courses/${courseData.courseId}/versions/${courseData.courseVersionId}/reset`,
             )
+            .set('Authorization', 'Bearer default')
             .send(resetBody);
 
           expect(resetResponse.status).toBe(200);
@@ -721,12 +762,15 @@ describe('Progress Controller Integration Tests', { timeout: 90000 }, () => {
             .patch(
               `/users/${userIdUser}/progress/courses/${courseData.courseId}/versions/${courseData.courseVersionId}/reset`,
             )
+            .set('Authorization', 'Bearer default')
             .send(resetBody)
             .expect(404);
 
+          // findModule() runs before findSection(), so the invalid moduleId
+          // is what actually surfaces here.
           const expectedResponse = {
             name: 'NotFoundError',
-            message: 'Module not found in the specified course version.',
+            message: `Module not found: ${resetBody.moduleId}`,
           };
 
           expect(resetResponse.body).toMatchObject(expectedResponse);
@@ -744,12 +788,13 @@ describe('Progress Controller Integration Tests', { timeout: 90000 }, () => {
             .patch(
               `/users/${userIdUser}/progress/courses/${courseData.courseId}/versions/${courseData.courseVersionId}/reset`,
             )
+            .set('Authorization', 'Bearer default')
             .send(resetBody)
             .expect(404);
 
           const expectedResponse = {
             name: 'NotFoundError',
-            message: 'Section not found in the specified module.',
+            message: `Section not found: ${resetBody.sectionId}`,
           };
 
           expect(resetResponse.body).toMatchObject(expectedResponse);
@@ -771,6 +816,7 @@ describe('Progress Controller Integration Tests', { timeout: 90000 }, () => {
             .patch(
               `/users/${userIdUser}/progress/courses/${courseData.courseId}/versions/${courseData.courseVersionId}/reset`,
             )
+            .set('Authorization', 'Bearer default')
             .send(resetBody);
 
           expect(resetResponse.status).toBe(200);
@@ -803,12 +849,13 @@ describe('Progress Controller Integration Tests', { timeout: 90000 }, () => {
             .patch(
               `/users/${userIdUser}/progress/courses/${courseData.courseId}/versions/${courseData.courseVersionId}/reset`,
             )
+            .set('Authorization', 'Bearer default')
             .send(resetBody)
             .expect(404);
 
           const expectedResponse = {
             name: 'NotFoundError',
-            message: 'Module not found in the specified course version.',
+            message: `Module not found: ${resetBody.moduleId}`,
           };
 
           expect(resetResponse.body).toMatchObject(expectedResponse);
@@ -827,12 +874,13 @@ describe('Progress Controller Integration Tests', { timeout: 90000 }, () => {
             .patch(
               `/users/${userIdUser}/progress/courses/${courseData.courseId}/versions/${courseData.courseVersionId}/reset`,
             )
+            .set('Authorization', 'Bearer default')
             .send(resetBody)
             .expect(404);
 
           const expectedResponse = {
             name: 'NotFoundError',
-            message: 'Section not found in the specified module.',
+            message: `Section not found: ${resetBody.sectionId}`,
           };
 
           expect(resetResponse.body).toMatchObject(expectedResponse);
@@ -851,6 +899,7 @@ describe('Progress Controller Integration Tests', { timeout: 90000 }, () => {
             .patch(
               `/users/${userIdUser}/progress/courses/${courseData.courseId}/versions/${courseData.courseVersionId}/reset`,
             )
+            .set('Authorization', 'Bearer default')
             .send(resetBody)
             .expect(404);
 
@@ -923,23 +972,13 @@ describe('Progress Controller Integration Tests', { timeout: 90000 }, () => {
         userId: userIdUser as string,
         courseId: courseData.courseId,
         courseVersionId: courseData.courseVersionId,
-        expectedModuleId:
-          courseData.modules[courseData.modules.length - 1].moduleId, // Last module of the course
-        expectedSectionId:
-          courseData.modules[courseData.modules.length - 1].sections[
-            courseData.modules[courseData.modules.length - 1].sections.length -
-            1
-          ].sectionId, // Last section
-        expectedItemId:
-          courseData.modules[courseData.modules.length - 1].sections[
-            courseData.modules[courseData.modules.length - 1].sections.length -
-            1
-          ].items[
-            courseData.modules[courseData.modules.length - 1].sections[
-              courseData.modules[courseData.modules.length - 1].sections
-                .length - 1
-            ].items.length - 1
-          ].itemId, // Last item
+        // ProgressService.recalculateStudentProgress deliberately resets
+        // currentModule/Section/Item back to the course's first item once
+        // the course is fully completed (see its "currentItem reset to the
+        // start" comment) — completed alone tracks finish status.
+        expectedModuleId: courseData.modules[0].moduleId,
+        expectedSectionId: courseData.modules[0].sections[0].sectionId,
+        expectedItemId: courseData.modules[0].sections[0].items[0].itemId,
         expectedCompleted: true, // Course is completed after all modules are done
         app,
       });

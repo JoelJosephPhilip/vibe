@@ -279,6 +279,7 @@ class SubmissionRepository {
     const normalizedData = data.map(doc => {
       return {
         ...doc,
+        _id: doc._id?.toString(),
         quizId: doc.quizId?.toString(),
         userId: doc.userId?._id?.toString() || null,
         attemptId: doc.attemptId?.toString(),
