@@ -52,7 +52,7 @@ export default function ResetPasswordPage() {
           setError(result.message ?? "Invalid or expired reset link.");
           return;
         }
-        setEmail(result.email ?? null);
+        setEmail(result.email);
       } catch {
         setError("Invalid or expired reset link.");
       }

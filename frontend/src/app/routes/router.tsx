@@ -153,9 +153,6 @@ const resetPasswordRoute = new Route({
   getParentRoute: () => rootRoute,
   path: '/reset-password',
   component: ResetPasswordPage,
-  validateSearch: (search: Record<string, unknown>): { oobCode?: string } => ({
-    oobCode: typeof search.oobCode === 'string' ? search.oobCode : undefined,
-  }),
   beforeLoad: () => {
     const { isAuthenticated, user } = useAuthStore.getState();
     // Redirect to appropriate dashboard if already authenticated

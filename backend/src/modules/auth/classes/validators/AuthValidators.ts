@@ -386,39 +386,6 @@ class LoginResponse {
   expiresIn: Number;
 }
 
-class ForgotPasswordBody {
-  @JSONSchema({
-    title: 'Email Address',
-    description: 'Email address of the account to send a password reset link to',
-    example: 'user@example.com',
-    format: 'email',
-  })
-  @IsEmail(undefined, {
-    message: 'Invalid email address',
-  })
-  email: string;
-}
-
-class ForgotPasswordResponse {
-  @JSONSchema({
-    description: 'Indicates the request was processed',
-    example: true,
-    type: 'boolean',
-    readOnly: true,
-  })
-  @IsNotEmpty()
-  success: boolean;
-
-  @JSONSchema({
-    description: 'Status message',
-    example: 'If an account exists for that email, a reset link has been sent.',
-    type: 'string',
-    readOnly: true,
-  })
-  @IsString()
-  message: string;
-}
-
 export const AUTH_VALIDATORS = [
   SignUpBody,
   GoogleSignUpBody,
@@ -430,8 +397,6 @@ export const AUTH_VALIDATORS = [
   AuthErrorResponse,
   LoginBody,
   LoginResponse,
-  ForgotPasswordBody,
-  ForgotPasswordResponse,
 ];
 
 export {
@@ -445,6 +410,4 @@ export {
   AuthErrorResponse,
   LoginBody,
   LoginResponse,
-  ForgotPasswordBody,
-  ForgotPasswordResponse,
 };
