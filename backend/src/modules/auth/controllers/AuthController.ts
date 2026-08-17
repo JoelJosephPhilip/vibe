@@ -7,6 +7,8 @@ import {
   ChangePasswordResponse,
   AuthErrorResponse,
   LoginResponse,
+  ForgotPasswordBody,
+  ForgotPasswordResponse,
 } from '#auth/classes/validators/AuthValidators.js';
 import {
   IAuthService,
@@ -214,5 +216,23 @@ export class AuthController {
     // ✅ fetch your app user from DB
     // const user = await this.authService.getCurrentUserFromToken(result.idToken);
     return result;
+  }
+
+  @OpenAPI({
+    summary: 'Request a password reset email',
+    description:
+      "Sends a branded password-reset link to the given email if an account exists for it. Always responds with a generic success message, regardless of whether the account exists, so the endpoint can't be used to enumerate registered emails.",
+  })
+  @Post('/forgot-password')
+  @ResponseSchema(ForgotPasswordResponse, {
+    description: 'Request processed',
+    statusCode: 200,
+  })
+  @ResponseSchema(BadRequestErrorResponse, {
+    description: 'Bad Request Error',
+    statusCode: 400,
+  })
+  async forgotPassword(@Body() body: ForgotPasswordBody) {
+    return this.authService.sendPasswordResetEmail(body.email);
   }
 }

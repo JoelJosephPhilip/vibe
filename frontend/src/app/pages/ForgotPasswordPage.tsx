@@ -6,7 +6,6 @@ import { Label } from "@/components/ui/label";
 import { AlertCircle, Check, Mail } from "lucide-react";
 import { cn } from "@/utils/utils";
 import { useNavigate } from "@tanstack/react-router";
-import { sendPasswordResetEmail } from "@/lib/firebase";
 import { AnimatedGridPattern } from "@/components/magicui/animated-grid-pattern";
 import { ShineBorder } from "@/components/magicui/shine-border";
 
@@ -28,8 +27,16 @@ export default function ForgotPasswordPage() {
     try {
       setLoading(true);
       setError(null);
-      
-      await sendPasswordResetEmail(email);
+
+      const response = await fetch(`${import.meta.env.VITE_BASE_URL}/auth/forgot-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.message || "Failed to send reset email");
+      }
       setSuccess(true);
     } catch (err: any) {
       setError(err.message || "Failed to send reset email");
