@@ -9,28 +9,34 @@ import {
   QueryParams,
   Authorized,
   CurrentUser,
+  ForbiddenError,
+  NotFoundError,
 } from 'routing-controllers';
 import { ObjectId } from 'mongodb';
-import { ChatMessageRequest, ChatMessageResponse, ResolutionRating, SUPPORT_CHAT_TYPES } from '../types.js';
+import { ChatMessageResponse, ResolutionRating, SUPPORT_CHAT_TYPES } from '../types.js';
 import { ChatService } from '../services/index.js';
 import {
   ChatHistoryQuery,
+  ChatMessageBody,
   ChatMessageQuery,
-  FaqSearchQuery,
-  SupportQuestionIdParams,
-} from '../validators/SupportChatParams.js';
+  EscalateQuestionBody,
+  FAQSearchQuery,
+  RateQuestionBody,
+  SupportQuestionPathParams,
+} from '../classes/validators/SupportChatValidators.js';
 
-// The app applies a global '/api' routePrefix, so it must not be repeated here.
+// The app mounts routing-controllers with routePrefix '/api', so the prefix is
+// omitted here — declaring it would serve the routes at /api/api/support/chat.
 @JsonController('/support/chat')
 @injectable()
 export class ChatController {
   constructor(@inject(SUPPORT_CHAT_TYPES.ChatService) private chatService: ChatService) {}
 
   @Post('/message')
-  @Authorized('user')
+  @Authorized()
   async sendMessage(
     @CurrentUser() user: any,
-    @Body() messageRequest: ChatMessageRequest,
+    @Body() messageRequest: ChatMessageBody,
     @QueryParams() query: ChatMessageQuery
   ): Promise<ChatMessageResponse> {
     const userId = new ObjectId(user.id);
@@ -40,7 +46,18 @@ export class ChatController {
 
     return this.chatService.handleUserQuestion(
       userId,
-      messageRequest,
+      {
+        question: messageRequest.question,
+        context: messageRequest.context
+          ? {
+              page: messageRequest.context.page,
+              itemId: messageRequest.context.itemId
+                ? new ObjectId(messageRequest.context.itemId)
+                : undefined,
+              module: messageRequest.context.module,
+            }
+          : undefined,
+      },
       courseId,
       courseVersionId,
       cohortId
@@ -48,13 +65,13 @@ export class ChatController {
   }
 
   @Get('/history')
-  @Authorized('user')
+  @Authorized()
   async getHistory(
     @CurrentUser() user: any,
     @QueryParams() query: ChatHistoryQuery
   ) {
     const userId = new ObjectId(user.id);
-    const limit = query.limit ? parseInt(query.limit, 10) : 50;
+    const limit = query.limit ?? 50;
 
     const questions = await this.chatService.getQuestionHistory(userId, limit);
 
@@ -64,56 +81,87 @@ export class ChatController {
     };
   }
 
-  @Get('/:questionId')
-  @Authorized('user')
-  async getQuestion(
-    @CurrentUser() user: any,
-    @Params() params: SupportQuestionIdParams
-  ) {
-    const questionId = new ObjectId(params.questionId);
-    const question = await this.chatService.getQuestion(questionId);
-
-    if (!question) {
-      throw new Error('Question not found');
-    }
-
-    // Verify ownership
-    if (question.userId.toString() !== user.id) {
-      throw new Error('Unauthorized');
-    }
-
-    return question;
-  }
-
-  @Patch('/:questionId/rate')
-  @Authorized('user')
-  async rateQuestion(
-    @CurrentUser() user: any,
-    @Params() params: SupportQuestionIdParams,
-    @Body() body: { rating: ResolutionRating }
-  ) {
-    const questionId = new ObjectId(params.questionId);
-    const question = await this.chatService.getQuestion(questionId);
-
-    if (!question) {
-      throw new Error('Question not found');
-    }
-
-    // Verify ownership
-    if (question.userId.toString() !== user.id) {
-      throw new Error('Unauthorized');
-    }
-
-    return await this.chatService.rateResolution(questionId, body.rating);
-  }
-
   @Get('/faqs/search')
-  async searchFAQs(@QueryParams() query: FaqSearchQuery) {
+  async searchFAQs(@QueryParams() query: FAQSearchQuery) {
     // This would be implemented with FAQ retrieval and search logic
     // For now, returning placeholder
     return {
       faqs: [],
       total: 0,
     };
+  }
+
+  @Get('/:questionId')
+  @Authorized()
+  async getQuestion(
+    @CurrentUser() user: any,
+    @Params() params: SupportQuestionPathParams
+  ) {
+    const qId = new ObjectId(params.questionId);
+    const question = await this.chatService.getQuestion(qId);
+
+    if (!question) {
+      throw new NotFoundError('Question not found');
+    }
+
+    // Verify ownership
+    if (question.userId.toString() !== user.id) {
+      throw new ForbiddenError('Unauthorized');
+    }
+
+    return question;
+  }
+
+  @Patch('/:questionId/rate')
+  @Authorized()
+  async rateQuestion(
+    @CurrentUser() user: any,
+    @Params() params: SupportQuestionPathParams,
+    @Body() body: RateQuestionBody
+  ) {
+    const qId2 = new ObjectId(params.questionId);
+    await this.getOwnQuestion(qId2, user.id);
+
+    // body.rating is validated against the same string values as
+    // ResolutionRating (see RateQuestionBody), but TS string enums are
+    // nominally typed, so a matching literal union isn't implicitly
+    // assignable — cast is safe given the @IsIn(RESOLUTION_RATINGS) check.
+    return await this.chatService.rateResolution(
+      qId2,
+      body.rating as ResolutionRating,
+    );
+  }
+
+  /**
+   * Files a technical-issue report against a question the bot could not
+   * answer. The question row already exists — this attaches the detail the
+   * learner had no way to give in a single chat turn.
+   */
+  @Post('/:questionId/escalate')
+  @Authorized()
+  async escalateQuestion(
+    @CurrentUser() user: any,
+    @Params() params: SupportQuestionPathParams,
+    @Body() body: EscalateQuestionBody
+  ) {
+    const qId = new ObjectId(params.questionId);
+    await this.getOwnQuestion(qId, user.id);
+
+    return await this.chatService.escalateQuestion(qId, body);
+  }
+
+  /** Loads a question, refusing anything that is not the caller's own. */
+  private async getOwnQuestion(questionId: ObjectId, userId: string) {
+    const question = await this.chatService.getQuestion(questionId);
+
+    if (!question) {
+      throw new NotFoundError('Question not found');
+    }
+
+    if (question.userId.toString() !== userId) {
+      throw new ForbiddenError('Unauthorized');
+    }
+
+    return question;
   }
 }
