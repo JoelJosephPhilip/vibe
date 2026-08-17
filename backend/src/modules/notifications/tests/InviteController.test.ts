@@ -108,9 +108,9 @@ describe('InviteController', () => {
     // which must have a section, which must have an item, before invites
     // can be sent.
     const module = await createModule(app, version._id.toString());
-    const moduleId = module.version.modules[0].moduleId;
+    const moduleId = module.version.modules[0].moduleId.toString();
     const section = await createSection(app, version._id.toString(), moduleId);
-    const sectionId = section.version.modules[0].sections[0].sectionId;
+    const sectionId = section.version.modules[0].sections[0].sectionId.toString();
     await createVideoItem(app, version._id.toString(), moduleId, sectionId);
   });
 
