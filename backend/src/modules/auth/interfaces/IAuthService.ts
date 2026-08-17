@@ -63,6 +63,14 @@ export interface IAuthService {
    * viewer can call the normal APIs without signing up.
    */
   createCustomToken(firebaseUID: string): Promise<string>;
+
+  /**
+   * Emails a branded password-reset link for the given address, if an
+   * account exists for it. Always resolves with a generic success message
+   * regardless of whether the account exists, to avoid leaking which emails
+   * are registered.
+   */
+  sendPasswordResetEmail(email: string): Promise<{success: boolean; message: string}>;
 }
 
 /**

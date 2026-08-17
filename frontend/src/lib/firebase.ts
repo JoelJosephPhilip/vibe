@@ -7,8 +7,7 @@ import { getAuth,
   signInWithEmailAndPassword, 
   signOut, 
   createUserWithEmailAndPassword, 
-  updateProfile, 
-  sendPasswordResetEmail as firebaseSendPasswordResetEmail,
+  updateProfile,
   confirmPasswordReset,
   verifyPasswordResetCode } from "firebase/auth";
 import { useAuthStore } from "../store/auth-store";
@@ -72,42 +71,6 @@ export const createUserWithEmail = async (email: string, password: string, displ
   }
   
   return userCredential;
-};
-
-/**
- * Sends a password reset email to the user
- * Firebase automatically handles email delivery
- */
-export const sendPasswordResetEmail = async (email: string) => {
-  const auth = getAuth(app);
-  
-  try {
-    // This triggers Firebase to send password reset email
-    await firebaseSendPasswordResetEmail(auth, email, {
-      // URL where user will be redirected after clicking link
-      url: `${window.location.origin}/reset-password`,
-      handleCodeInApp: true,
-    });
-    
-    return {
-      success: true,
-      message: 'Password reset email sent! Check your inbox.',
-    };
-  } catch (error: any) {
-    console.error('Password reset error:', error);
-    
-    let message = 'Failed to send reset email. Please try again.';
-    
-    if (error.code === 'auth/user-not-found') {
-      message = 'No account found with this email address.';
-    } else if (error.code === 'auth/invalid-email') {
-      message = 'Invalid email address.';
-    } else if (error.code === 'auth/too-many-requests') {
-      message = 'Too many requests. Please try again later.';
-    }
-    
-    throw new Error(message);
-  }
 };
 
 /**
