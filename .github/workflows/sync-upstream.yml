@@ -1,3 +1,5 @@
+# Needs repo Settings > Actions > General > Workflow permissions set to
+# "Read and write permissions" so the push step below can push to main.
 name: Sync fork with upstream
 
 on:
