@@ -49,18 +49,7 @@ import { IQuestionBank } from '#root/shared/interfaces/quiz.js';
 import { IProjectSubmissionRepository } from '#root/modules/projects/interfaces/IProjectSubmissionRepository.js';
 import { ISettingRepository } from '#root/shared/database/interfaces/ISettingRepository.js';
 import { NOTIFICATIONS_TYPES } from '#root/modules/notifications/types.js';
-
-/**
- * Transient transaction errors (e.g. write conflicts with concurrent watch-time
- * heartbeats) must reach BaseService._withTransaction unwrapped, with their
- * errorLabels intact, so the transaction is retried instead of surfacing a 500.
- */
-function isTransientTransactionError(error: unknown): boolean {
-  return (
-    Array.isArray((error as any)?.errorLabels) &&
-    (error as any).errorLabels.includes('TransientTransactionError')
-  );
-}
+import { isTransientTransactionError } from '#root/shared/functions/isTransientTransactionError.js';
 
 @injectable()
 export class CourseRepository implements ICourseRepository {
