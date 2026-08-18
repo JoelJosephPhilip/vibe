@@ -2,7 +2,7 @@
 
 Status: **not started** — diagnosis and scope confirmed, no fix applied yet except one exploratory edit (see "Current state" below).
 
-## Report (for requesting assignment / sharing with a maintainer)
+
 
 ### Course/enrollment/progress actions can fail under normal concurrent usage, even though the platform already has a safety net that's supposed to prevent this
 
