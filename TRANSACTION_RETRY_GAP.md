@@ -1,6 +1,6 @@
 # Transaction retry gap in the database layer
 
-Status: **not started** — diagnosis and scope confirmed, no fix applied yet except one exploratory edit (see "Current state" below).
+Status: **fixed** — merged in [#17](https://github.com/JoelJosephPhilip/vibe/pull/17) (this fork). All 23 locations across `CourseRepository.ts`, `EnrollmentRepository.ts`, and `ProgressRepository.ts` now preserve the transient-error retry signal, via a shared `isTransientTransactionError()` helper. A 15-way concurrency stress test (`EnrollmentRepository.concurrentProgressUpdates.test.ts`) also surfaced and fixed a second issue: `BaseService._withTransaction` retried instantly with no backoff, so high-contention writers collided in lockstep — retries now use jittered exponential backoff, `MAX_RETRIES` 3→5. Verified via 3 consecutive clean CI runs of both the original failing test (`CrowdQuestion.e2e.test.ts`) and the new stress test. Not yet sent upstream to `vicharanashala/vibe`.
 
 
 
