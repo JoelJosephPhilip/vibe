@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import { Card, CardContent } from '@/components/ui/card';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip';
-import { Play, Pause, SkipBack, SkipForward, Volume2, Captions, Loader2, XCircle, Maximize, Minimize, FastForward } from 'lucide-react';
+import { Play, Pause, SkipBack, SkipForward, Volume2, Captions, Loader2, XCircle, Maximize, Minimize, FastForward, ChevronRight } from 'lucide-react';
 import { useSkipOptionalItem, useStartItem, useStopItem, useStoreWatchTimeTrack, useUpsertWatchTime } from '../hooks/hooks';
 import { fetchClient } from '@/lib/openapi';
 
@@ -2403,7 +2403,7 @@ export default function Video({ URL, source, assetId, startTime, nextItemId, end
             </div>
 
           {/* Next Lesson Button */}
-          {/*onNext && (
+          {onNext && (
             <div style={{
               borderTop: '1px solid hsl(var(--border))',
               paddingTop: '12px',
@@ -2433,7 +2433,7 @@ export default function Video({ URL, source, assetId, startTime, nextItemId, end
                 )}
               </Button>
             </div>
-          )*/}
+          )}
         </div>
       </div>
 
