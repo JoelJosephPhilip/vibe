@@ -155,7 +155,7 @@ export class StudentQuestionController {
     const questions = await this.service.listCourseVersionQuestions({
       courseId: params.courseId,
       courseVersionId: params.courseVersionId,
-      status: query.status as 'PENDING' | 'APPROVED' | 'REJECTED' | 'ALL' | undefined,
+      status: query.status as 'PENDING' | 'HELD' | 'APPROVED' | 'REJECTED' | 'ALL' | undefined,
       gateState: query.gateState as 'COLLECTING' | 'ELIGIBLE' | undefined,
       limit: query.limit ?? 100,
     });
