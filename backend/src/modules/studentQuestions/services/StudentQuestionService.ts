@@ -608,7 +608,7 @@ export class StudentQuestionService {
   async listCourseVersionQuestions(input: {
     courseId: string;
     courseVersionId: string;
-    status?: 'PENDING' | 'APPROVED' | 'REJECTED' | 'ALL';
+    status?: 'PENDING' | 'HELD' | 'APPROVED' | 'REJECTED' | 'ALL';
     gateState?: 'COLLECTING' | 'ELIGIBLE';
     limit: number;
   }) {
