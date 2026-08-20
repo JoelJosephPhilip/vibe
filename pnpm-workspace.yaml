@@ -6,4 +6,13 @@ packages:
   - cli
   - mcp
   - e2e
-  
+
+# ffmpeg-static's postinstall downloads its bundled ffmpeg binary; without
+# this it silently installs with no binary (pnpm blocks unrecognized
+# packages' install scripts by default). nodejs-whisper doesn't need this to
+# build (its whisper.cpp compile is triggered lazily by application code, not
+# an install script) but is listed for the same reason, defensively.
+onlyBuiltDependencies:
+  - ffmpeg-static
+  - nodejs-whisper
+

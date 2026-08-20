@@ -558,6 +558,7 @@ const SmartBloomWorkflow = ({ onUploadComplete }: SmartBloomWorkflowProps = {}) 
   // SSE refs — stable across renders
   const sseRef = useRef<EventSource | null>(null);
   const sseListenersRef = useRef<Map<string, (data: any) => void>>(new Map());
+  const degradedNotifiedRef = useRef<Set<string>>(new Set());
 
   // Tear down SSE when component unmounts
   useEffect(() => {
@@ -819,6 +820,7 @@ const SmartBloomWorkflow = ({ onUploadComplete }: SmartBloomWorkflowProps = {}) 
     sseRef.current?.close();
     sseRef.current = null;
     sseListenersRef.current.clear();
+    degradedNotifiedRef.current.clear();
   };
 
   const connectSSE = (jobId: string) => {
@@ -828,6 +830,10 @@ const SmartBloomWorkflow = ({ onUploadComplete }: SmartBloomWorkflowProps = {}) 
       if (!taskKey) return;
       if (rawEvent.status === "RUNNING") {
         addLog(`${taskKey.replace(/_/g, " ").toLowerCase()} is running…`);
+      }
+      if (rawEvent.degraded && !degradedNotifiedRef.current.has(taskKey)) {
+        degradedNotifiedRef.current.add(taskKey);
+        toast.warning(rawEvent.reason || `${taskKey.replace(/_/g, " ").toLowerCase()} is using a local fallback.`);
       }
       const cb = sseListenersRef.current.get(taskKey);
       if (cb) cb(rawEvent);

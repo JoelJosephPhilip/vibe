@@ -1,6 +1,10 @@
 FROM node:22-alpine AS builder
 
-RUN apk add --no-cache git
+# build-base + cmake: nodejs-whisper compiles whisper.cpp lazily on first use
+# (not at install time) — build-base/cmake/ffmpeg here support the warm-up
+# RUN step below, which forces that compile (+ model download) at build time
+# instead of on the first real request in production.
+RUN apk add --no-cache git build-base cmake ffmpeg wget
 RUN corepack enable && corepack prepare pnpm@10.4.1 --activate && npm install -g rimraf
 
 WORKDIR /app
@@ -8,13 +12,15 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml* ./
 COPY scripts ./scripts
 RUN pnpm install
+RUN node scripts/warmup-whisper.cjs
 
 COPY . .
 RUN pnpm tsc
 
 FROM node:22-alpine
 
-RUN apk add --no-cache dumb-init wget
+# ffmpeg: local transcription fallback's audio preprocessing (see LocalTranscriptionService)
+RUN apk add --no-cache dumb-init wget ffmpeg
 
 WORKDIR /app
 
@@ -23,6 +29,7 @@ COPY scripts ./scripts
 
 COPY --from=builder /app/build ./build
 COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/whisper-models ./whisper-models
 
 # Tailscale Setup
 

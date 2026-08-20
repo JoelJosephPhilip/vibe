@@ -89,6 +89,9 @@ export interface JobStatus {
   segmentation?: any[];
   questionGeneration?: any[];
   uploadContent?: any[];
+  /** Set on the SSE event a local fallback fires before it starts running (see GenAIService._callAiServerOrFallback). */
+  degraded?: boolean;
+  reason?: string;
 }
 
 // Types for optional task parameters
