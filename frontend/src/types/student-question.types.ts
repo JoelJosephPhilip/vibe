@@ -69,9 +69,22 @@ export interface StudentQuestionListResponse {
 
 export type StudentQuestionStatusFilter =
   | 'PENDING'
+  | 'HELD'
   | 'APPROVED'
   | 'REJECTED'
   | 'ALL';
+
+/**
+ * Teacher-facing label per status — the DB name doesn't read as an action
+ * cue. PENDING is already live/served (not waiting on a teacher); HELD is
+ * the one that actually needs a decision.
+ */
+export const STUDENT_QUESTION_STATUS_LABELS: Record<StudentQuestionStatus, string> = {
+  PENDING: 'Live',
+  HELD: 'Needs review',
+  APPROVED: 'Approved',
+  REJECTED: 'Rejected',
+};
 
 export type StudentQuestionGateStateFilter = StudentQuestionGateState | 'ALL';
 

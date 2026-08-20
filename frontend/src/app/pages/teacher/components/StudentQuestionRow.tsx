@@ -2,9 +2,10 @@ import {Check, X, Pencil} from 'lucide-react';
 import {Badge} from '@/components/ui/badge';
 import {Button} from '@/components/ui/button';
 import {Card, CardContent} from '@/components/ui/card';
-import type {
-  StudentQuestionListItem,
-  StudentQuestionStatus,
+import {
+  STUDENT_QUESTION_STATUS_LABELS,
+  type StudentQuestionListItem,
+  type StudentQuestionStatus,
 } from '@/types/student-question.types';
 
 const STATUS_VARIANT: Record<StudentQuestionStatus, 'default' | 'secondary' | 'destructive'> = {
@@ -47,7 +48,9 @@ export default function StudentQuestionRow({
         <div className="flex items-start justify-between gap-3">
           <div className="space-y-1.5 min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <Badge variant={STATUS_VARIANT[question.status]}>{question.status}</Badge>
+              <Badge variant={STATUS_VARIANT[question.status]}>
+                {STUDENT_QUESTION_STATUS_LABELS[question.status]}
+              </Badge>
               {isPending && question.gateState && (
                 <Badge variant={question.gateState === 'ELIGIBLE' ? 'default' : 'outline'}>
                   {question.gateState === 'ELIGIBLE' ? 'Eligible for review' : 'Collecting'}
