@@ -199,6 +199,11 @@ export class StudentQuestionListItemResponse {
   @IsString()
   rejectionReason?: string;
 
+  /** Why an automated screen HELD this question — only set when status === HELD. */
+  @IsOptional()
+  @IsString()
+  screeningMessage?: string;
+
   /** Peer-validation lifecycle state; only meaningful while status === PENDING. */
   @IsOptional()
   @IsString()

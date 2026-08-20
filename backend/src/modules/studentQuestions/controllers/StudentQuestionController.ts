@@ -175,6 +175,7 @@ export class StudentQuestionController {
         reviewedBy: q.reviewedBy?.toString(),
         reviewedAt: q.reviewedAt?.toISOString(),
         rejectionReason: q.rejectionReason,
+        screeningMessage: q.status === 'HELD' ? q.screening?.message : undefined,
         gateState: q.gateState,
         responseCount: q.responseCount,
         correctCount: q.correctCount,
