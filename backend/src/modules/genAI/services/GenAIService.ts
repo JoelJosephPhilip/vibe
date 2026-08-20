@@ -117,9 +117,21 @@ export class GenAIService extends BaseService {
   ): Promise<{ jobId: string }> {
     return this._withTransaction(async session => {
       // Prepare job data and send to AI server]
-      const result = await this.webhookService.AIServerCheck();
-      if (result !== 200) {
-        throw new Error('Failed to connect to AI server');
+      if (aiConfig.localFallbackEnabled) {
+        // Don't hard-fail job creation on an unreachable AI server — the local
+        // fallback can still carry TRANSCRIPT_GENERATION/QUESTION_GENERATION
+        // through later (see _callAiServerOrFallback); that per-task check is
+        // where degraded mode actually gets decided, not here.
+        try {
+          await this.webhookService.AIServerCheck();
+        } catch {
+          // intentionally swallowed — see comment above
+        }
+      } else {
+        const result = await this.webhookService.AIServerCheck();
+        if (result !== 200) {
+          throw new Error('Failed to connect to AI server');
+        }
       }
       const jobId = await this.genAIRepository.save(
         userId,
