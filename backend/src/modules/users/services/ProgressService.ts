@@ -2321,6 +2321,26 @@ class ProgressService extends BaseService {
       throw new NotFoundError('Item not found');
     }
 
+    /**
+     * Idempotency guard: if the frontend retries this call (e.g. because a
+     * slow/truncated response on the first attempt looked like a failure),
+     * and this item is already marked complete, treat it as a safe no-op
+     * instead of re-running the transaction - which would otherwise throw
+     * on the watch-time record already being closed out, confusing a
+     * successful retry into an error.
+     */
+    if (
+      await this.progressRepository.isItemCompleted(
+        userId,
+        courseId,
+        courseVersionId,
+        itemId,
+        cohortId,
+      )
+    ) {
+      return;
+    }
+
     const versionStatus = await this.courseRepo.getCourseVersionStatus(
       courseVersionId,
     );
