@@ -3,8 +3,9 @@ import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import { Card, CardContent } from '@/components/ui/card';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip';
-import { Play, Pause, SkipBack, SkipForward, Volume2, Captions, Loader2, XCircle, Maximize, Minimize, FastForward } from 'lucide-react';
+import { Play, Pause, SkipBack, SkipForward, Volume2, Captions, Loader2, XCircle, Maximize, Minimize, FastForward, ChevronRight } from 'lucide-react';
 import { useSkipOptionalItem, useStartItem, useStopItem, useStoreWatchTimeTrack, useUpsertWatchTime } from '../hooks/hooks';
+import { fetchClient } from '@/lib/openapi';
 
 
 import { useCourseStore } from '../store/course-store';
@@ -554,6 +555,40 @@ const Video = forwardRef<VideoRef, VideoProps>(function Video({ URL, source, ass
 
        } catch (err: any) {
           console.error('Stop item failed:', err);
+
+          // A failure here doesn't always mean the save actually failed - a
+          // slow response can get its confirmation cut off mid-transfer
+          // (surfaces as a JSON parse error) even though the backend already
+          // committed the write. Check the server's actual state before
+          // treating this as a real failure, instead of guessing.
+          try {
+            const { data: freshProgress } = await fetchClient.GET(
+              '/users/progress/courses/{courseId}/versions/{courseVersionId}' as any,
+              {
+                params: {
+                  path: {
+                    courseId: currentCourse!.courseId,
+                    courseVersionId: currentCourse!.versionId ?? '',
+                  },
+                  query: { cohortId: currentCourse!.cohortId || undefined },
+                },
+              },
+            ) as { data?: { currentItem?: string } };
+            if (freshProgress && freshProgress.currentItem !== currentCourse?.itemId) {
+              // Progress already moved past this item - the earlier call
+              // actually succeeded, we just didn't get to hear back about it.
+              if (currentCourse?.itemId) {
+                completedItemIdsRef.current.add(currentCourse.itemId);
+              }
+              progressStoppedRef.current = true;
+              resolve(true);
+              return;
+            }
+          } catch (verifyErr) {
+            console.error('Progress verification failed:', verifyErr);
+            // Fall through to the existing retry/failure handling below.
+          }
+
           stopFailCountRef.current += 1;
           // Let the polling interval retry a few times before giving up, so a
           // transient/slow failure on a genuinely-watched video can still complete.
@@ -2430,7 +2465,7 @@ const Video = forwardRef<VideoRef, VideoProps>(function Video({ URL, source, ass
             </div>
 
           {/* Next Lesson Button */}
-          {/*onNext && (
+          {onNext && (
             <div style={{
               borderTop: '1px solid hsl(var(--border))',
               paddingTop: '12px',
@@ -2460,7 +2495,7 @@ const Video = forwardRef<VideoRef, VideoProps>(function Video({ URL, source, ass
                 )}
               </Button>
             </div>
-          )*/}
+          )}
         </div>
       </div>
 
