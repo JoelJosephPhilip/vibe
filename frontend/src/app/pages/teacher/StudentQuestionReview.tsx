@@ -9,11 +9,12 @@ import {
   useUpdateStudentQuestionContent,
   useUpdateStudentQuestionStatus,
 } from '@/hooks/hooks';
-import type {
-  StudentQuestionGateStateFilter,
-  StudentQuestionListItem,
-  StudentQuestionStatusFilter,
-  UpdateStudentQuestionPayload,
+import {
+  STUDENT_QUESTION_STATUS_LABELS,
+  type StudentQuestionGateStateFilter,
+  type StudentQuestionListItem,
+  type StudentQuestionStatusFilter,
+  type UpdateStudentQuestionPayload,
 } from '@/types/student-question.types';
 import StudentQuestionRow from './components/StudentQuestionRow';
 import StudentQuestionRejectDialog from './components/StudentQuestionRejectDialog';
@@ -21,28 +22,47 @@ import StudentQuestionEditDialog from './components/StudentQuestionEditDialog';
 import SegmentDetailsDialog from './components/SegmentDetailsDialog';
 import CourseBackButton from './CourseBackButton';
 
+// HELD first — it's the one status that actually needs a teacher's call
+// (AI screening was unsure). PENDING is already live/served, not waiting on
+// anyone; the label reflects that rather than the DB status name.
 const STATUS_FILTER_OPTIONS: StudentQuestionStatusFilter[] = [
   'ALL',
+  'HELD',
   'PENDING',
   'APPROVED',
   'REJECTED',
 ];
 
+const STATUS_FILTER_LABELS: Record<StudentQuestionStatusFilter, string> = {
+  ALL: 'All statuses',
+  ...STUDENT_QUESTION_STATUS_LABELS,
+};
+
 // Peer-validation gate state filter — only meaningful while status is PENDING
-// (or ALL). Defaults to ELIGIBLE: "what should I review right now."
+// (or ALL); HELD/APPROVED/REJECTED questions have no gate state.
 const GATE_STATE_FILTER_OPTIONS: StudentQuestionGateStateFilter[] = [
+  'ALL',
   'ELIGIBLE',
   'COLLECTING',
-  'ALL',
 ];
+
+const GATE_STATE_FILTER_LABELS: Record<StudentQuestionGateStateFilter, string> = {
+  ALL: 'Any gate state',
+  ELIGIBLE: 'Eligible for review',
+  COLLECTING: 'Collecting',
+};
 
 export default function StudentQuestionReview() {
   const {currentCourse} = useCourseStore();
   const courseId = currentCourse?.courseId;
   const courseVersionId = currentCourse?.versionId;
 
-  const [statusFilter, setStatusFilter] = useState<StudentQuestionStatusFilter>('PENDING');
-  const [gateStateFilter, setGateStateFilter] = useState<StudentQuestionGateStateFilter>('ELIGIBLE');
+  // Defaults show everything so the first thing a teacher sees is never a
+  // false "nothing to do here" — PENDING+ELIGIBLE was empty in practice,
+  // since most live questions sit in COLLECTING and HELD wasn't even
+  // reachable as a filter.
+  const [statusFilter, setStatusFilter] = useState<StudentQuestionStatusFilter>('ALL');
+  const [gateStateFilter, setGateStateFilter] = useState<StudentQuestionGateStateFilter>('ALL');
   const [items, setItems] = useState<StudentQuestionListItem[]>([]);
   const [hasFetched, setHasFetched] = useState(false);
 
@@ -150,7 +170,7 @@ export default function StudentQuestionReview() {
             <SelectContent>
               {STATUS_FILTER_OPTIONS.map(option => (
                 <SelectItem key={option} value={option}>
-                  {option}
+                  {STATUS_FILTER_LABELS[option]}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -165,7 +185,7 @@ export default function StudentQuestionReview() {
             <SelectContent>
               {GATE_STATE_FILTER_OPTIONS.map(option => (
                 <SelectItem key={option} value={option}>
-                  {option === 'ALL' ? 'Any gate state' : option}
+                  {GATE_STATE_FILTER_LABELS[option]}
                 </SelectItem>
               ))}
             </SelectContent>
