@@ -2474,18 +2474,19 @@ class ProgressService extends BaseService {
       );
       const totalCourseItems = allCourseItemIdSet.size;
 
+      // Fetched once and reused below (step 4's non-linear check and step 8's
+      // percentage calculation both need this - it used to be queried twice).
+      const completedItemsArray = await this.progressRepository.getCompletedItems(
+        userId,
+        courseId,
+        courseVersionId,
+        cohortId,
+      );
+
       // ----------------------------------------------------
       // 4. NON-LINEAR PROGRESSION FINAL COMPLETION CHECK
       // ----------------------------------------------------
       if (!linearProgressionEnabled && isCompleted) {
-        const completedItemsArray =
-          await this.progressRepository.getCompletedItems(
-            userId,
-            courseId,
-            courseVersionId,
-            cohortId,
-          );
-
         const completedItemsSet = new Set(
           completedItemsArray.map(id => id.toString()),
         );
@@ -2585,14 +2586,9 @@ class ProgressService extends BaseService {
       // ----------------------------------------------------
       // 8. DERIVED PROGRESS CALCULATION
       // ----------------------------------------------------
-      const completedItemsArray =
-        await this.progressRepository.getCompletedItems(
-          userId,
-          courseId,
-          courseVersionId,
-          cohortId,
-        );
-
+      // completedItemsArray was already fetched once above (step 3/4 reuse
+      // it too) - computeCourseProgressPercent takes it as a parameter
+      // specifically so callers that already have it don't fetch it again.
       const {percentCompleted, completedCourseItemsCount} =
         await this.computeCourseProgressPercent(
           completedItemsArray,
