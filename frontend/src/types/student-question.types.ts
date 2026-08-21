@@ -30,7 +30,7 @@ export interface StudentQuestionSubmissionResult {
   suggestedFix?: string;
 }
 
-export type StudentQuestionStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
+export type StudentQuestionStatus = 'PENDING' | 'HELD' | 'APPROVED' | 'REJECTED';
 
 /**
  * Peer-validation lifecycle state; only meaningful while status === 'PENDING'.
@@ -54,6 +54,8 @@ export interface StudentQuestionListItem {
   reviewedBy?: string;
   reviewedAt?: string;
   rejectionReason?: string;
+  /** Why an automated screen HELD this question — only set when status === 'HELD'. */
+  screeningMessage?: string;
   gateState?: StudentQuestionGateState;
   responseCount?: number;
   correctCount?: number;
