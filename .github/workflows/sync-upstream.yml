@@ -2,7 +2,7 @@ name: Sync fork with upstream
 
 on:
   schedule:
-    - cron: '*/5 * * * *' # every 5 minutes; skips as a no-op if already up to date
+    - cron: '*/15 * * * *' # every 15 minutes; skips as a no-op if already up to date
   workflow_dispatch: {}
 
 permissions:
