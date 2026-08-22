@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "@tanstack/react-router";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -11,6 +12,7 @@ function getApiUrl(path: string) {
 }
 
 export default function GenerateSectionPage() {
+    const navigate = useNavigate();
     const [courseId, setCourseId] = useState("");
     const [versionId, setVersionId] = useState("");
     const [moduleId, setModuleId] = useState("");
@@ -57,6 +59,7 @@ export default function GenerateSectionPage() {
                 description: `Your Job has been created with ID: ${data.jobId}`,
             });
             setShowDialog(false);
+            navigate({ to: "/teacher/jobs/$jobId", params: { jobId: data.jobId } });
 
         } catch (error) {
             toast.error("Error starting job", {

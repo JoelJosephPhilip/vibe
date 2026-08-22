@@ -41,6 +41,7 @@ import AISectionPage from '@/app/pages/teacher/AISectionPage';
 import FlaggedList from '../pages/teacher/FlaggedList'
 import StudentRouteGuard from '@/components/StudentRouteGuard'
 import AiWorkflow from '../pages/teacher/AiWorkflow'
+import JobStatusPage from '../pages/teacher/JobStatus'
 import AnomaliesList from '../pages/teacher/AnomaliesList'
 // import CourseInstructors from '../pages/teacher/course-instructors'
 import RegisteredUsers from '../pages/teacher/CourseRegistrationRequests'
@@ -447,6 +448,13 @@ const teacherGenerateSectionRoute = new Route({
   component: GenerateSectionPage,
 });
 
+// Teacher genAI job status route
+const teacherJobStatusRoute = new Route({
+  getParentRoute: () => teacherLayoutRoute,
+  path: '/jobs/$jobId',
+  component: JobStatusPage,
+});
+
 // Teacher AI Section route
 const teacherAISectionRoute = new Route({
   getParentRoute: () => teacherLayoutRoute,
@@ -759,6 +767,7 @@ const routeTree = rootRoute.addChildren([
     teacherAddCourseRoute,
     teacherCourseInviteRoute,
     teacherGenerateSectionRoute,
+    teacherJobStatusRoute,
     teacherAISectionRoute,
     teacherAIWorkflowSectionRoute,
     testAISectionModalRoute,
