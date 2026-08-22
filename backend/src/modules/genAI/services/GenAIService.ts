@@ -104,11 +104,6 @@ export class GenAIService extends BaseService {
     audio?: Express.Multer.File,
   ): Promise<{ jobId: string }> {
     return this._withTransaction(async session => {
-      // Prepare job data and send to AI server]
-      const result = await this.webhookService.AIServerCheck();
-      if (result !== 200) {
-        throw new Error('Failed to connect to AI server');
-      }
       const jobId = await this.genAIRepository.save(
         userId,
         jobData,
