@@ -187,6 +187,15 @@ export class GenAIRepository {
     return result;
   }
 
+  async deleteById(jobId: string, session?: ClientSession): Promise<void> {
+    await this.init();
+    await this.genAICollection.deleteOne({_id: new ObjectId(jobId)}, {session});
+    await this.taskDataCollection.deleteMany(
+      {$or: [{jobId: jobId}, {jobId: new ObjectId(jobId)}]},
+      {session},
+    );
+  }
+
   async getTaskDataByJobId(
     jobId: string,
     session?: ClientSession,

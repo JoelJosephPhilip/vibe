@@ -220,6 +220,13 @@ export const listMyJobs = async (): Promise<JobStatus[]> => {
   return await response.json();
 };
 
+// 1.2 Delete a job
+export const deleteJob = async (jobId: string): Promise<void> => {
+  await makeAuthenticatedRequest(`/genai/jobs/${jobId}`, {
+    method: 'DELETE',
+  });
+};
+
 // 2. Get Job Status
 export const getJobStatus = async (jobId: string): Promise<JobStatus> => {
 

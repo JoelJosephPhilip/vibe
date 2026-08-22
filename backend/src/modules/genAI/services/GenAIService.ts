@@ -8,6 +8,7 @@ import { ItemType, MongoDatabase } from '#root/shared/index.js';
 import { GLOBAL_TYPES } from '#root/types.js';
 import {
   BadRequestError,
+  ForbiddenError,
   InternalServerError,
   NotFoundError,
 } from 'routing-controllers';
@@ -813,6 +814,21 @@ export class GenAIService extends BaseService {
     string,
     {chunks: {start: number; end: number | null; text: string}[]; at: number}
   >();
+
+  async deleteJob(userId: string, jobId: string): Promise<void> {
+    return this._withTransaction(async session => {
+      const job = await this.genAIRepository.getById(jobId, session);
+      if (!job) {
+        throw new NotFoundError(`Job with ID ${jobId} not found`);
+      }
+      if (job.userId?.toString() !== userId) {
+        throw new ForbiddenError(
+          `User with ID ${userId} does not have permission to delete this job`,
+        );
+      }
+      await this.genAIRepository.deleteById(jobId, session);
+    });
+  }
 
   async getAllJobsData(userId: string): Promise<any> {
     return this._withTransaction(async session => {

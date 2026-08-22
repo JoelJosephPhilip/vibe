@@ -3,8 +3,10 @@ import { Link } from "@tanstack/react-router";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Loader2, RefreshCw, Wand2 } from "lucide-react";
-import { listMyJobs } from "@/lib/genai-api";
+import { Dialog, DialogContent, DialogTitle, DialogHeader, DialogFooter } from "@/components/ui/dialog";
+import { Loader2, RefreshCw, Trash2, Wand2 } from "lucide-react";
+import { toast } from "sonner";
+import { listMyJobs, deleteJob } from "@/lib/genai-api";
 
 function overallStatus(jobStatus?: Record<string, string>): string {
   if (!jobStatus) return "UNKNOWN";
@@ -32,6 +34,8 @@ export default function JobsListPage() {
   const [jobs, setJobs] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [jobToDelete, setJobToDelete] = useState<any>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const fetchJobs = async () => {
     try {
@@ -48,6 +52,23 @@ export default function JobsListPage() {
   useEffect(() => {
     fetchJobs();
   }, []);
+
+  const handleDelete = async () => {
+    if (!jobToDelete) return;
+    setIsDeleting(true);
+    try {
+      await deleteJob(jobToDelete._id);
+      toast.success("Job deleted");
+      setJobToDelete(null);
+      await fetchJobs();
+    } catch (err) {
+      toast.error("Failed to delete job", {
+        description: err instanceof Error ? err.message : "An unexpected error occurred.",
+      });
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   return (
     <div className="max-w-3xl mx-auto p-6 space-y-4">
@@ -95,22 +116,62 @@ export default function JobsListPage() {
         {jobs.map((job) => {
           const status = overallStatus(job.jobStatus);
           return (
-            <Link key={job._id} to="/teacher/jobs/$jobId" params={{ jobId: job._id }}>
-              <Card className="hover:bg-muted/30 transition-colors">
-                <CardContent className="py-3 flex items-center justify-between">
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium truncate">{job.url}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {job._id} · {job.createdAt ? new Date(job.createdAt).toLocaleString() : "-"}
-                    </p>
-                  </div>
+            <Card key={job._id} className="hover:bg-muted/30 transition-colors">
+              <CardContent className="py-3 flex items-center justify-between gap-2">
+                <Link
+                  to="/teacher/jobs/$jobId"
+                  params={{ jobId: job._id }}
+                  className="min-w-0 flex-1"
+                >
+                  <p className="text-sm font-medium truncate">{job.url}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {job._id} · {job.createdAt ? new Date(job.createdAt).toLocaleString() : "-"}
+                  </p>
+                </Link>
+                <div className="flex items-center gap-2 shrink-0">
                   <Badge variant={statusVariant(status)}>{status}</Badge>
-                </CardContent>
-              </Card>
-            </Link>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setJobToDelete(job)}
+                    aria-label="Delete job"
+                  >
+                    <Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
           );
         })}
       </div>
+
+      <Dialog open={!!jobToDelete} onOpenChange={(open) => !open && setJobToDelete(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete this job?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            {jobToDelete?.url}
+            <br />
+            This permanently removes the job and its task data. This cannot be undone.
+          </p>
+          <DialogFooter className="mt-4">
+            <Button variant="outline" onClick={() => setJobToDelete(null)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleDelete} disabled={isDeleting}>
+              {isDeleting ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                "Delete"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

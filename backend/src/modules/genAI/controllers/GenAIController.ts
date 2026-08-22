@@ -3,9 +3,10 @@ import type { Request as ExpressRequest, Response as ExpressResponse } from "exp
 import { 
   Body, 
   JsonController, 
-  Params, 
-  Post, 
-  Get, 
+  Params,
+  Post,
+  Get,
+  Delete,
   HttpCode,
   Authorized,
   UploadedFile,
@@ -147,6 +148,17 @@ export class GenAIController {
     const result = await this.genAIService.getJobStatus(id);
 
     return result;
+  }
+
+  @OpenAPI({
+    summary: 'Delete a job',
+    description: "Deletes a job and its task data. Only the job's owner may delete it.",
+  })
+  @Delete("/jobs/:id")
+  @Authorized()
+  @OnUndefined(204)
+  async deleteJob(@Params() params: GenAIIdParams, @Ability(getGenAIAbility) {user}) {
+    await this.genAIService.deleteJob(user._id.toString(), params.id);
   }
 
   @OpenAPI({
