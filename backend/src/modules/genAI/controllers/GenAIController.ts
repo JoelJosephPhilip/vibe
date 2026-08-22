@@ -111,6 +111,17 @@ export class GenAIController {
   }
 
   @OpenAPI({
+    summary: 'List my jobs',
+    description: 'Retrieves all genAI jobs created by the authenticated user.',
+  })
+  @Get("/jobs")
+  @Authorized()
+  @HttpCode(200)
+  async listJobs(@Ability(getGenAIAbility) {user}) {
+    return await this.genAIService.getAllJobsData(user._id.toString());
+  }
+
+  @OpenAPI({
     summary: 'Get job status',
     description: 'Retrieves the current status of a job by ID.',
   })

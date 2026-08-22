@@ -816,14 +816,11 @@ export class GenAIService extends BaseService {
 
   async getAllJobsData(userId: string): Promise<any> {
     return this._withTransaction(async session => {
-      const job = await this.genAIRepository.getAllByUserId(userId, session);
-      if (!job) {
-        throw new NotFoundError(`No jobs found for user ID ${userId}`);
-      }
-      job.forEach(j => {
+      const jobs = await this.genAIRepository.getAllByUserId(userId, session);
+      jobs.forEach(j => {
         j._id = j._id.toString();
       });
-      return job;
+      return jobs;
     });
   }
 

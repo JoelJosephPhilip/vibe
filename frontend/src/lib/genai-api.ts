@@ -211,6 +211,15 @@ export const createGenAIJob = async (
 
 }
 
+// 1.1 List my jobs
+export const listMyJobs = async (): Promise<JobStatus[]> => {
+  const response = await makeAuthenticatedRequest('/genai/jobs', {
+    method: 'GET',
+  });
+
+  return await response.json();
+};
+
 // 2. Get Job Status
 export const getJobStatus = async (jobId: string): Promise<JobStatus> => {
 

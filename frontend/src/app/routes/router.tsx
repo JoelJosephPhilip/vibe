@@ -42,6 +42,7 @@ import FlaggedList from '../pages/teacher/FlaggedList'
 import StudentRouteGuard from '@/components/StudentRouteGuard'
 import AiWorkflow from '../pages/teacher/AiWorkflow'
 import JobStatusPage from '../pages/teacher/JobStatus'
+import JobsListPage from '../pages/teacher/JobsList'
 import AnomaliesList from '../pages/teacher/AnomaliesList'
 // import CourseInstructors from '../pages/teacher/course-instructors'
 import RegisteredUsers from '../pages/teacher/CourseRegistrationRequests'
@@ -441,6 +442,13 @@ const teacherAnnouncementsRoute = new Route({
   component: TeacherAnnouncements,
 })
 
+// Teacher genAI jobs list route
+const teacherJobsListRoute = new Route({
+  getParentRoute: () => teacherLayoutRoute,
+  path: '/jobs',
+  component: JobsListPage,
+});
+
 // Teacher generate section route
 const teacherGenerateSectionRoute = new Route({
   getParentRoute: () => teacherLayoutRoute,
@@ -766,6 +774,7 @@ const routeTree = rootRoute.addChildren([
     teacherAudioManagerRoute,
     teacherAddCourseRoute,
     teacherCourseInviteRoute,
+    teacherJobsListRoute,
     teacherGenerateSectionRoute,
     teacherJobStatusRoute,
     teacherAISectionRoute,
