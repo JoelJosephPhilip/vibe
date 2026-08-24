@@ -12,9 +12,13 @@
  * `wget --no-config`, which Alpine's BusyBox-provided wget (present by
  * default, no install needed) doesn't support.
  *
- * Not run automatically; wired into backend/Dockerfile as an explicit
- * builder-stage RUN step. Safe to skip locally — LocalTranscriptionService
- * would just compile/download on first real use instead.
+ * Wired into two places: backend/Dockerfile's builder stage (explicit RUN
+ * step) and package.json's postinstall (for Render, whose native buildCommand
+ * has no separate Docker build stage — see install-python-fallback-deps.cjs
+ * for the same reasoning). The postinstall invocation is wrapped to tolerate
+ * failure (e.g. no cmake at Render build time) rather than break the whole
+ * install — LocalTranscriptionService would just compile/download on first
+ * real use instead, the same as running this locally without ever calling it.
  */
 'use strict';
 
