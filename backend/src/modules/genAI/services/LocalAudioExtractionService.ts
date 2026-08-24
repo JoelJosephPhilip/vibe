@@ -22,23 +22,27 @@ const execFileAsync = promisify(execFile);
  */
 @injectable()
 export class LocalAudioExtractionService {
-  private ytDlpPathEnsured = false;
-
   constructor(
     @inject(ANOMALIES_TYPES.CloudStorageService)
     private readonly cloudStorageService: CloudStorageService,
   ) {}
 
   async extract(jobId: string, videoUrl: string): Promise<audioData> {
-    await this.ensureYtDlpOnPath();
-
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ytdlp-fallback-'));
     const outputTemplate = path.join(workDir, 'audio.%(ext)s');
 
     try {
+      // `python3 -m yt_dlp` rather than the bare `yt-dlp` console script:
+      // pip install --break-system-packages (no venv, not root) puts that
+      // script under ~/.local/bin, which pip itself warns isn't on PATH —
+      // confirmed live on Render (spawn yt-dlp ENOENT). Invoking the module
+      // directly sidesteps PATH entirely; python3's own import resolution
+      // already finds user-site packages regardless (same as numpy/ruptures
+      // in segment.py), and python3 itself is reliably on PATH.
       await execFileAsync(
-        'yt-dlp',
+        'python3',
         [
+          '-m', 'yt_dlp',
           '-x',
           '--audio-format', 'mp3',
           '--no-playlist',
@@ -71,29 +75,6 @@ export class LocalAudioExtractionService {
       };
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
-    }
-  }
-
-  /**
-   * `pip install --break-system-packages` (no venv, not root) installs
-   * console scripts under ~/.local/bin, which pip itself warns isn't on
-   * PATH — confirmed live on Render ('/opt/render/.local/bin ... not on
-   * PATH', spawn yt-dlp ENOENT). Same shape of problem as ffmpeg in
-   * LocalTranscriptionService.ensureFfmpegOnPath, same fix: probe first,
-   * only touch PATH if actually needed.
-   */
-  private async ensureYtDlpOnPath(): Promise<void> {
-    if (this.ytDlpPathEnsured) return;
-    this.ytDlpPathEnsured = true;
-
-    const onPath = await new Promise<boolean>(resolve => {
-      execFile('yt-dlp', ['--version'], err => resolve(!err));
-    });
-    if (onPath) return;
-
-    const userLocalBin = path.join(os.homedir(), '.local', 'bin');
-    if (fs.existsSync(path.join(userLocalBin, 'yt-dlp'))) {
-      process.env.PATH = `${userLocalBin}${path.delimiter}${process.env.PATH ?? ''}`;
     }
   }
 }
