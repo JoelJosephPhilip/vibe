@@ -378,6 +378,13 @@ export class GenAIService extends BaseService {
         task === TaskType.TRANSCRIPT_GENERATION ||
         task === TaskType.SEGMENTATION ||
         task === TaskType.QUESTION_GENERATION;
+      // TEMP DIAGNOSTIC — remove once the live-repro root cause is confirmed.
+      console.error('[_callAiServerOrFallback DIAGNOSTIC]', {
+        task,
+        localFallbackEnabled: aiConfig.localFallbackEnabled,
+        fallbackCapable,
+        errMessage: err instanceof Error ? err.message : String(err),
+      });
       if (!aiConfig.localFallbackEnabled || !fallbackCapable) {
         throw err;
       }
