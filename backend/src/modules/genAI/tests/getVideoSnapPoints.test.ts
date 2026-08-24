@@ -50,6 +50,9 @@ function makeService(opts: {
     null, // quizService
     fakeDb, // mongoDatabase
     null, // cloudStorageService
+    null, // sseService
+    null, // localTranscriptionService
+    null, // localQuestionGenerationService
     null, // storage
   );
   return {service, repo};

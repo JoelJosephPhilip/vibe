@@ -1,5 +1,10 @@
 import { injectable, inject } from 'inversify';
 import { WebhookService } from './WebhookService.js';
+import { SseService } from './sseService.js';
+import { LocalTranscriptionService } from './LocalTranscriptionService.js';
+import { LocalQuestionGenerationService } from './LocalQuestionGenerationService.js';
+import { LocalAudioExtractionService } from './LocalAudioExtractionService.js';
+import { LocalSegmentationService } from './LocalSegmentationService.js';
 import { GENAI_TYPES } from '../types.js';
 import { JobBody } from '../classes/validators/GenAIValidators.js';
 import { GenAIRepository } from '../repositories/providers/mongodb/GenAIRepository.js';
@@ -86,6 +91,21 @@ export class GenAIService extends BaseService {
 
     @inject(ANOMALIES_TYPES.CloudStorageService)
     private readonly cloudStorageService: CloudStorageService,
+
+    @inject(GENAI_TYPES.SseService)
+    private readonly sseService: SseService,
+
+    @inject(GENAI_TYPES.LocalTranscriptionService)
+    private readonly localTranscriptionService: LocalTranscriptionService,
+
+    @inject(GENAI_TYPES.LocalQuestionGenerationService)
+    private readonly localQuestionGenerationService: LocalQuestionGenerationService,
+
+    @inject(GENAI_TYPES.LocalAudioExtractionService)
+    private readonly localAudioExtractionService: LocalAudioExtractionService,
+
+    @inject(GENAI_TYPES.LocalSegmentationService)
+    private readonly localSegmentationService: LocalSegmentationService,
 
     private storage = new Storage({
       projectId: appConfig.firebase.projectId,
@@ -253,7 +273,11 @@ export class GenAIService extends BaseService {
         const result = await this.uploadContent(jobId, jobState);
         return result;
       }
-      return this.webhookService.approveTaskStart(jobId, jobState);
+      // Direct call, replaced below by a fallback-aware wrapper:
+      // return this.webhookService.approveTaskStart(jobId, jobState);
+      return this._callAiServerOrFallback(jobId, jobState, (id, state) =>
+        this.webhookService.approveTaskStart(id, state),
+      );
     });
   }
 
@@ -319,8 +343,116 @@ export class GenAIService extends BaseService {
         const result = await this.uploadContent(jobId, jobState);
         return result;
       }
-      return this.webhookService.rerunTask(jobId, jobState);
+      // Direct call, replaced below by a fallback-aware wrapper:
+      // return this.webhookService.rerunTask(jobId, jobState);
+      return this._callAiServerOrFallback(jobId, jobState, (id, state) =>
+        this.webhookService.rerunTask(id, state),
+      );
     });
+  }
+
+  /**
+   * Try the real AI server first; on failure (it lives on a private Tailscale
+   * network unreachable from environments without VPN access — see WebhookService),
+   * fall back to a local implementation for the stage that failed
+   * (AUDIO_EXTRACTION via yt-dlp, TRANSCRIPT_GENERATION via whisper.cpp,
+   * SEGMENTATION via embeddings + PELT changepoint detection,
+   * QUESTION_GENERATION via MiniMax). UPLOAD_CONTENT has no local fallback
+   * (it's a pure DB write, never routed through here — see approveTaskToStart)
+   * and any unrecognized task rethrows the original error. The fallback
+   * result is fed through the same updateJob(jobId, task, data) sink a real
+   * webhook callback would use, after announcing degraded mode over SSE so
+   * the UI can warn the user first.
+   */
+  private async _callAiServerOrFallback(
+    jobId: string,
+    jobState: JobState,
+    callWebhook: (jobId: string, jobState: JobState) => Promise<any>,
+  ): Promise<any> {
+    try {
+      return await callWebhook(jobId, jobState);
+    } catch (err) {
+      const task = jobState.currentTask;
+      const fallbackCapable =
+        task === TaskType.AUDIO_EXTRACTION ||
+        task === TaskType.TRANSCRIPT_GENERATION ||
+        task === TaskType.SEGMENTATION ||
+        task === TaskType.QUESTION_GENERATION;
+      if (!aiConfig.localFallbackEnabled || !fallbackCapable) {
+        throw err;
+      }
+
+      this.sseService.send(jobId, 'jobStatus', {
+        task,
+        status: TaskStatus.RUNNING,
+        degraded: true,
+        reason: 'External AI server unreachable — using local fallback.',
+      });
+
+      const fallbackData = await this._runLocalFallback(jobId, jobState, task);
+      await this.updateJob(jobId, task, fallbackData);
+      return fallbackData;
+    }
+  }
+
+  private async _runLocalFallback(
+    jobId: string,
+    jobState: JobState,
+    task: TaskType,
+  ): Promise<audioData | trascriptGenerationData | segmentationData | questionGenerationData> {
+    if (task === TaskType.AUDIO_EXTRACTION) {
+      if (!jobState.url) {
+        return {
+          status: TaskStatus.FAILED,
+          error: 'No video URL available for the local audio-extraction fallback.',
+        };
+      }
+      return this.localAudioExtractionService.extract(jobId, jobState.url);
+    }
+
+    if (task === TaskType.TRANSCRIPT_GENERATION) {
+      if (!jobState.file) {
+        return {
+          status: TaskStatus.FAILED,
+          error: 'No audio file available for the local transcription fallback.',
+        };
+      }
+      return this.localTranscriptionService.transcribe(jobId, jobState.file);
+    }
+
+    if (task === TaskType.SEGMENTATION) {
+      if (!jobState.file) {
+        return {
+          status: TaskStatus.FAILED,
+          error: 'No transcript file available for the local segmentation fallback.',
+          segmentationMap: [],
+        };
+      }
+      const chunks = await this.fetchTranscriptChunks(jobState.file);
+      const params = (jobState.parameters ?? {}) as SegmentationParameters;
+      return this.localSegmentationService.segment(chunks, params);
+    }
+
+    // QUESTION_GENERATION
+    if (!jobState.file || !jobState.segmentMap) {
+      return {
+        status: TaskStatus.FAILED,
+        error: 'No transcript file or segment map available for the local question-generation fallback.',
+        segmentMapUsed: jobState.segmentMap ?? [],
+      };
+    }
+    const chunks = await this.fetchTranscriptChunks(jobState.file);
+    const transcriptChunks = chunks.map(c => ({
+      timestamp: [c.start, c.end] as [number, number | null],
+      text: c.text,
+    }));
+    const params = (jobState.parameters ?? {}) as QuestionGenerationParameters;
+    return this.localQuestionGenerationService.generate(
+      jobId,
+      transcriptChunks,
+      jobState.segmentMap,
+      params,
+    );
   }
 
   async approveTaskContinue(jobId: string): Promise<void> {

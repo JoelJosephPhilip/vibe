@@ -112,4 +112,28 @@ export class CloudStorageService {
       throw new InternalServerError(`Failed to upload transcript: ${error.message}`);
     }
   }
+
+  /** Same pattern as uploadTranscript, separate path — used by the local
+   * QUESTION_GENERATION fallback (see LocalQuestionGenerationService). */
+  async uploadQuestions(
+    questions: object,
+    jobId: string,
+  ) {
+    const bucket = this.googleStorage.bucket(this.aiServerBucketName);
+    const file = bucket.file(`questions/${jobId}.json`);
+
+    try {
+      const jsonString = JSON.stringify(questions, null, 2);
+      const buffer = Buffer.from(jsonString, 'utf8');
+
+      await file.save(buffer, {
+        metadata: {
+          contentType: 'application/json',
+        }
+      });
+      return file.name;
+    } catch (error) {
+      throw new InternalServerError(`Failed to upload questions: ${error.message}`);
+    }
+  }
 }
