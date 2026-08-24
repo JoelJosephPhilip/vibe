@@ -25,6 +25,18 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+
+// Must be set before requiring nodejs-whisper — it reads this env var when it
+// shells out to cmake. Without it, whisper.cpp is compiled with -march=native,
+// tuned to whichever exact CPU features the build machine happens to have.
+// Confirmed live on Render: the build and runtime steps don't always land on
+// identical hardware, so a -march=native binary compiled at build time can
+// crash at runtime with "Illegal instruction (core dumped)" the moment it
+// hits an instruction the runtime CPU doesn't support. Disabling native
+// tuning trades a small amount of performance for a binary that actually
+// runs on whatever CPU it lands on.
+process.env.NODEJS_WHISPER_CMAKE_ARGS = '-DGGML_NATIVE=OFF';
+
 const { nodewhisper } = require('nodejs-whisper');
 
 const MODEL_ROOT = path.resolve(process.cwd(), 'whisper-models');
