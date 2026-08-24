@@ -8,7 +8,7 @@ import { ANOMALIES_TYPES } from '#root/modules/anomalies/types.js';
 import { CloudStorageService } from '#root/modules/anomalies/index.js';
 import { storageConfig } from '#root/config/storage.js';
 import { TaskStatus, audioData } from '../classes/transformers/GenAI.js';
-import { getPythonInterpreter } from '../utils/pythonInterpreter.js';
+import { getPythonEnv } from '../utils/pythonInterpreter.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -34,15 +34,15 @@ export class LocalAudioExtractionService {
 
     try {
       // `python3 -m yt_dlp` rather than the bare `yt-dlp` console script:
-      // pip install --break-system-packages (no venv, not root) puts that
-      // script under ~/.local/bin, which pip itself warns isn't on PATH —
-      // confirmed live on Render (spawn yt-dlp ENOENT). Invoking the module
-      // directly sidesteps PATH entirely for the script itself. getPythonInterpreter()
-      // additionally handles a second, separate issue confirmed live on
-      // Render: a bare 'python3' at runtime resolves to a *different*
-      // interpreter than the one pip actually installed packages into.
+      // that script's location (~/.local/bin, from pip's user install) isn't
+      // reliably on PATH — confirmed live on Render (spawn yt-dlp ENOENT).
+      // Invoking the module directly sidesteps PATH entirely for the script
+      // itself. getPythonEnv() handles a second, separate issue confirmed
+      // live on Render: pip's default install location depends on $HOME,
+      // which differs between build and runtime there, so the package is
+      // otherwise invisible to python3 even though it's the same interpreter.
       await execFileAsync(
-        getPythonInterpreter(),
+        'python3',
         [
           '-m', 'yt_dlp',
           '-x',
@@ -51,7 +51,7 @@ export class LocalAudioExtractionService {
           '-o', outputTemplate,
           videoUrl,
         ],
-        { timeout: 120000 },
+        { timeout: 120000, env: getPythonEnv() },
       );
 
       const audioPath = path.join(workDir, 'audio.mp3');

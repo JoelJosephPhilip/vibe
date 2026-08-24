@@ -83,6 +83,7 @@ build/
 /gcp-service-account.json
 
 # Generated at install time by scripts/install-python-fallback-deps.cjs —
-# records which python3 binary the genAI local fallback's pip packages were
-# actually installed against (can differ from a bare 'python3' at runtime).
-scripts/.python-fallback-interpreter
+# the genAI local fallback's pip packages (yt-dlp/numpy/scipy/ruptures),
+# installed to a fixed --target dir rather than the default user
+# site-packages so runtime can find them via PYTHONPATH regardless of $HOME.
+scripts/.python-fallback-deps/

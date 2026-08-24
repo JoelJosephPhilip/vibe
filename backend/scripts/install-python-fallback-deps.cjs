@@ -21,29 +21,24 @@
 'use strict';
 
 const {execSync} = require('child_process');
-const fs = require('fs');
 const path = require('path');
 
-// Written next to this script; read at runtime by
-// backend/src/modules/genAI/utils/pythonInterpreter.ts. Confirmed live on
-// Render: a bare 'python3' spawn at runtime resolves to /usr/bin/python3,
-// a *different* interpreter than whichever managed Python `pip` targeted
-// during this build step ("No module named yt_dlp" despite pip reporting
-// success) — build and runtime apparently don't share a PATH/interpreter
-// there. Recording the exact interpreter pip just used, right after using
-// it, sidesteps needing to know why.
-const INTERPRETER_FILE = path.join(__dirname, '.python-fallback-interpreter');
+// Installed to a fixed --target dir next to this script rather than pip's
+// default user site-packages. Confirmed live on Render: a bare 'python3'
+// spawn at runtime resolves to the exact same interpreter pip used at
+// build time (/usr/bin/python3 both times) yet still reports "No module
+// named yt_dlp" — the real cause is that pip's default user-site location
+// is derived from $HOME, and $HOME differs between Render's build step and
+// its running server. --target sidesteps $HOME entirely; runtime reads
+// this same fixed path back via PYTHONPATH (see pythonInterpreter.ts).
+const TARGET_DIR = path.join(__dirname, '.python-fallback-deps');
 
 try {
   execSync(
-    'python3 -m pip install --break-system-packages --no-cache-dir yt-dlp numpy scipy ruptures',
+    `python3 -m pip install --break-system-packages --no-cache-dir --target "${TARGET_DIR}" yt-dlp numpy scipy ruptures`,
     {stdio: 'inherit'},
   );
-  const interpreterPath = execSync('python3 -c "import sys; print(sys.executable)"')
-    .toString()
-    .trim();
-  fs.writeFileSync(INTERPRETER_FILE, interpreterPath);
-  console.log(`[install-python-fallback-deps] done, interpreter: ${interpreterPath}`);
+  console.log(`[install-python-fallback-deps] done, installed to: ${TARGET_DIR}`);
 } catch (err) {
   console.warn(
     '[install-python-fallback-deps] skipped (pip unavailable or install failed) — genAI local fallback for AUDIO_EXTRACTION/SEGMENTATION will not work in this environment:',
