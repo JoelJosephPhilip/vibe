@@ -1097,14 +1097,12 @@ export class GenAIService extends BaseService {
         )
       ) {
         jobState.currentTask = TaskType.AUDIO_EXTRACTION;
-        // AUDIO_EXTRACTION has no earlier stage to defer to (unlike the
-        // WAITING handling below for the other three stages, which correctly
-        // falls back to whichever prior stage is actually blocking them) — a
-        // fresh job's audioExtraction defaults to WAITING (see JobStatus's
-        // constructor), so nulling currentTask here meant no fresh job's
-        // first stage could ever be approved via approveTaskToStart, with or
-        // without a working AI server. Confirmed live: a brand-new job
-        // (nothing pre-provided) always hit this and got a null currentTask.
+        // AUDIO_EXTRACTION has no earlier stage to defer to — a fresh job's
+        // audioExtraction defaults to WAITING (see JobStatus's constructor),
+        // so nulling currentTask here meant no fresh job's first stage could
+        // ever be approved via approveTaskToStart, with or without a working
+        // AI server. Confirmed live: a brand-new job (nothing pre-provided)
+        // always hit this and got a null currentTask.
         // if (job.jobStatus.audioExtraction === TaskStatus.WAITING)
         //   jobState.currentTask = null;
         jobState.taskStatus = job.jobStatus.audioExtraction;
@@ -1117,8 +1115,18 @@ export class GenAIService extends BaseService {
         )
       ) {
         jobState.currentTask = TaskType.TRANSCRIPT_GENERATION;
-        if (job.jobStatus.transcriptGeneration === TaskStatus.WAITING)
-          jobState.currentTask = TaskType.AUDIO_EXTRACTION;
+        // Same bug as AUDIO_EXTRACTION above, not actually "correct as-is"
+        // like the old comment here claimed — approveTaskContinue sets a
+        // stage's status to WAITING specifically to mean "prior stage just
+        // completed, this one is now ready to approve," so deferring
+        // currentTask back to the PRIOR stage here means approveTaskToStart
+        // silently re-runs the prior (already-completed) stage instead of
+        // starting this one. Confirmed live: with transcriptGeneration
+        // WAITING (freshly set by approveTaskContinue) and audioExtraction
+        // COMPLETED, calling approve/start re-triggered AUDIO_EXTRACTION's
+        // fallback again instead of starting transcription.
+        // if (job.jobStatus.transcriptGeneration === TaskStatus.WAITING)
+        //   jobState.currentTask = TaskType.AUDIO_EXTRACTION;
         jobState.taskStatus = job.jobStatus.transcriptGeneration;
         jobState.parameters = job.transcriptParameters;
         if (task.audioExtraction)
@@ -1134,8 +1142,9 @@ export class GenAIService extends BaseService {
         )
       ) {
         jobState.currentTask = TaskType.SEGMENTATION;
-        if (job.jobStatus.segmentation === TaskStatus.WAITING)
-          jobState.currentTask = TaskType.TRANSCRIPT_GENERATION;
+        // Same fix as TRANSCRIPT_GENERATION above — see that block's comment.
+        // if (job.jobStatus.segmentation === TaskStatus.WAITING)
+        //   jobState.currentTask = TaskType.TRANSCRIPT_GENERATION;
         jobState.taskStatus = job.jobStatus.segmentation;
         jobState.parameters = job.segmentationParameters;
         jobState.file =
@@ -1150,8 +1159,9 @@ export class GenAIService extends BaseService {
         )
       ) {
         jobState.currentTask = TaskType.QUESTION_GENERATION;
-        if (job.jobStatus.questionGeneration === TaskStatus.WAITING)
-          jobState.currentTask = TaskType.SEGMENTATION;
+        // Same fix as TRANSCRIPT_GENERATION above — see that block's comment.
+        // if (job.jobStatus.questionGeneration === TaskStatus.WAITING)
+        //   jobState.currentTask = TaskType.SEGMENTATION;
         jobState.taskStatus = job.jobStatus.questionGeneration;
         jobState.parameters = job.questionGenerationParameters;
         jobState.file =
