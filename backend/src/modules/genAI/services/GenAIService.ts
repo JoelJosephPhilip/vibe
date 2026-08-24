@@ -378,13 +378,6 @@ export class GenAIService extends BaseService {
         task === TaskType.TRANSCRIPT_GENERATION ||
         task === TaskType.SEGMENTATION ||
         task === TaskType.QUESTION_GENERATION;
-      // TEMP DIAGNOSTIC — remove once the live-repro root cause is confirmed.
-      console.error('[_callAiServerOrFallback DIAGNOSTIC]', {
-        task,
-        localFallbackEnabled: aiConfig.localFallbackEnabled,
-        fallbackCapable,
-        errMessage: err instanceof Error ? err.message : String(err),
-      });
       if (!aiConfig.localFallbackEnabled || !fallbackCapable) {
         throw err;
       }
@@ -1104,8 +1097,16 @@ export class GenAIService extends BaseService {
         )
       ) {
         jobState.currentTask = TaskType.AUDIO_EXTRACTION;
-        if (job.jobStatus.audioExtraction === TaskStatus.WAITING)
-          jobState.currentTask = null;
+        // AUDIO_EXTRACTION has no earlier stage to defer to (unlike the
+        // WAITING handling below for the other three stages, which correctly
+        // falls back to whichever prior stage is actually blocking them) — a
+        // fresh job's audioExtraction defaults to WAITING (see JobStatus's
+        // constructor), so nulling currentTask here meant no fresh job's
+        // first stage could ever be approved via approveTaskToStart, with or
+        // without a working AI server. Confirmed live: a brand-new job
+        // (nothing pre-provided) always hit this and got a null currentTask.
+        // if (job.jobStatus.audioExtraction === TaskStatus.WAITING)
+        //   jobState.currentTask = null;
         jobState.taskStatus = job.jobStatus.audioExtraction;
         jobState.url = job.url;
       }
