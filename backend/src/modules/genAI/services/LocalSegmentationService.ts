@@ -2,6 +2,7 @@ import { injectable } from 'inversify';
 import { spawn } from 'child_process';
 import { aiConfig } from '#root/config/ai.js';
 import { SegmentationParameters, TaskStatus, segmentationData } from '../classes/transformers/GenAI.js';
+import { getPythonInterpreter } from '../utils/pythonInterpreter.js';
 
 interface TranscriptChunk {
   start: number;
@@ -52,7 +53,13 @@ export class LocalSegmentationService {
 
   private runScript(stdinPayload: string): Promise<{stdout: string}> {
     return new Promise((resolve, reject) => {
-      const child = spawn('python3', ['scripts/segment.py'], {
+      // getPythonInterpreter(): a bare 'python3' at runtime can resolve to a
+      // different interpreter than the one pip actually installed
+      // numpy/scipy/ruptures into — confirmed live on Render for the
+      // AUDIO_EXTRACTION fallback's identical yt-dlp spawn (see
+      // LocalAudioExtractionService); applying the same fix here
+      // preemptively rather than waiting to hit the same bug again.
+      const child = spawn(getPythonInterpreter(), ['scripts/segment.py'], {
         timeout: 120000,
       });
 

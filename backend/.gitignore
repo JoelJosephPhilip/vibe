@@ -81,3 +81,8 @@ build/
 *txt
 
 /gcp-service-account.json
+
+# Generated at install time by scripts/install-python-fallback-deps.cjs —
+# records which python3 binary the genAI local fallback's pip packages were
+# actually installed against (can differ from a bare 'python3' at runtime).
+scripts/.python-fallback-interpreter

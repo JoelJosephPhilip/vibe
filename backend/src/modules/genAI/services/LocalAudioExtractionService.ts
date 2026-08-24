@@ -8,6 +8,7 @@ import { ANOMALIES_TYPES } from '#root/modules/anomalies/types.js';
 import { CloudStorageService } from '#root/modules/anomalies/index.js';
 import { storageConfig } from '#root/config/storage.js';
 import { TaskStatus, audioData } from '../classes/transformers/GenAI.js';
+import { getPythonInterpreter } from '../utils/pythonInterpreter.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -36,11 +37,12 @@ export class LocalAudioExtractionService {
       // pip install --break-system-packages (no venv, not root) puts that
       // script under ~/.local/bin, which pip itself warns isn't on PATH —
       // confirmed live on Render (spawn yt-dlp ENOENT). Invoking the module
-      // directly sidesteps PATH entirely; python3's own import resolution
-      // already finds user-site packages regardless (same as numpy/ruptures
-      // in segment.py), and python3 itself is reliably on PATH.
+      // directly sidesteps PATH entirely for the script itself. getPythonInterpreter()
+      // additionally handles a second, separate issue confirmed live on
+      // Render: a bare 'python3' at runtime resolves to a *different*
+      // interpreter than the one pip actually installed packages into.
       await execFileAsync(
-        'python3',
+        getPythonInterpreter(),
         [
           '-m', 'yt_dlp',
           '-x',
