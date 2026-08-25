@@ -16,6 +16,14 @@ name: TEMP test yt-dlp captions datacenter IP
 
 on:
   workflow_dispatch:
+  # workflow_dispatch alone proved unreliable to trigger via API/CLI right
+  # after a workflow is first added -- GitHub can take a long, unpredictable
+  # time to make a brand-new workflow_dispatch trigger dispatchable, with no
+  # way to force it. push on a dedicated throwaway branch fires immediately
+  # as part of the same push that adds/updates the file, sidestepping that.
+  push:
+    branches:
+      - tmp-test-datacenter-ip-ytdlp
 
 permissions:
   contents: read
