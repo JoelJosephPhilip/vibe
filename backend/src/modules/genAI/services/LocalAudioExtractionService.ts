@@ -80,13 +80,9 @@ export class LocalAudioExtractionService {
 
       return { status: TaskStatus.COMPLETED, fileName, fileUrl };
     } catch (err) {
-      // TEMPORARY DIAGNOSTIC — remove once the cookies-file env var mismatch
-      // is root-caused. Reports what this process actually resolved, since
-      // there's no way to read Render's env vars back out directly.
-      const diag = `[diag cookiesFile=${JSON.stringify(aiConfig.ytDlpCookiesFile)} exists=${aiConfig.ytDlpCookiesFile ? fs.existsSync(aiConfig.ytDlpCookiesFile) : 'n/a'}]`;
       return {
         status: TaskStatus.FAILED,
-        error: `${diag} ${err instanceof Error ? err.message : String(err)}`,
+        error: err instanceof Error ? err.message : String(err),
       };
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });

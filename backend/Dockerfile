@@ -33,8 +33,14 @@ FROM node:22-alpine
 # --break-system-packages: Alpine's Python refuses global pip installs by
 # default (PEP 668); safe to override in an isolated, single-purpose
 # container image.
-RUN apk add --no-cache dumb-init wget ffmpeg python3 py3-pip gcc musl-dev python3-dev
+RUN apk add --no-cache dumb-init wget curl unzip ffmpeg python3 py3-pip gcc musl-dev python3-dev
 RUN pip install --break-system-packages --no-cache-dir yt-dlp numpy scipy ruptures
+# Deno: JS runtime yt-dlp shells out to for solving YouTube's "n challenge"
+# (see scripts/install-deno.cjs). Installed globally here since the Docker
+# runtime stage has no $HOME-vs-build-time split like Render does — no need
+# for the fixed-directory workaround that script uses there.
+RUN curl -fsSL https://deno.land/install.sh | sh -s -- --no-modify-path \
+  && ln -s /root/.deno/bin/deno /usr/local/bin/deno
 
 WORKDIR /app
 

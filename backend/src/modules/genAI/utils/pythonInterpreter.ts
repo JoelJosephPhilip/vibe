@@ -13,6 +13,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // to where this file itself was placed on disk, which the build always
 // gets right.
 const TARGET_DIR = path.resolve(__dirname, '../../../../scripts/.python-fallback-deps');
+const DENO_BIN_DIR = path.resolve(__dirname, '../../../../scripts/.deno/bin');
 
 /**
  * Env vars for spawning the genAI local fallback's python3 scripts.
@@ -24,12 +25,21 @@ const TARGET_DIR = path.resolve(__dirname, '../../../../scripts/.python-fallback
  * identical /usr/bin/python3 binary in both, yet "No module named yt_dlp" at
  * runtime until this fix). Pointing PYTHONPATH at the fixed directory makes
  * the packages visible regardless of $HOME.
+ *
+ * Also prepends scripts/install-deno.cjs's fixed install directory to PATH,
+ * for the same $HOME reason — yt-dlp shells out to `deno` by name to solve
+ * YouTube's "n challenge"; if it's not resolvable on PATH, extraction can
+ * fail outright ("the page needs to be reloaded") for videos that need it.
  */
 export function getPythonEnv(): NodeJS.ProcessEnv {
-  if (!fs.existsSync(TARGET_DIR)) return process.env;
-  const existing = process.env.PYTHONPATH;
-  return {
-    ...process.env,
-    PYTHONPATH: existing ? `${TARGET_DIR}${path.delimiter}${existing}` : TARGET_DIR,
-  };
+  const env = {...process.env};
+
+  if (fs.existsSync(TARGET_DIR)) {
+    env.PYTHONPATH = env.PYTHONPATH ? `${TARGET_DIR}${path.delimiter}${env.PYTHONPATH}` : TARGET_DIR;
+  }
+  if (fs.existsSync(DENO_BIN_DIR)) {
+    env.PATH = env.PATH ? `${DENO_BIN_DIR}${path.delimiter}${env.PATH}` : DENO_BIN_DIR;
+  }
+
+  return env;
 }
