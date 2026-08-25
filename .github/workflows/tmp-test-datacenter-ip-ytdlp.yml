@@ -1,4 +1,4 @@
-name: TEMP - test yt-dlp/captions from a datacenter IP
+name: TEMP test yt-dlp captions datacenter IP
 
 # Throwaway diagnostic, not a real CI check. Render's free-tier build
 # minutes ran out mid-session while adding a PO-token provider and a
