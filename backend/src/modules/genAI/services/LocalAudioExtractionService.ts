@@ -69,21 +69,28 @@ export class LocalAudioExtractionService {
         // opt-in, and skips it by default. Without it: "n challenge solving
         // failed" -> "the page needs to be reloaded".
         '--remote-components', 'ejs:github',
-        // The web client's bot-check treats any cookie session used from a
-        // datacenter IP as suspicious and rotates/kills it within minutes
-        // (confirmed live: repeatedly, regardless of how fresh the cookies
-        // were) -- cookies alone are not a durable fix at scale on Render.
-        // The android/tv clients use a different, token-based auth flow
-        // that doesn't hit that same check, so they work without cookies
-        // and don't degrade the same way. Cookies (below) are kept as a
-        // secondary assist, not the primary mechanism.
-        '--extractor-args', 'youtube:player_client=android,tv',
         // Space out our own requests -- this session's own rapid manual
         // retries during testing plausibly contributed to escalating
         // detection on top of the datacenter-IP problem itself.
         '--sleep-requests', '1',
         '-o', outputTemplate,
       ];
+      // The web client's bot-check treats any cookie session used from a
+      // datacenter IP as suspicious and rotates/kills it within minutes
+      // (confirmed live: repeatedly, regardless of how fresh the cookies
+      // were) -- cookies alone are not a durable fix at scale on Render.
+      // The android/tv clients use a different, token-based auth flow that
+      // doesn't hit that same check, so they work without cookies. BUT:
+      // confirmed live -- yt-dlp itself skips the android client outright
+      // whenever cookies are present ("Skipping client android since it
+      // does not support cookies"), leaving only tv, which then failed with
+      // "the page needs to be reloaded" even with remote-components and the
+      // PO-token provider both active. So: only spoof the client when there
+      // are no cookies to conflict with it; when cookies are configured,
+      // let yt-dlp use its default client alongside them instead.
+      if (!aiConfig.ytDlpCookiesFile) {
+        args.push('--extractor-args', 'youtube:player_client=android,tv');
+      }
       // Confirmed live: neither cookies nor client spoofing above reliably
       // avoid YouTube's bot-check on Render's datacenter IP -- a PO
       // (proof-of-origin) token is the remaining non-paid-proxy mitigation.
