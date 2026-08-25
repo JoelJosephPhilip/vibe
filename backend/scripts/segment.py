@@ -131,6 +131,38 @@ def detect_changepoints(signal, penalty, model, runs):
     return sorted(bp for bp, count in counts.items() if count >= majority)
 
 
+MAX_POINTS = 150
+
+
+def window_chunks(chunks):
+    """Group consecutive chunks into coarser windows when there are a lot of
+    them, returning (window texts, window-index -> original-chunk-index map).
+
+    Confirmed live: even after capping TF-IDF dimensionality, PELT still
+    timed out on a real ~60min transcript (617 chunks) -- ruptures' PELT
+    loop evaluates a cost at (up to) every candidate point, so its runtime
+    scales with the *number of points*, not the vector width; capping
+    vocabulary alone didn't touch that. A ~5-10s-per-chunk transcript
+    doesn't need per-chunk changepoint precision anyway, so grouping chunks
+    into coarser windows before vectorizing shrinks the point count PELT
+    actually has to search over, without changing the algorithm itself.
+    Below the threshold this is a no-op (identity mapping), so the small
+    transcripts already confirmed working are untouched.
+    """
+    n = len(chunks)
+    if n <= MAX_POINTS:
+        return [c.get("text", "") for c in chunks], list(range(n))
+
+    window_size = -(-n // MAX_POINTS)  # ceil division
+    texts = []
+    last_chunk_idx = []
+    for i in range(0, n, window_size):
+        group = chunks[i:i + window_size]
+        texts.append(" ".join(c.get("text", "") for c in group))
+        last_chunk_idx.append(i)  # map back to the window's *first* chunk, matching the "boundary before this point" semantics below
+    return texts, last_chunk_idx
+
+
 def main():
     payload = json.loads(sys.stdin.read())
     chunks = payload.get("chunks") or []
@@ -138,20 +170,25 @@ def main():
     runs = int(payload.get("runs") or DEFAULT_RUNS)
     model = cost_model_for(payload.get("noiseId"))
 
-    texts = [c.get("text", "") for c in chunks]
-    if not texts or all(not t.strip() for t in texts):
+    if not chunks or all(not c.get("text", "").strip() for c in chunks):
         print(json.dumps({"segmentationMap": []}))
         return
 
-    vectors = tfidf_vectors(texts)
+    window_texts, window_to_chunk_idx = window_chunks(chunks)
+
+    vectors = tfidf_vectors(window_texts)
 
     changepoint_indices = detect_changepoints(vectors, lam, model, runs)
 
-    # Each changepoint index i marks a boundary between chunk i-1 and chunk
-    # i; the segment "end time" is that boundary chunk's own start (or the
-    # previous chunk's end if this chunk has no usable start).
+    # Each changepoint index marks a boundary between the previous window and
+    # this one; map it back to the original chunk that window starts at. The
+    # segment "end time" is that chunk's own start (or the previous chunk's
+    # end if it has no usable start).
     segmentation_map = []
-    for idx in changepoint_indices:
+    for w_idx in changepoint_indices:
+        if w_idx <= 0 or w_idx >= len(window_to_chunk_idx):
+            continue
+        idx = window_to_chunk_idx[w_idx]
         if idx <= 0 or idx >= len(chunks):
             continue
         end_time = chunks[idx].get("start")
