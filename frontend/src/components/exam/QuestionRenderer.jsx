@@ -12,6 +12,18 @@ const MUTED = '#6b7280'
 // not as a background wash.
 const ACCENT = '#F0A93B'
 
+// Some AI-generated questions bake their own "A)"/"B."/"C:" prefix into the
+// option TEXT itself, on top of the letter this component already renders
+// from `option.label`/index — producing a visible "A. A) ..." double-label
+// (same fix applied to the PDF export in ResultPage.jsx). Deliberately
+// narrow (A-D only, must be followed by whitespace) to avoid stripping
+// genuine option content that happens to start with a lone letter.
+const LEADING_OPTION_LABEL_RE = /^[A-Da-d][).:]\s+/
+function stripLeadingOptionLabel(text) {
+  if (!text) return text
+  return text.replace(LEADING_OPTION_LABEL_RE, '')
+}
+
 export function QuestionRenderer({ question, response, onChange }) {
   const startTimeRef = useRef(Date.now())
 
@@ -107,7 +119,7 @@ export function QuestionRenderer({ question, response, onChange }) {
                     <span className="text-xs font-bold uppercase" style={{ color: MUTED }}>
                       {option.label || option.id}.
                     </span>
-                    {option.text && <RichText text={option.text} />}
+                    {option.text && <RichText text={stripLeadingOptionLabel(option.text)} />}
                   </div>
                   {option.image && (
                     <div

@@ -1,12 +1,17 @@
 import 'reflect-metadata';
 import { randomUUID } from 'crypto';
 import { injectable, inject } from 'inversify';
-import { NotFoundError } from 'routing-controllers';
+import { NotFoundError, ForbiddenError } from 'routing-controllers';
+import { ObjectId } from 'mongodb';
 import { EXAMS_TYPES } from '../types.js';
+import { GLOBAL_TYPES } from '#root/types.js';
+import { EnrollmentRepository } from '#root/shared/index.js';
+import { IUser } from '#root/shared/interfaces/models.js';
 import { ExamRepository } from '../repositories/providers/mongodb/ExamRepository.js';
 import { ExamImageStorageService } from './ExamImageStorageService.js';
 import {
     IExam,
+    IExamEligibility,
     IExamQuestion,
     IExamQuestionOption,
     INegativeMarkingScheme,
@@ -44,6 +49,8 @@ export class ExamService {
         private readonly examRepo: ExamRepository,
         @inject(EXAMS_TYPES.ExamImageStorageService)
         private readonly examImageStorageService: ExamImageStorageService,
+        @inject(GLOBAL_TYPES.EnrollmentRepo)
+        private readonly enrollmentRepo: EnrollmentRepository,
     ) {}
 
     async createExam(body: CreateExamBody, createdBy: string): Promise<IExam> {
@@ -73,6 +80,7 @@ export class ExamService {
             opensAt: body.opensAt,
             closesAt: body.closesAt,
             allowRetakes: body.allowRetakes ?? true,
+            eligibility: body.eligibility as IExamEligibility | undefined,
             createdBy,
             createdAt: now,
             updatedAt: now,
@@ -96,12 +104,90 @@ export class ExamService {
         return this.examImageStorageService.resolveExamImages(exam);
     }
 
+    /**
+     * Owner/admin get unrestricted access (same as `getExamById`); any other
+     * authenticated user must clear `isEligibleForStudent` or gets a 403.
+     * Used by the student-facing `GET /exams/:examId` route so a student
+     * cannot bypass the `eligibility` gate just by knowing/guessing the id —
+     * `findPublished` filtering alone only hides the exam from the list.
+     */
+    async getExamForUser(examId: string, user: IUser): Promise<IExam> {
+        const exam = await this.getExamById(examId);
+        if (exam.createdBy === user._id?.toString() || user.roles === 'admin') {
+            return exam;
+        }
+        if (!(await this.isEligibleForStudent(exam, user))) {
+            throw new ForbiddenError('You are not eligible to view this exam');
+        }
+        return exam;
+    }
+
     async findByCreator(uid: string): Promise<IExam[]> {
         return this.examImageStorageService.resolveExamsImages(await this.examRepo.findByCreator(uid));
     }
 
-    async findPublished(): Promise<IExam[]> {
-        return this.examImageStorageService.resolveExamsImages(await this.examRepo.findPublished());
+    /**
+     * Published exams for the student-facing list. Admins see every
+     * published exam regardless of `eligibility`; everyone else only sees
+     * the ones they clear — which now requires an admin to have explicitly
+     * set an `eligibility` rule (even "Everyone") at all. An exam nobody has
+     * configured visibility for yet is not visible to students.
+     */
+    async findPublished(user: IUser): Promise<IExam[]> {
+        const exams = await this.examImageStorageService.resolveExamsImages(await this.examRepo.findPublished());
+        if (user.roles === 'admin') {
+            return exams;
+        }
+        const eligibility = await Promise.all(exams.map(exam => this.isEligibleForStudent(exam, user)));
+        return exams.filter((_, i) => eligibility[i]);
+    }
+
+    /**
+     * Evaluates `exam.eligibility` for a non-owner, non-admin user.
+     *
+     * No `eligibility` set at all means nobody has decided who this exam is
+     * for yet, so it defaults to hidden - published alone is not enough.
+     * `mode: 'none'` is different: that's an admin having gone into "Who can
+     * see this exam" and explicitly chosen "Everyone", which does open it up
+     * to every student. (`{ eligibility: { mode: 'none' } }` is also the
+     * documented way to clear an existing completion/manual restriction back
+     * to open - see `ExamEligibilitySettings` on the frontend.)
+     */
+    private async isEligibleForStudent(exam: IExam, user: IUser): Promise<boolean> {
+        const rule = exam.eligibility;
+        if (!rule) {
+            return false;
+        }
+        if (rule.mode === 'none') {
+            return true;
+        }
+
+        if (rule.mode === 'manual') {
+            const email = (user.email || '').toLowerCase();
+            return (rule.allowedEmails ?? []).some(e => e.toLowerCase() === email);
+        }
+
+        // mode === 'completion'. Both fields are required by
+        // ExamEligibilityBody for this mode, but fail closed (not open) if a
+        // legacy/malformed document somehow lacks one — an admin who set up
+        // a restriction almost certainly intended it to restrict, not to
+        // silently pass everyone through.
+        if (!rule.courseId || rule.minCompletionPercent == null) {
+            return false;
+        }
+
+        const userId = user._id!.toString();
+        const enrollments = await this.enrollmentRepo.findEnrollments({
+            userId: { $in: [userId, new ObjectId(userId)] },
+            courseId: { $in: [rule.courseId, new ObjectId(rule.courseId)] },
+            ...(rule.courseVersionId
+                ? { courseVersionId: { $in: [rule.courseVersionId, new ObjectId(rule.courseVersionId)] } }
+                : {}),
+            role: 'STUDENT',
+            isDeleted: { $ne: true },
+        });
+
+        return enrollments.some(e => (e.percentCompleted ?? 0) >= rule.minCompletionPercent!);
     }
 
     async updateExam(examId: string, patch: UpdateExamBody): Promise<IExam> {

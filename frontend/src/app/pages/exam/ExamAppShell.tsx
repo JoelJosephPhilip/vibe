@@ -4,6 +4,7 @@ import ExamPage     from './ExamPage'
 import ResultPage   from './ResultPage'
 import AdminPage    from './AdminPage'
 import EditExamPage from './EditExamPage'
+import AIQuestionGenerator from './AIQuestionGenerator'
 import MyTestsPage  from './MyTestsPage'
 import AttemptsPage from './AttemptsPage'
 import AnalyticsPage from './AnalyticsPage'
@@ -20,6 +21,7 @@ export default function ExamAppShell() {
         <Route path="/exam/:examId"            element={<ExamPage />} />
         <Route path="/result/:attemptId"       element={<ResultPage />} />
         <Route path="/admin"                   element={<AdminPage />} />
+        <Route path="/admin/ai-generate"       element={<AIQuestionGenerator />} />
         <Route path="/admin/:examId/attempts"  element={<AttemptsPage />} />
         <Route path="/admin/:examId/analytics" element={<AnalyticsPage />} />
         <Route path="/admin/:examId"           element={<EditExamPage />} />

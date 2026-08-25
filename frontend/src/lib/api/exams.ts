@@ -113,6 +113,26 @@ export interface ProctoringEvent {
     imageDataUrl?: string;
 }
 
+export type ExamEligibilityMode = 'none' | 'completion' | 'manual';
+
+/**
+ * Admin-configured gate on which students can see/open this exam. The field
+ * being absent entirely means hidden — nobody has decided who this exam is
+ * for yet, so no student sees it even once published. `mode: "none"` is the
+ * explicit opt-in for "Everyone" (saved from "Who can see this exam").
+ */
+export interface ExamEligibility {
+    mode: ExamEligibilityMode;
+    /** Course id to check completion against (mode "completion"). */
+    courseId?: string;
+    /** Optional course version id, to scope completion to one version. */
+    courseVersionId?: string;
+    /** Minimum course completion percentage required (mode "completion"). */
+    minCompletionPercent?: number;
+    /** Student emails allowed to see this exam (mode "manual"). */
+    allowedEmails?: string[];
+}
+
 export interface Exam {
     _id: string;
     /** Alias for `_id` — see the note at the top of this file. */
@@ -133,6 +153,8 @@ export interface Exam {
     closesAt?: number;
     /** Whether a student may attempt this exam more than once. Server defaults to `true` when omitted. */
     allowRetakes?: boolean;
+    /** Admin-configured visibility gate — see `ExamEligibility`. */
+    eligibility?: ExamEligibility;
     createdBy: string;
     createdAt: number;
     updatedAt: number;
@@ -204,6 +226,7 @@ export interface CreateExamInput {
     opensAt?: number;
     closesAt?: number;
     allowRetakes?: boolean;
+    eligibility?: ExamEligibility;
     timeGrants?: TimeGrantSeedInput[];
 }
 

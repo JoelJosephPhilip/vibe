@@ -67,9 +67,24 @@ export class ExamRepository {
     async update(examId: string, patch: Partial<IExam>): Promise<IExam | null> {
         await this.init();
         if (!ObjectId.isValid(examId)) return null;
+        // `patch` (an UpdateExamBody instance) carries every declared optional
+        // field as an own `undefined` property even when absent from the
+        // request body, since the esnext target gives class fields real
+        // `[[Define]]` semantics. The driver's default `ignoreUndefined:
+        // false` serializes those as BSON null, so spreading `patch` as-is
+        // into $set would silently wipe out every field not present in this
+        // particular partial update. Drop undefined (and null, which no
+        // field on UpdateExamBody is documented to accept as an intentional
+        // "clear this" value - every clearable field has its own explicit
+        // sentinel, e.g. `{ eligibility: { mode: 'none' } }`) so only fields
+        // actually sent by the caller are touched. This also self-heals: a
+        // client form seeded from an already-corrupted `null` field that
+        // goes untouched now round-trips as a no-op instead of re-persisting
+        // the null.
+        const fields = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined && v !== null));
         const result = await this.collection.findOneAndUpdate(
             { _id: new ObjectId(examId) },
-            { $set: { ...patch, updatedAt: Date.now() } },
+            { $set: { ...fields, updatedAt: Date.now() } },
             { returnDocument: 'after' },
         );
         return result ?? null;

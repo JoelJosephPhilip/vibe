@@ -3,6 +3,18 @@ import { Link, useParams, useNavigate } from 'react-router-dom'
 import Papa from 'papaparse'
 import { fileToDataUrl } from '@/lib/imageUtils'
 import { RichText } from '@/components/exam/RichText'
+
+// Some AI-generated questions bake their own "A)"/"B."/"C:" prefix into the
+// option TEXT itself, on top of the letter this page already renders from
+// index — producing a visible "A. A) ..." double-label (same fix applied in
+// QuestionRenderer.jsx and the PDF export in ResultPage.jsx). Deliberately
+// narrow (A-D only, must be followed by whitespace) to avoid stripping
+// genuine option content that happens to start with a lone letter.
+const LEADING_OPTION_LABEL_RE = /^[A-Da-d][).:]\s+/
+function stripLeadingOptionLabel(text) {
+  if (!text) return text
+  return text.replace(LEADING_OPTION_LABEL_RE, '')
+}
 import {
   useExam,
   useUpdateExam,
@@ -220,6 +232,7 @@ export default function EditExamPage() {
         <RevealAnswersSetting exam={exam} />
         <ExamProctoringSettings exam={exam} />
         <ExamScheduleSettings exam={exam} />
+        <ExamEligibilitySettings exam={exam} />
         <TimeGrantsSection exam={exam} />
         <ExamHeaderSettings exam={exam} />
         <QuestionsSection exam={exam} negativeMarkingRatios={negativeMarkingRatios} />
@@ -548,6 +561,169 @@ function ExamScheduleSettings({ exam }) {
   )
 }
 
+
+// Admin-configured visibility gate: who can see/open this exam. Follows the
+// same "local state + explicit Save button" shape as ExamScheduleSettings
+// above, PATCHing the whole `eligibility` object on save.
+function ExamEligibilitySettings({ exam }) {
+  const rule = exam.eligibility
+  const [mode, setMode] = useState(rule?.mode ?? 'none')
+  const [courseId, setCourseId] = useState(rule?.courseId ?? '')
+  const [courseVersionId, setCourseVersionId] = useState(rule?.courseVersionId ?? '')
+  const [minCompletionPercent, setMinCompletionPercent] = useState(rule?.minCompletionPercent ?? 80)
+  const [emailsText, setEmailsText] = useState((rule?.allowedEmails ?? []).join('\n'))
+  const [saved, setSaved] = useState(false)
+  const [error, setError] = useState(null)
+  const updateExam = useUpdateExam()
+
+  useEffect(() => {
+    const r = exam.eligibility
+    setMode(r?.mode ?? 'none')
+    setCourseId(r?.courseId ?? '')
+    setCourseVersionId(r?.courseVersionId ?? '')
+    setMinCompletionPercent(r?.minCompletionPercent ?? 80)
+    setEmailsText((r?.allowedEmails ?? []).join('\n'))
+  }, [exam.id])
+
+  const save = () => {
+    setError(null)
+    let eligibility
+    if (mode === 'none') {
+      eligibility = { mode: 'none' }
+    } else if (mode === 'completion') {
+      if (!courseId.trim()) {
+        setError('Course id is required for completion-based eligibility')
+        return
+      }
+      eligibility = {
+        mode: 'completion',
+        courseId: courseId.trim(),
+        courseVersionId: courseVersionId.trim() || undefined,
+        minCompletionPercent: Number(minCompletionPercent),
+      }
+    } else {
+      const allowedEmails = emailsText
+        .split(/[\n,]/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+      if (allowedEmails.length === 0) {
+        setError('Add at least one student email')
+        return
+      }
+      eligibility = { mode: 'manual', allowedEmails }
+    }
+
+    updateExam.mutate(
+      { examId: exam.id, patch: { eligibility } },
+      {
+        onSuccess: () => {
+          setSaved(true)
+          setTimeout(() => setSaved(false), 1500)
+        },
+      },
+    )
+  }
+
+  return (
+    <section className="rounded-md border border-border bg-card p-4 shadow-sm">
+      <h2 className="mb-1 font-semibold text-foreground">Who can see this exam</h2>
+      <p className="mb-3 text-xs text-muted-foreground">
+        Even published, a test is hidden from every student until you save a choice
+        here — enforced on the server, not just hidden in this UI. Pick "Everyone" to
+        open it up with no restriction, or gate it by completion % / an email list.
+      </p>
+      {!rule && (
+        <p className="mb-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          Not configured yet — this exam is currently hidden from all students.
+        </p>
+      )}
+
+      <div className="flex flex-wrap gap-3">
+        {[
+          { value: 'none', label: 'Everyone' },
+          { value: 'completion', label: 'Course completion %' },
+          { value: 'manual', label: 'Specific students (by email)' },
+        ].map((opt) => (
+          <label key={opt.value} className="flex select-none items-center gap-2 text-sm cursor-pointer">
+            <input
+              type="radio"
+              name="eligibility-mode"
+              checked={mode === opt.value}
+              onChange={() => setMode(opt.value)}
+            />
+            {opt.label}
+          </label>
+        ))}
+      </div>
+
+      {mode === 'completion' && (
+        <div className="mt-3 grid gap-3 sm:grid-cols-3">
+          <label className="block text-sm">
+            Course id
+            <input
+              type="text"
+              value={courseId}
+              onChange={(e) => setCourseId(e.target.value)}
+              placeholder="Mongo course id"
+              className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            />
+          </label>
+          <label className="block text-sm">
+            Course version id <span className="text-muted-foreground">(optional)</span>
+            <input
+              type="text"
+              value={courseVersionId}
+              onChange={(e) => setCourseVersionId(e.target.value)}
+              placeholder="Leave blank for any version"
+              className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            />
+          </label>
+          <label className="block text-sm">
+            Minimum completion %
+            <input
+              type="number"
+              min={0}
+              max={100}
+              value={minCompletionPercent}
+              onChange={(e) => setMinCompletionPercent(e.target.value)}
+              className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            />
+          </label>
+        </div>
+      )}
+
+      {mode === 'manual' && (
+        <label className="mt-3 block text-sm">
+          Allowed student emails
+          <textarea
+            value={emailsText}
+            onChange={(e) => setEmailsText(e.target.value)}
+            rows={4}
+            placeholder={'one@example.com\ntwo@example.com'}
+            className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+          />
+          <span className="mt-1 block text-xs text-muted-foreground">
+            One per line (or comma-separated). Matched case-insensitively against each
+            student's account email.
+          </span>
+        </label>
+      )}
+
+      {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
+
+      <div className="mt-3 flex items-center gap-3">
+        <button
+          onClick={save}
+          disabled={updateExam.isPending}
+          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+        >
+          Save eligibility
+        </button>
+        {saved && <span className="text-xs text-green-600">Saved ✓</span>}
+      </div>
+    </section>
+  )
+}
 
 function TimeGrantsSection({ exam }) {
   const [minutes, setMinutes] = useState(10)
@@ -1004,7 +1180,7 @@ function QuestionRow({ examId, question, index, negativeMarkingEnabled, negative
     }
   >
     <span>
-      {String.fromCharCode(65 + idx)}. <RichText text={o.text} /> {question.correctOptions.includes(o.id) && '✓'}
+      {String.fromCharCode(65 + idx)}. <RichText text={stripLeadingOptionLabel(o.text)} /> {question.correctOptions.includes(o.id) && '✓'}
     </span>
     {o.image && (
       <img src={o.image} alt="" className="h-10 w-16 rounded border object-contain" />

@@ -10,6 +10,7 @@ import {
     IsBoolean,
     IsNumber,
     Min,
+    Max,
     Matches,
     ArrayMinSize,
 } from 'class-validator';
@@ -82,6 +83,41 @@ export class ExamProctoringConfigBody {
     @ValidateNested({ each: true })
     @Type(() => ExamProctoringDetectorBody)
     detectors: ExamProctoringDetectorBody[];
+}
+
+export class ExamEligibilityBody {
+    @JSONSchema({
+        description:
+            'Eligibility rule kind: "none" (unrestricted), gate by course completion %, ' +
+            'or gate by an explicit email allow-list',
+        type: 'string',
+        enum: ['none', 'completion', 'manual'],
+    })
+    @IsIn(['none', 'completion', 'manual'])
+    mode: 'none' | 'completion' | 'manual';
+
+    @JSONSchema({ description: 'Course id to check completion against (required for mode "completion")', type: 'string' })
+    @IsOptional()
+    @IsMongoId()
+    courseId?: string;
+
+    @JSONSchema({ description: 'Optional course version id, to scope completion to one version', type: 'string' })
+    @IsOptional()
+    @IsMongoId()
+    courseVersionId?: string;
+
+    @JSONSchema({ description: 'Minimum course completion percentage required (required for mode "completion")', type: 'number' })
+    @IsOptional()
+    @IsNumber()
+    @Min(0)
+    @Max(100)
+    minCompletionPercent?: number;
+
+    @JSONSchema({ description: 'Student emails allowed to see this exam (required for mode "manual")' })
+    @IsOptional()
+    @IsArray()
+    @IsString({ each: true })
+    allowedEmails?: string[];
 }
 
 export class TimeGrantSeedBody {
@@ -175,6 +211,12 @@ export class CreateExamBody {
     @IsOptional()
     @IsBoolean()
     allowRetakes?: boolean;
+
+    @JSONSchema({ description: 'Admin-configured visibility gate. Absent means hidden from every student until explicitly set.' })
+    @IsOptional()
+    @ValidateNested()
+    @Type(() => ExamEligibilityBody)
+    eligibility?: ExamEligibilityBody;
 }
 
 export class UpdateExamBody {
@@ -260,6 +302,16 @@ export class UpdateExamBody {
     @IsOptional()
     @IsBoolean()
     allowRetakes?: boolean;
+
+    @JSONSchema({
+        description:
+            'Admin-configured visibility gate. Omit to leave unchanged; send ' +
+            '{ mode: "none" } to remove any restriction.',
+    })
+    @IsOptional()
+    @ValidateNested()
+    @Type(() => ExamEligibilityBody)
+    eligibility?: ExamEligibilityBody;
 }
 
 export class ExamQuestionOptionBody {

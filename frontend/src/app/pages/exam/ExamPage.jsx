@@ -201,9 +201,21 @@ function ExamPageInner({ examId, isDemo, examData, navigate }) {
       // timer has already run out) must NOT be resumed - otherwise starting the
       // test again instantly rehydrates the finished attempt and auto-submits,
       // which is what made a retake show "finished" straight away.
+      //
+      // A session already at/over MAX_TAB_SWITCHES is treated the same way:
+      // it means a previous load already tripped the auto-submit effect, and
+      // if that submit failed (see handleSubmit's onError), the session is
+      // left behind with tabSwitches still at the limit — restoring it as-is
+      // re-triggers the auto-submit effect within seconds of opening the
+      // exam again, with no chance to see the question UI at all.
       const durationSec = (examData.duration || 0) * 60 + (parsed.extraSeconds || 0)
       const elapsed = Math.floor((Date.now() - (parsed.startedAt || 0)) / 1000)
-      if (parsed.submitted || !parsed.startedAt || elapsed >= durationSec) {
+      if (
+        parsed.submitted ||
+        !parsed.startedAt ||
+        elapsed >= durationSec ||
+        (parsed.tabSwitches ?? 0) >= MAX_TAB_SWITCHES
+      ) {
         sessionStorage.removeItem(sessionKey)
         return null
       }
@@ -422,12 +434,21 @@ function ExamPageInner({ examId, isDemo, examData, navigate }) {
   }, [currentIndex])
 
   useEffect(() => {
-    const onBlur = () => {
+    // `visibilitychange` + `document.hidden`, not `window blur`: a same-page
+    // native browser dialog (the camera/mic permission prompt ExamProctoring
+    // triggers on mount, a fullscreen prompt, undocked DevTools gaining
+    // focus, etc.) blurs the window without ever hiding the tab, so a plain
+    // blur listener miscounts those as tab-switch violations - three of them
+    // firing back-to-back at exam start was enough to hit MAX_TAB_SWITCHES
+    // and auto-submit before the candidate ever saw a question. Real
+    // tab-switches/app-switches/minimizing all do set document.hidden.
+    const onVisibilityChange = () => {
+      if (!document.hidden) return
       setTabSwitches((prev) => prev + 1)
       setShowTabWarning(true)
     }
-    window.addEventListener('blur', onBlur)
-    return () => window.removeEventListener('blur', onBlur)
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange)
   }, [])
 
   const updateResponse = (update) => {

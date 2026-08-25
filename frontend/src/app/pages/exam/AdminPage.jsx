@@ -48,9 +48,14 @@ export default function AdminPage() {
               Create, edit, and publish mock tests.
             </p>
           </div>
-          <Link to="/" className="text-sm text-primary hover:underline">
-            ← Back to home
-          </Link>
+          <div className="flex items-center gap-4">
+            <Link to="/admin/ai-generate" className="text-sm text-primary hover:underline">
+              Generate with AI
+            </Link>
+            <Link to="/" className="text-sm text-primary hover:underline">
+              ← Back to home
+            </Link>
+          </div>
         </div>
 
         <div className="rounded-lg border border-border bg-card p-4">

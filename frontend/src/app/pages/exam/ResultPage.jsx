@@ -178,6 +178,103 @@ function hasRichContent(text) {
   return !!text && RICH_CONTENT_RE.test(text);
 }
 
+// jsPDF's built-in "helvetica" font uses the WinAnsi encoding, which has no
+// Greek letters or math operators — Θ, ≤, ≥, √, etc. silently render as
+// garbage glyphs (observed: Θ -> "˜", ≤ -> "d") instead of erroring, so this
+// only surfaces once a question actually uses one (e.g. an AI-generated
+// Big-Theta complexity-analysis question). Only applied on the plain
+// doc.text() fallback path below — the rich-content path (KaTeX +
+// html2canvas, see hasRichContent/renderRichTextToImage above) rasterizes
+// real browser font rendering and already handles these correctly.
+const PDF_UNSAFE_CHAR_MAP = {
+  "Θ": "Theta", // Θ
+  "θ": "theta", // θ
+  "Ω": "Omega", // Ω
+  "ω": "omega", // ω
+  "Δ": "Delta", // Δ
+  "α": "alpha", // α
+  "β": "beta", // β
+  "μ": "mu", // μ
+  "≤": "<=", // ≤
+  "≥": ">=", // ≥
+  "≠": "!=", // ≠
+  "≈": "~=", // ≈
+  "√": "sqrt ", // √
+  "∞": "infinity", // ∞
+  "×": "x", // ×
+  "÷": "/", // ÷
+  "±": "+/-", // ±
+  "→": "->", // →
+  "←": "<-", // ←
+  "∈": "in", // ∈
+  "∑": "sum", // ∑
+  "∏": "prod", // ∏
+  // Typographic punctuation (General Punctuation block) that AI-generated
+  // text commonly uses in place of plain ASCII — non-breaking hyphen,
+  // en/em dash, curly quotes, ellipsis, bullet. jsPDF's built-in Helvetica
+  // (WinAnsi encoding) has no width data for these: rather than just
+  // rendering as a missing glyph, an unmapped character corrupts jsPDF's
+  // per-character kerning/positioning for the REST of that text run,
+  // producing the wide letter-by-letter spacing seen starting right at
+  // hyphenated compound words like "shortest‑path"/"decrease‑key"
+  // and continuing until the next line break. This was the actual cause of
+  // the persisting stem letter-spacing bug (confirmed by reading the raw
+  // stored questionText directly from MongoDB) — NOT a whitespace-run issue.
+  "‐": "-", // hyphen
+  "‑": "-", // non-breaking hyphen
+  "‒": "-", // figure dash
+  "–": "-", // en dash
+  "—": "--", // em dash
+  "―": "-", // horizontal bar
+  "‘": "'", // left single quote
+  "’": "'", // right single quote
+  "‚": ",", // single low-9 quote
+  "“": '"', // left double quote
+  "”": '"', // right double quote
+  "•": "-", // bullet
+  "…": "...", // ellipsis
+};
+// Greek block (0370-03FF) + arrows/math-operators block (2190-22FF) + the
+// General Punctuation dash/quote/ellipsis/bullet codepoints mapped above
+// (deliberately NOT the 2000-200B space-family range, which
+// PDF_WHITESPACE_RUN_RE below already collapses to a plain space): map
+// known symbols, fall back to "?" for anything unmapped rather than letting
+// jsPDF silently draw a wrong-but-plausible-looking glyph.
+const PDF_UNSAFE_CHAR_RE = /[Ͱ-Ͽ←-⋿‐-―‘-‚“”•…]/g;
+// Every Unicode whitespace variant a model might emit (regular space, tab,
+// no-break space, the U+2000-U+200A "general punctuation" space family,
+// narrow no-break space, ideographic space) — collapsed to one plain space.
+const PDF_WHITESPACE_RUN_RE = new RegExp("[ \t\u00A0\u2000-\u200B\u202F\u3000]+", "g");
+
+function sanitizeForPdfText(str) {
+  if (!str) return str;
+  return str
+    .replace(PDF_UNSAFE_CHAR_RE, (ch) => PDF_UNSAFE_CHAR_MAP[ch] ?? "?")
+    // jsPDF's doc.text()/splitTextToSize() draw every literal space at full
+    // width — unlike a browser's default `white-space: normal` HTML flow,
+    // there is no automatic whitespace collapsing. AI-generated question
+    // text occasionally contains runs of multiple spaces between words (a
+    // known LLM quirk — mimicking letter/word-spaced emphasis in plain
+    // text), which is invisible on-screen (the browser collapses it there)
+    // but shows up as huge gaps once drawn onto the PDF's raw glyph canvas.
+    // Also normalizes tabs and other Unicode space variants (thin space,
+    // non-breaking space, etc.) that WinAnsi can't render either.
+    .replace(PDF_WHITESPACE_RUN_RE, " ");
+}
+
+// Some AI-generated questions bake their own "A)"/"B."/"C:" prefix into the
+// option TEXT itself, on top of the letter the exam UI already prepends from
+// `option.label`/index — producing a visible "A. A) ..." double-label. Strip
+// a leading single-letter-A-through-D label (the only letters that occur —
+// MCQ is always exactly 4 options) before the real label gets prepended.
+// Deliberately narrow (A-D only, must be followed by whitespace) to avoid
+// stripping genuine option content that happens to start with a lone letter.
+const LEADING_OPTION_LABEL_RE = /^[A-Da-d][).:]\s+/;
+function stripLeadingOptionLabel(text) {
+  if (!text) return text;
+  return text.replace(LEADING_OPTION_LABEL_RE, "");
+}
+
 function escapeHtml(s) {
   return String(s)
     .replace(/&/g, "&amp;")
@@ -206,7 +303,16 @@ function richTextToHtml(text) {
           t.value
         )}</pre>`;
       }
-      return `<span style="white-space:pre-wrap;">${escapeHtml(t.value)}</span>`;
+      // `white-space: pre-wrap` (needed so an intentional line break inside
+      // question text still renders as one) also means the browser does NOT
+      // collapse runs of multiple literal space characters the way normal
+      // HTML flow would — so the same AI-generated-text quirk that
+      // sanitizeForPdfText fixes on the plain jsPDF-text path (see its doc
+      // comment) shows up here too, for any question whose text contains a
+      // math/code fragment and therefore takes this rich-image render path
+      // instead. Collapse space RUNS only (not `\n`, which pre-wrap should
+      // still honor) before it ever reaches the DOM.
+      return `<span style="white-space:pre-wrap;">${escapeHtml(t.value.replace(PDF_WHITESPACE_RUN_RE, " "))}</span>`;
     })
     .join("");
 }
@@ -735,7 +841,7 @@ export default function ResultPage() {
         for (let optIdx = 0; optIdx < (q.options || []).length; optIdx++) {
           const opt = q.options[optIdx];
           const letter = opt.label || String.fromCharCode(65 + optIdx);
-          const labelStr = `${letter}.  ${opt.text || ""}`.trim();
+          const labelStr = `${letter}.  ${stripLeadingOptionLabel(opt.text) || ""}`.trim();
           if (hasRichContent(labelStr)) {
             const key = richKey(labelStr, optWrapWidth);
             if (!richImages.has(key)) {
@@ -772,7 +878,7 @@ export default function ResultPage() {
     // cause this pass to wrap to fewer lines than the real draw pass does,
     // making later elements (like the "Options" header) overlap this text.
     doc.setFontSize(11);
-    const qLines = doc.splitTextToSize(questionTextForPdf, qWrapWidth);
+    const qLines = doc.splitTextToSize(sanitizeForPdfText(questionTextForPdf), qWrapWidth);
     questionTextH = qLines.length * 14;
   }
   let qImgH = 0;
@@ -786,13 +892,13 @@ export default function ResultPage() {
     optionsH += 18;
     q.options.forEach((opt, optIdx) => {
       const letter = opt.label || String.fromCharCode(65 + optIdx);
-      const labelStr = `${letter}.  ${opt.text || ""}`.trim();
+      const labelStr = `${letter}.  ${stripLeadingOptionLabel(opt.text) || ""}`.trim();
       const optRichImg = richImages.get(richKey(labelStr, optWrapWidth));
       if (optRichImg) {
         optionsH += optRichImg.heightPt + 6;
       } else {
         doc.setFontSize(10);
-        const optLines = doc.splitTextToSize(labelStr, optWrapWidth);
+        const optLines = doc.splitTextToSize(sanitizeForPdfText(labelStr), optWrapWidth);
         optionsH += optLines.length * 13 + 4;
       }
       if (opt.image) {
@@ -889,7 +995,7 @@ export default function ResultPage() {
       innerY += qRichImg.heightPt + 10;
     }
   } else if (questionTextForPdf) {
-    const qLines = doc.splitTextToSize(questionTextForPdf, qWrapWidth);
+    const qLines = doc.splitTextToSize(sanitizeForPdfText(questionTextForPdf), qWrapWidth);
     doc.text(qLines, leftPad + 28, innerY);
     innerY += qLines.length * 14 + 6;
   } else {
@@ -916,7 +1022,7 @@ export default function ResultPage() {
     doc.setFont("helvetica", "normal");
     q.options.forEach((opt, optIdx) => {
       const letter = opt.label || String.fromCharCode(65 + optIdx);
-      const labelStr = `${letter}.  ${opt.text || ""}`.trim();
+      const labelStr = `${letter}.  ${stripLeadingOptionLabel(opt.text) || ""}`.trim();
       const optRichImg = richImages.get(richKey(labelStr, optWrapWidth));
       if (optRichImg) {
         try {
@@ -926,7 +1032,7 @@ export default function ResultPage() {
           innerY += optRichImg.heightPt + 6;
         }
       } else {
-        const optLines = doc.splitTextToSize(labelStr, optWrapWidth);
+        const optLines = doc.splitTextToSize(sanitizeForPdfText(labelStr), optWrapWidth);
         doc.text(optLines, leftPad + 12, innerY);
         innerY += optLines.length * 13 + 4;
       }

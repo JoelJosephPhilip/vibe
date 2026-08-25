@@ -72,6 +72,27 @@ export interface IExamProctoringConfig {
     detectors: IExamProctoringDetector[];
 }
 
+export type ExamEligibilityMode = 'none' | 'completion' | 'manual';
+
+/**
+ * Admin-configured gate on which students can see/open this exam.
+ * `none`: unrestricted, everyone sees it — an explicit admin choice, made by
+ * saving "Everyone" in "Who can see this exam". `completion`: student must
+ * have a non-deleted STUDENT enrollment in `courseId` (optionally scoped
+ * further to `courseVersionId`) with `percentCompleted >=
+ * minCompletionPercent`. `manual`: student's own email (case-insensitive)
+ * must appear in `allowedEmails`. Absent on `IExam` (nobody has configured
+ * visibility for this exam yet) means hidden from every student — see
+ * `ExamService.isEligibleForStudent`.
+ */
+export interface IExamEligibility {
+    mode: ExamEligibilityMode;
+    courseId?: string;
+    courseVersionId?: string;
+    minCompletionPercent?: number;
+    allowedEmails?: string[];
+}
+
 /**
  * Mongo document shape for the `exams` collection. Mirrors the localStorage
  * exam shape from `frontend/src/lib/examStore.js` so the frontend migration
@@ -120,6 +141,13 @@ export interface IExam {
      * a second attempt by the same student for this exam.
      */
     allowRetakes?: boolean;
+    /**
+     * Admin-configured visibility gate. Absent means hidden from every
+     * student until an admin explicitly sets a rule (see
+     * `IExamEligibility`) — the owner/an admin can always see/edit it
+     * regardless.
+     */
+    eligibility?: IExamEligibility;
     /** Firebase uid / `user._id.toString()` of the creator — see AttemptController. */
     createdBy: string;
     createdAt: number;
