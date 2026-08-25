@@ -19,8 +19,16 @@ export const aiConfig = {
     whisperModel: env('WHISPER_MODEL_NAME') || 'tiny.en',
     /** Relative to cwd — matches the Docker build's baked-in model location. */
     whisperModelPath: env('WHISPER_MODEL_PATH') || 'whisper-models',
-    /** Segmentation fallback's changepoint-detection penalty when the job doesn't specify SegmentationParameters.lam. */
-    segmentationDefaultLambda: Number(env('GENAI_SEGMENTATION_DEFAULT_LAMBDA')) || 2.0,
+    /**
+     * Segmentation fallback's changepoint-detection penalty when the job
+     * doesn't specify SegmentationParameters.lam. Confirmed live against a
+     * real ~62min transcript (617 chunks, windowed -- see segment.py): 2.0
+     * (the original, never-validated-against-real-data default) produced a
+     * single degenerate segment for the whole video; 1.0 produced 17
+     * segments averaging ~3.6min each, a genuinely reasonable course-section
+     * granularity.
+     */
+    segmentationDefaultLambda: Number(env('GENAI_SEGMENTATION_DEFAULT_LAMBDA')) || 1.0,
     /**
      * Optional path to a Netscape-format cookies file for the AUDIO_EXTRACTION
      * fallback's yt-dlp calls (same file format `yt-dlp --cookies-from-browser`

@@ -93,7 +93,9 @@ def tfidf_vectors(texts):
     return matrix / norms
 
 NOISE_MODELS = {0: "l2", 1: "rbf", 2: "normal"}
-DEFAULT_LAM = 2.0
+# Kept in sync with aiConfig.segmentationDefaultLambda's default -- see that
+# field for why 2.0 (the original value here) was replaced.
+DEFAULT_LAM = 1.0
 DEFAULT_RUNS = 1
 JITTER_STD = 0.01
 
