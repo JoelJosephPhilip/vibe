@@ -1,5 +1,5 @@
 import { injectable, inject } from 'inversify';
-import { execFile } from 'child_process';
+import { execFile, spawn } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs';
 import os from 'os';
@@ -10,6 +10,7 @@ import { storageConfig } from '#root/config/storage.js';
 import { aiConfig } from '#root/config/ai.js';
 import { TaskStatus, audioData } from '../classes/transformers/GenAI.js';
 import { getPythonEnv, getBgutilProviderServerHome } from '../utils/pythonInterpreter.js';
+import { extractVideoKey } from '../utils/videoKey.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -21,6 +22,15 @@ const execFileAsync = promisify(execFile);
  * are built against glibc and won't run on this project's Alpine/musl
  * runtime image), then uploads it through the same
  * CloudStorageService.uploadAudio() a real user-uploaded-audio job would use.
+ *
+ * Before touching yt-dlp at all, tries fetching YouTube's own captions (see
+ * scripts/fetch_captions.py) — most videos already have them, and that path
+ * needs no audio download, no cookies, no PO-token, none of the bot-check
+ * machinery below. When captions exist, this stage uploads the transcript
+ * directly and reports itself COMPLETED without ever running yt-dlp;
+ * LocalTranscriptionService checks for that pre-uploaded transcript and
+ * skips its own download+whisper work in turn. Videos without captions fall
+ * through to the yt-dlp path unchanged.
  */
 @injectable()
 export class LocalAudioExtractionService {
@@ -30,6 +40,11 @@ export class LocalAudioExtractionService {
   ) {}
 
   async extract(jobId: string, videoUrl: string): Promise<audioData> {
+    const captionsResult = await this.tryFetchCaptions(jobId, videoUrl);
+    if (captionsResult) {
+      return captionsResult;
+    }
+
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ytdlp-fallback-'));
     const outputTemplate = path.join(workDir, 'audio.%(ext)s');
 
@@ -126,5 +141,63 @@ export class LocalAudioExtractionService {
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
     }
+  }
+
+  /**
+   * Returns a COMPLETED audioData (with the transcript already uploaded) if
+   * this video has captions, null if not (or on any failure — callers fall
+   * through to the yt-dlp path unchanged). fileUrl/fileName below point at
+   * the transcript, not an audio file — there is no audio file in this path,
+   * and none of the pipeline's real output needs one (the final course video
+   * item embeds the original YouTube URL directly, not a re-uploaded copy;
+   * see GenAIService.ts's UPLOAD_CONTENT handling). They only need to be
+   * truthy: getJobState()'s state-machine validation requires the completed
+   * AUDIO_EXTRACTION record to carry a file URL before TRANSCRIPT_GENERATION
+   * becomes reachable at all.
+   */
+  private async tryFetchCaptions(jobId: string, videoUrl: string): Promise<audioData | null> {
+    const videoKey = extractVideoKey(videoUrl);
+    if (!videoKey?.startsWith('yt:')) return null;
+    const videoId = videoKey.slice(3);
+
+    try {
+      const { stdout } = await this.runFetchCaptionsScript(videoId);
+      const result = JSON.parse(stdout);
+      if (result.error || !Array.isArray(result.chunks) || result.chunks.length === 0) {
+        return null;
+      }
+
+      const fileName = await this.cloudStorageService.uploadTranscript({ chunks: result.chunks }, jobId);
+      const fileUrl = `https://storage.googleapis.com/${storageConfig.googleCloud.aiServerBucketName}/${fileName}`;
+      return { status: TaskStatus.COMPLETED, fileName, fileUrl };
+    } catch {
+      return null;
+    }
+  }
+
+  private runFetchCaptionsScript(videoId: string): Promise<{ stdout: string }> {
+    return new Promise((resolve, reject) => {
+      const child = spawn('python3', ['scripts/fetch_captions.py'], {
+        timeout: 30000,
+        env: getPythonEnv(),
+      });
+
+      let stdout = '';
+      let stderr = '';
+      child.stdout.on('data', chunk => { stdout += chunk; });
+      child.stderr.on('data', chunk => { stderr += chunk; });
+
+      child.on('error', reject);
+      child.on('close', code => {
+        if (code !== 0) {
+          reject(new Error(`fetch_captions.py exited with code ${code}: ${stderr.slice(0, 500)}`));
+          return;
+        }
+        resolve({ stdout });
+      });
+
+      child.stdin.write(JSON.stringify({ videoId }));
+      child.stdin.end();
+    });
   }
 }

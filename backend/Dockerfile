@@ -34,7 +34,7 @@ FROM node:22-alpine
 # default (PEP 668); safe to override in an isolated, single-purpose
 # container image.
 RUN apk add --no-cache dumb-init wget curl unzip ffmpeg python3 py3-pip gcc musl-dev python3-dev
-RUN pip install --break-system-packages --no-cache-dir yt-dlp bgutil-ytdlp-pot-provider numpy scipy ruptures
+RUN pip install --break-system-packages --no-cache-dir yt-dlp bgutil-ytdlp-pot-provider youtube-transcript-api numpy scipy ruptures
 # Deno: JS runtime yt-dlp shells out to for solving YouTube's "n challenge"
 # (see scripts/install-deno.cjs). Installed globally here since the Docker
 # runtime stage has no $HOME-vs-build-time split like Render does — no need

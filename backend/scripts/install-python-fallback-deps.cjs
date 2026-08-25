@@ -1,9 +1,10 @@
 /*
  * Installs the Python packages the genAI local fallback needs
  * (AUDIO_EXTRACTION: yt-dlp, bgutil-ytdlp-pot-provider (see
- * install-bgutil-provider.cjs for the Node-side half of this one);
- * SEGMENTATION: numpy/scipy/ruptures — see backend/scripts/segment.py) via
- * pip, run as a postinstall hook.
+ * install-bgutil-provider.cjs for the Node-side half of this one),
+ * youtube-transcript-api (see scripts/fetch_captions.py); SEGMENTATION:
+ * numpy/scipy/ruptures — see backend/scripts/segment.py) via pip, run as a
+ * postinstall hook.
  *
  * Needed specifically for Render: its buildCommand is a plain
  * `npm install --include=dev && tsc` with no separate step for anything
@@ -37,7 +38,7 @@ const TARGET_DIR = path.join(__dirname, '.python-fallback-deps');
 
 try {
   execSync(
-    `python3 -m pip install --break-system-packages --no-cache-dir --target "${TARGET_DIR}" yt-dlp bgutil-ytdlp-pot-provider numpy scipy ruptures`,
+    `python3 -m pip install --break-system-packages --no-cache-dir --target "${TARGET_DIR}" yt-dlp bgutil-ytdlp-pot-provider youtube-transcript-api numpy scipy ruptures`,
     {stdio: 'inherit'},
   );
   console.log(`[install-python-fallback-deps] done, installed to: ${TARGET_DIR}`);

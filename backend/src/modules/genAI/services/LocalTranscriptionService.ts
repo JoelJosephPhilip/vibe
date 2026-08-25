@@ -23,6 +23,13 @@ import { TaskStatus, trascriptGenerationData } from '../classes/transformers/Gen
  * PATH. On the Docker/Cloud Run image that's `apk add ffmpeg`; on Render's
  * native Node buildpack there's no system ffmpeg, so this falls back to the
  * `ffmpeg-static` npm package's bundled binary the first time it's needed.
+ *
+ * If LocalAudioExtractionService already found and uploaded a transcript
+ * (YouTube's own captions, fetched instead of downloading audio — see that
+ * service), this reuses it directly rather than downloading `audioUrl` and
+ * running whisper on it. `audioUrl` in that case actually points at the
+ * transcript, not an audio file — see that service's tryFetchCaptions for
+ * why — so it must never be handed to downloadTo/whisper.
  */
 @injectable()
 export class LocalTranscriptionService {
@@ -34,6 +41,12 @@ export class LocalTranscriptionService {
   ) {}
 
   async transcribe(jobId: string, audioUrl: string): Promise<trascriptGenerationData> {
+    if (await this.cloudStorageService.transcriptExists(jobId)) {
+      const fileName = `transcripts/${jobId}.json`;
+      const fileUrl = `https://storage.googleapis.com/${storageConfig.googleCloud.aiServerBucketName}/${fileName}`;
+      return { status: TaskStatus.COMPLETED, fileName, fileUrl };
+    }
+
     await this.ensureFfmpegOnPath();
 
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'whisper-fallback-'));

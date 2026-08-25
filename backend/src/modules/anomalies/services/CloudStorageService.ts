@@ -91,6 +91,15 @@ export class CloudStorageService {
     }
   }
 
+  /** Lets a caller check for an already-uploaded transcript before doing the
+   * work to produce one — see LocalAudioExtractionService's captions
+   * fast-path and LocalTranscriptionService's check for it. */
+  async transcriptExists(jobId: string): Promise<boolean> {
+    const bucket = this.googleStorage.bucket(this.aiServerBucketName);
+    const [exists] = await bucket.file(`transcripts/${jobId}.json`).exists();
+    return exists;
+  }
+
   async uploadTranscript(
     transcript: object,
     jobId: string,
