@@ -10,7 +10,6 @@ import {
     Body,
     Authorized,
     CurrentUser,
-    ForbiddenError,
 } from 'routing-controllers';
 import { injectable, inject } from 'inversify';
 import { OpenAPI } from 'routing-controllers-openapi';
@@ -30,25 +29,12 @@ import {
 } from '../classes/validators/ExamValidators.js';
 import { IUser } from '#root/shared/interfaces/models.js';
 
-/**
- * This app has no secure backend "teacher" role today (role is a
- * client-selected UI choice at login, not a verified claim — see the plan's
- * "Known limitation" section). So authorization here follows the closest
- * existing precedent, `AnnouncementController`: any authenticated user may
- * create an exam; only the exam's creator or an admin may edit/delete/manage
- * it. That check is inlined per-route below rather than built out as a
- * separate CASL abilities file, since there is no course-scoping concept for
- * exams the way there is for announcements.
- *
- * Exported (not module-private) so `QuestionBankController` can reuse the
- * exact same check for its exam-owner-only routes
- * (`POST /exams/:examId/questions/from-bank`) instead of duplicating it.
- */
-export function assertOwnerOrAdmin(createdBy: string, user: IUser): void {
-    if (createdBy !== user._id?.toString() && user.roles !== 'admin') {
-        throw new ForbiddenError('You can only manage your own exams');
-    }
-}
+// Imported (not defined here) and re-exported for external consumers, so
+// importing it — e.g. from `QuestionBankController` — doesn't force this
+// file to evaluate first and register its `/exams/:examId` route ahead of
+// literal sibling routes. See `authz.ts` for the full explanation.
+import { assertOwnerOrAdmin } from './authz.js';
+export { assertOwnerOrAdmin };
 
 @OpenAPI({
     tags: ['Exams'],
@@ -81,8 +67,8 @@ export class ExamController {
         summary: 'Get published exams',
         description: 'All exams marked published, visible to any authenticated user.',
     })
-    async getPublishedExams() {
-        return this.examService.findPublished();
+    async getPublishedExams(@CurrentUser() user: IUser) {
+        return this.examService.findPublished(user);
     }
 
     // Single exam (EditExamPage / ExamPage)
@@ -91,9 +77,12 @@ export class ExamController {
     @HttpCode(200)
     @OpenAPI({
         summary: 'Get a single exam by id',
+        description:
+            'Owner/admin always succeed; any other user is subject to the ' +
+            "exam's `eligibility` gate (403 if not eligible).",
     })
-    async getExam(@Params() params: ExamIdParams) {
-        return this.examService.getExamById(params.examId);
+    async getExam(@Params() params: ExamIdParams, @CurrentUser() user: IUser) {
+        return this.examService.getExamForUser(params.examId, user);
     }
 
     // Create exam

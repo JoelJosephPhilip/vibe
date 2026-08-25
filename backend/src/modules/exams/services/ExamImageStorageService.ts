@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import { injectable } from 'inversify';
 import { Storage } from '@google-cloud/storage';
 import { InternalServerError } from 'routing-controllers';
+import { ObjectId } from 'mongodb';
 import { storageConfig } from '#root/config/storage.js';
 import { IExam, IExamQuestion, IExamQuestionOption } from '../classes/transformers/Exam.js';
 import { IAttemptProctoringEvent, IExamAttempt } from '../classes/transformers/Attempt.js';
@@ -234,10 +235,27 @@ export class ExamImageStorageService {
     );
   }
 
+  /**
+   * `@JsonController({ transformResponse: true })` runs every controller
+   * return value through class-transformer's `instanceToPlain`, which does
+   * not honor `ObjectId`'s own `toJSON()` — it walks the instance as a plain
+   * class and serializes its internal buffer instead, turning `_id` into
+   * `{ buffer: { ... } }` on the wire instead of a hex string. Every
+   * `IExam`/`IExamAttempt`/`IQuestionBankEntry` response funnels through one
+   * of this class's `resolve*` methods, so normalizing `_id` here (rather
+   * than at every repository call site) fixes it everywhere in one place.
+   */
+  private normalizeId<T extends { _id?: ObjectId | string }>(doc: T): T {
+    if (doc._id instanceof ObjectId) {
+      return { ...doc, _id: doc._id.toString() };
+    }
+    return doc;
+  }
+
   /** Resolves every `questionImage`/`options[].image` on a single exam to a readable URL. */
   async resolveExamImages(exam: IExam): Promise<IExam> {
     if (!exam) return exam;
-    return { ...exam, questions: await this.resolveQuestionArray(exam.questions) };
+    return this.normalizeId({ ...exam, questions: await this.resolveQuestionArray(exam.questions) });
   }
 
   /** Batch form of `resolveExamImages`, for list endpoints (findByCreator/findPublished). */
@@ -249,12 +267,13 @@ export class ExamImageStorageService {
   async resolveQuestionBankEntry(entry: IQuestionBankEntry): Promise<IQuestionBankEntry> {
     if (!entry) return entry;
     const [resolved] = await this.resolveQuestionArray([entry]);
-    return resolved;
+    return this.normalizeId(resolved);
   }
 
   /** Batch form of `resolveQuestionBankEntry`, for `QuestionBankService.listMine`. */
   async resolveQuestionBankEntries(entries: IQuestionBankEntry[]): Promise<IQuestionBankEntry[]> {
-    return this.resolveQuestionArray(entries);
+    const resolved = await this.resolveQuestionArray(entries);
+    return resolved.map(entry => this.normalizeId(entry));
   }
 
   private async resolveProctoringEvents(
@@ -280,7 +299,7 @@ export class ExamImageStorageService {
       this.resolveQuestionArray(attempt.questions),
       this.resolveProctoringEvents(attempt.proctoringEvents),
     ]);
-    return { ...attempt, questions, proctoringEvents };
+    return this.normalizeId({ ...attempt, questions, proctoringEvents });
   }
 
   /** Batch form of `resolveAttemptImages`, for list endpoints (listByStudent/listByExam). */

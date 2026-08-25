@@ -18,7 +18,7 @@ import { QuestionBankService } from '../services/QuestionBankService.js';
 import { ExamService } from '../services/ExamService.js';
 import { AddQuestionBody, ExamIdParams } from '../classes/validators/ExamValidators.js';
 import { QuestionBankIdParams, AddQuestionsFromBankBody } from '../classes/validators/QuestionBankValidators.js';
-import { assertOwnerOrAdmin } from './ExamController.js';
+import { assertOwnerOrAdmin } from './authz.js';
 import { IUser } from '#root/shared/interfaces/models.js';
 
 /**
@@ -41,10 +41,18 @@ import { IUser } from '#root/shared/interfaces/models.js';
  *     `AttemptController` (those differ in segment count, so order there is
  *     cosmetic only): a request for `GET /exams/question-bank` WOULD be
  *     swallowed by `GET /exams/:examId` (binding `examId` to the literal
- *     string "question-bank") if that route were registered first. So
- *     `examsModuleControllers` in `index.ts` lists `QuestionBankController`
- *     before `ExamController` — that ordering is load-bearing here, not a
- *     defensive convention, and is called out at that call site too.
+ *     string "question-bank") if that route were registered first. Route
+ *     registration order follows *import*-evaluation order, not the
+ *     `examsModuleControllers` array order — both `index.ts` and
+ *     `container.ts` import `QuestionBankController` before `ExamController`
+ *     for this reason. That alone isn't sufficient, though: this file used
+ *     to import `assertOwnerOrAdmin` directly from `./ExamController.js`,
+ *     which forces `ExamController.ts` to fully evaluate (registering its
+ *     routes) as a dependency BEFORE this file's own routes register,
+ *     regardless of import order anywhere else. `assertOwnerOrAdmin` now
+ *     lives in `./authz.ts` (imported by both controllers, and re-exported
+ *     from `ExamController.ts` for external consumers) specifically to
+ *     avoid that cross-controller-file dependency — see `authz.ts`.
  *     (`POST /exams/question-bank` has no colliding same-method sibling —
  *     `ExamController`'s only other 1-segment POST-shaped route is
  *     `POST /exams/` at 0 segments — but is still registered under the same
