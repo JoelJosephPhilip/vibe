@@ -54,6 +54,19 @@ export class LocalAudioExtractionService {
         // opt-in, and skips it by default. Without it: "n challenge solving
         // failed" -> "the page needs to be reloaded".
         '--remote-components', 'ejs:github',
+        // The web client's bot-check treats any cookie session used from a
+        // datacenter IP as suspicious and rotates/kills it within minutes
+        // (confirmed live: repeatedly, regardless of how fresh the cookies
+        // were) -- cookies alone are not a durable fix at scale on Render.
+        // The android/tv clients use a different, token-based auth flow
+        // that doesn't hit that same check, so they work without cookies
+        // and don't degrade the same way. Cookies (below) are kept as a
+        // secondary assist, not the primary mechanism.
+        '--extractor-args', 'youtube:player_client=android,tv',
+        // Space out our own requests -- this session's own rapid manual
+        // retries during testing plausibly contributed to escalating
+        // detection on top of the datacenter-IP problem itself.
+        '--sleep-requests', '1',
         '-o', outputTemplate,
       ];
       // Optional: see aiConfig.ytDlpCookiesFile for why (YouTube bot-check
