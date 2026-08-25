@@ -301,10 +301,19 @@ export class GenAIService extends BaseService {
       //   throw new NotFoundError(`User with ID ${userId} does not have permission to approve this job`);
       // }
       const jobState = await this.getJobState(jobId, usePrevious);
+      // UPLOAD_CONTENT stuck at RUNNING (see uploadContent's own RUNNING
+      // guard) has no other recovery path -- abortTask explicitly refuses to
+      // abort it. rerunTask is an explicit, deliberate caller action, unlike
+      // approveTaskToStart's silent auto-retry, so it's the one place
+      // allowed to force a retry out of RUNNING for this task specifically.
+      const isStuckUploadRerun =
+        jobState.currentTask === TaskType.UPLOAD_CONTENT &&
+        jobState.taskStatus === TaskStatus.RUNNING;
       if (
         jobState.taskStatus !== TaskStatus.COMPLETED &&
         jobState.taskStatus !== TaskStatus.FAILED &&
-        jobState.taskStatus !== TaskStatus.ABORTED
+        jobState.taskStatus !== TaskStatus.ABORTED &&
+        !isStuckUploadRerun
       ) {
         throw new BadRequestError(
           `The task ${jobState.currentTask} for job ID ${jobId} has not been completed yet, please approve the task to start.`,
@@ -1250,6 +1259,31 @@ export class GenAIService extends BaseService {
   }
 
   async uploadContent(jobId: string, jobState: JobState): Promise<any> {
+    // Idempotency guard: approveTaskToStart calls this any time
+    // jobStatus.uploadContent isn't COMPLETED (see getJobState), which
+    // includes WAITING -- confirmed live: item creation below goes through
+    // ItemService's own separate transaction per item, so those commits
+    // survive even when this method's own transaction never reaches its
+    // final commit (e.g. the process is killed mid-request). That left
+    // jobStatus.uploadContent stuck at WAITING with the items already
+    // created, and every retry re-ran the whole loop, duplicating every
+    // video/quiz item. Marking RUNNING immediately, outside the main
+    // transaction, closes that window for ordinary retries.
+    // ponytail: doesn't make item creation itself atomic with the status
+    // write (would need ItemService.createItem to join this transaction),
+    // so a run that crashes mid-loop still leaves partial items with status
+    // stuck at RUNNING -- recoverable via rerunTask (see its explicit
+    // RUNNING carve-out for UPLOAD_CONTENT below), not automatically.
+    await this._withTransaction(async session => {
+      const preCheck = await this.genAIRepository.getById(jobId, session);
+      if (preCheck?.jobStatus?.uploadContent === TaskStatus.RUNNING) {
+        throw new BadRequestError(
+          `Upload content for job ID ${jobId} is already in progress. If it appears stuck, use rerunTask to force a retry.`,
+        );
+      }
+      preCheck.jobStatus.uploadContent = TaskStatus.RUNNING;
+      await this.genAIRepository.update(jobId, preCheck, session);
+    });
     return this._withTransaction(async session => {
       const jobData = await this.genAIRepository.getById(jobId, session);
       const normalizeBloomLevel = (input: unknown): BloomLevelKey => {
