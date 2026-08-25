@@ -1479,7 +1479,25 @@ export class GenAIService extends BaseService {
               httpsAgent: agent,
             };
 
-            const response = await axios.get(jobState.file, axiosOptions);
+            // Confirmed live on Render (NODE_ENV=staging, no Tailscale/SOCKS
+            // proxy running there): this URL is always a plain public GCS
+            // link, whether from the real AI server or the local fallback --
+            // routing it through the proxy unconditionally in
+            // production/staging fails outright wherever that proxy isn't
+            // actually running. Falls back to a direct request rather than
+            // changing the production/staging path itself, since it's not
+            // clear from this code alone why the proxy was required there in
+            // the first place (network egress restriction? IP allowlisting
+            // on the bucket?) -- this only kicks in when the proxied attempt
+            // fails, so real production behavior is unchanged if it was
+            // relying on that.
+            let response;
+            try {
+              response = await axios.get(jobState.file, axiosOptions);
+            } catch (proxyError) {
+              if (!agent) throw proxyError;
+              response = await axios.get(jobState.file);
+            }
             if (response.data) {
               allQuestionsData = response.data;
             } else {
