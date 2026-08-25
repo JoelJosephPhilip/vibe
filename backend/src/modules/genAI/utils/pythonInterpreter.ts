@@ -14,6 +14,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // gets right.
 const TARGET_DIR = path.resolve(__dirname, '../../../../scripts/.python-fallback-deps');
 const DENO_BIN_DIR = path.resolve(__dirname, '../../../../scripts/.deno/bin');
+const BGUTIL_PROVIDER_SERVER_DIR = path.resolve(__dirname, '../../../../scripts/.bgutil-provider/server');
 
 /**
  * Env vars for spawning the genAI local fallback's python3 scripts.
@@ -42,4 +43,16 @@ export function getPythonEnv(): NodeJS.ProcessEnv {
   }
 
   return env;
+}
+
+/**
+ * Path to scripts/install-bgutil-provider.cjs's fixed install directory
+ * (its own default, ~/bgutil-ytdlp-pot-provider/server, hits the same
+ * $HOME-differs-between-build-and-runtime problem as everything else here),
+ * or null if that install didn't happen (it's non-fatal and skipped on
+ * failure). Passed to yt-dlp as the bgutil script provider's `server_home`
+ * extractor-arg — see LocalAudioExtractionService.
+ */
+export function getBgutilProviderServerHome(): string | null {
+  return fs.existsSync(BGUTIL_PROVIDER_SERVER_DIR) ? BGUTIL_PROVIDER_SERVER_DIR : null;
 }

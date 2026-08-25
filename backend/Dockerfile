@@ -34,18 +34,31 @@ FROM node:22-alpine
 # default (PEP 668); safe to override in an isolated, single-purpose
 # container image.
 RUN apk add --no-cache dumb-init wget curl unzip ffmpeg python3 py3-pip gcc musl-dev python3-dev
-RUN pip install --break-system-packages --no-cache-dir yt-dlp numpy scipy ruptures
+RUN pip install --break-system-packages --no-cache-dir yt-dlp bgutil-ytdlp-pot-provider numpy scipy ruptures
 # Deno: JS runtime yt-dlp shells out to for solving YouTube's "n challenge"
 # (see scripts/install-deno.cjs). Installed globally here since the Docker
 # runtime stage has no $HOME-vs-build-time split like Render does — no need
 # for the fixed-directory workaround that script uses there.
 RUN curl -fsSL https://deno.land/install.sh | sh -s -- --no-modify-path \
   && ln -s /root/.deno/bin/deno /usr/local/bin/deno
+# bgutil-ytdlp-pot-provider (Node-side half; pip line above is the plugin
+# half): gives yt-dlp a proof-of-origin token, currently the only non-paid
+# mitigation for YouTube's bot-check on datacenter IPs (see
+# scripts/install-bgutil-provider.cjs for why -- cookies and client
+# spoofing both proved unreliable there). cairo/pango/jpeg/giflib/librsvg
+# -dev: build deps for its `canvas` dependency, same pattern as the
+# gcc/musl-dev/python3-dev already here for ruptures' Cython extension.
+# git: needed to clone the provider's repo.
+RUN apk add --no-cache git cairo-dev pango-dev jpeg-dev giflib-dev librsvg-dev pixman-dev pkgconfig
 
 WORKDIR /app
 
 COPY package.json ./
 COPY scripts ./scripts
+# Reuses the same install script Render's postinstall uses (git/npm/node
+# are all already present in this image) rather than duplicating its
+# clone+build logic here. Needs scripts/ copied in first (above).
+RUN node scripts/install-bgutil-provider.cjs
 
 COPY --from=builder /app/build ./build
 COPY --from=builder /app/node_modules ./node_modules

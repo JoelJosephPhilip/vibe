@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "postinstall": "node scripts/class-transformer-0.5.1.patch.js && node scripts/install-python-fallback-deps.cjs && (node scripts/install-deno.cjs || echo '[postinstall] deno install skipped (yt-dlp will run without a JS runtime)') && (node scripts/warmup-whisper.cjs || echo '[postinstall] whisper warmup skipped (will compile lazily on first real use)') && (node scripts/probe-canvas.cjs || true)",
+    "postinstall": "node scripts/class-transformer-0.5.1.patch.js && node scripts/install-python-fallback-deps.cjs && (node scripts/install-deno.cjs || echo '[postinstall] deno install skipped (yt-dlp will run without a JS runtime)') && (node scripts/install-bgutil-provider.cjs || echo '[postinstall] bgutil PO-token provider skipped (yt-dlp will run without a PO token)') && (node scripts/warmup-whisper.cjs || echo '[postinstall] whisper warmup skipped (will compile lazily on first real use)')",
     "start": "tsc && node build/index.js",
     "dev": "concurrently \"pnpm run watch:compile\" \"pnpm run watch:build\"",
     "watch:compile": "tsc --watch",

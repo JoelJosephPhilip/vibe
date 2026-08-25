@@ -9,7 +9,7 @@ import { CloudStorageService } from '#root/modules/anomalies/index.js';
 import { storageConfig } from '#root/config/storage.js';
 import { aiConfig } from '#root/config/ai.js';
 import { TaskStatus, audioData } from '../classes/transformers/GenAI.js';
-import { getPythonEnv } from '../utils/pythonInterpreter.js';
+import { getPythonEnv, getBgutilProviderServerHome } from '../utils/pythonInterpreter.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -69,6 +69,18 @@ export class LocalAudioExtractionService {
         '--sleep-requests', '1',
         '-o', outputTemplate,
       ];
+      // Confirmed live: neither cookies nor client spoofing above reliably
+      // avoid YouTube's bot-check on Render's datacenter IP -- a PO
+      // (proof-of-origin) token is the remaining non-paid-proxy mitigation.
+      // install-bgutil-provider.cjs installs yt-dlp's own recommended
+      // provider in "script mode" (yt-dlp spawns this Node script itself
+      // per call); pointing it at the fixed install dir instead of the
+      // provider's own ~/bgutil-ytdlp-pot-provider default, same $HOME
+      // reason as everywhere else in this file.
+      const bgutilServerHome = getBgutilProviderServerHome();
+      if (bgutilServerHome) {
+        args.push('--extractor-args', `youtubepot-bgutilscript:server_home=${bgutilServerHome}`);
+      }
       // Optional: see aiConfig.ytDlpCookiesFile for why (YouTube bot-check
       // on datacenter IPs). Left off by default — most deployments won't
       // set this, and yt-dlp works fine cookie-less until rate-limited.
