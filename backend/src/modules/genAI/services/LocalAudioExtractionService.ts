@@ -60,7 +60,14 @@ export class LocalAudioExtractionService {
       // on datacenter IPs). Left off by default — most deployments won't
       // set this, and yt-dlp works fine cookie-less until rate-limited.
       if (aiConfig.ytDlpCookiesFile) {
-        args.push('--cookies', aiConfig.ytDlpCookiesFile);
+        // yt-dlp rewrites the cookies file in place after each run (to
+        // persist any session cookies YouTube rotated). Render mounts
+        // Secret Files read-only, so passing that path directly fails with
+        // "OSError: [Errno 30] Read-only file system" -- confirmed live.
+        // Copying it into the already-writable workDir sidesteps that.
+        const cookiesCopy = path.join(workDir, 'cookies.txt');
+        fs.copyFileSync(aiConfig.ytDlpCookiesFile, cookiesCopy);
+        args.push('--cookies', cookiesCopy);
       }
       args.push(videoUrl);
 
