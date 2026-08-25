@@ -21,4 +21,14 @@ export const aiConfig = {
     whisperModelPath: env('WHISPER_MODEL_PATH') || 'whisper-models',
     /** Segmentation fallback's changepoint-detection penalty when the job doesn't specify SegmentationParameters.lam. */
     segmentationDefaultLambda: Number(env('GENAI_SEGMENTATION_DEFAULT_LAMBDA')) || 2.0,
+    /**
+     * Optional path to a Netscape-format cookies file for the AUDIO_EXTRACTION
+     * fallback's yt-dlp calls (same file format `yt-dlp --cookies-from-browser`
+     * exports, or a manually exported one). YouTube can rate-limit / bot-check
+     * requests from datacenter IPs like Render's; passing cookies from a real
+     * signed-in session is yt-dlp's own documented fix for that — see its
+     * "Sign in to confirm you're not a bot" error. Unset by default: yt-dlp
+     * runs cookie-less, same as before this option existed.
+     */
+    ytDlpCookiesFile: env('YT_DLP_COOKIES_FILE') || null,
 };

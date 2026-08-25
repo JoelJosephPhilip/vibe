@@ -364,6 +364,16 @@ export class GenAIService extends BaseService {
    * webhook callback would use, after announcing degraded mode over SSE so
    * the UI can warn the user first.
    */
+  // Coalesces concurrent fallback calls for the same (jobId, task): a client
+  // that times out and retries (or a double-click) would otherwise fire a
+  // second yt-dlp/whisper invocation while the first is still running.
+  // Confirmed live: repeated client-side retries against one job fired
+  // overlapping yt-dlp calls that contributed to tripping YouTube's rate
+  // limit, and overlapping whisper calls that raced on the model-file
+  // existence check. Keyed by task rather than just jobId since different
+  // stages for the same job are independent and shouldn't block each other.
+  private static readonly inFlightFallbacks = new Map<string, Promise<any>>();
+
   private async _callAiServerOrFallback(
     jobId: string,
     jobState: JobState,
@@ -382,6 +392,12 @@ export class GenAIService extends BaseService {
         throw err;
       }
 
+      const inFlightKey = `${jobId}:${task}`;
+      const existing = GenAIService.inFlightFallbacks.get(inFlightKey);
+      if (existing) {
+        return existing;
+      }
+
       this.sseService.send(jobId, 'jobStatus', {
         task,
         status: TaskStatus.RUNNING,
@@ -389,9 +405,17 @@ export class GenAIService extends BaseService {
         reason: 'External AI server unreachable — using local fallback.',
       });
 
-      const fallbackData = await this._runLocalFallback(jobId, jobState, task);
-      await this.updateJob(jobId, task, fallbackData);
-      return fallbackData;
+      const runPromise = (async () => {
+        const fallbackData = await this._runLocalFallback(jobId, jobState, task);
+        await this.updateJob(jobId, task, fallbackData);
+        return fallbackData;
+      })();
+      GenAIService.inFlightFallbacks.set(inFlightKey, runPromise);
+      try {
+        return await runPromise;
+      } finally {
+        GenAIService.inFlightFallbacks.delete(inFlightKey);
+      }
     }
   }
 

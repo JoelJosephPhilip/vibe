@@ -7,6 +7,7 @@ import path from 'path';
 import { ANOMALIES_TYPES } from '#root/modules/anomalies/types.js';
 import { CloudStorageService } from '#root/modules/anomalies/index.js';
 import { storageConfig } from '#root/config/storage.js';
+import { aiConfig } from '#root/config/ai.js';
 import { TaskStatus, audioData } from '../classes/transformers/GenAI.js';
 import { getPythonEnv } from '../utils/pythonInterpreter.js';
 
@@ -41,16 +42,24 @@ export class LocalAudioExtractionService {
       // live on Render: pip's default install location depends on $HOME,
       // which differs between build and runtime there, so the package is
       // otherwise invisible to python3 even though it's the same interpreter.
+      const args = [
+        '-m', 'yt_dlp',
+        '-x',
+        '--audio-format', 'mp3',
+        '--no-playlist',
+        '-o', outputTemplate,
+      ];
+      // Optional: see aiConfig.ytDlpCookiesFile for why (YouTube bot-check
+      // on datacenter IPs). Left off by default — most deployments won't
+      // set this, and yt-dlp works fine cookie-less until rate-limited.
+      if (aiConfig.ytDlpCookiesFile) {
+        args.push('--cookies', aiConfig.ytDlpCookiesFile);
+      }
+      args.push(videoUrl);
+
       await execFileAsync(
         'python3',
-        [
-          '-m', 'yt_dlp',
-          '-x',
-          '--audio-format', 'mp3',
-          '--no-playlist',
-          '-o', outputTemplate,
-          videoUrl,
-        ],
+        args,
         { timeout: 120000, env: getPythonEnv() },
       );
 
