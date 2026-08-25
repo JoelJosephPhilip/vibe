@@ -454,7 +454,14 @@ export class GenAIService extends BaseService {
       }
       const chunks = await this.fetchTranscriptChunks(jobState.file);
       const params = (jobState.parameters ?? {}) as SegmentationParameters;
-      return this.localSegmentationService.segment(chunks, params);
+      const result = await this.localSegmentationService.segment(chunks, params);
+      // getJobState() reads QUESTION_GENERATION's input transcript back off
+      // this field (task.segmentation[last].transcriptFileUrl) -- confirmed
+      // live: LocalSegmentationService itself never sees the URL (only the
+      // already-fetched chunks), so without this the next stage fails with
+      // "No transcript file or segment map available" despite segmentation
+      // having just succeeded.
+      return { ...result, transcriptFileUrl: jobState.file };
     }
 
     // QUESTION_GENERATION
