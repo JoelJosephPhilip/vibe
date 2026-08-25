@@ -49,18 +49,33 @@ def tokenize(text):
     return TOKEN_RE.findall(text.lower())
 
 
+MAX_VOCAB = 2000
+
+
 def tfidf_vectors(texts):
     """Plain TF-IDF, no external ML dependency: term frequency per document
-    times inverse document frequency across the corpus, L2-normalized."""
+    times inverse document frequency across the corpus, L2-normalized.
+
+    Confirmed live: PELT's per-point cost computation scales with the vector
+    dimensionality (vocab size), which was unbounded here -- fine for a
+    handful of test chunks, but a real ~60min transcript's vocabulary runs
+    into the thousands of unique tokens, and PELT over 600+ points at that
+    width blew past the 120s timeout (process killed, exit code null).
+    Capping to the most frequent terms is the standard TF-IDF practice for
+    exactly this (scikit-learn's TfidfVectorizer calls it max_features) --
+    it bounds the dominant cost factor without changing the algorithm.
+    """
     token_lists = [tokenize(t) for t in texts]
-    vocab = sorted(set(tok for tokens in token_lists for tok in tokens))
+    term_counts = Counter(tok for tokens in token_lists for tok in tokens)
+    vocab = sorted(tok for tok, _ in term_counts.most_common(MAX_VOCAB))
     vocab_index = {tok: i for i, tok in enumerate(vocab)}
     n_docs = len(texts)
 
     doc_freq = np.zeros(len(vocab))
     for tokens in token_lists:
         for tok in set(tokens):
-            doc_freq[vocab_index[tok]] += 1
+            if tok in vocab_index:
+                doc_freq[vocab_index[tok]] += 1
     idf = np.log((1 + n_docs) / (1 + doc_freq)) + 1
 
     matrix = np.zeros((n_docs, len(vocab)))
@@ -70,7 +85,8 @@ def tfidf_vectors(texts):
         counts = Counter(tokens)
         total = len(tokens)
         for tok, count in counts.items():
-            matrix[row, vocab_index[tok]] = (count / total) * idf[vocab_index[tok]]
+            if tok in vocab_index:
+                matrix[row, vocab_index[tok]] = (count / total) * idf[vocab_index[tok]]
 
     norms = np.linalg.norm(matrix, axis=1, keepdims=True)
     norms[norms == 0] = 1
