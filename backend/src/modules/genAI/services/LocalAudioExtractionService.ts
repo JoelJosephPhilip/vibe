@@ -47,6 +47,13 @@ export class LocalAudioExtractionService {
         '-x',
         '--audio-format', 'mp3',
         '--no-playlist',
+        // Confirmed live on Render: having Deno on PATH (see
+        // pythonInterpreter.ts) isn't enough on its own -- yt-dlp also
+        // gates the actual JS-challenge-solver script it needs (a separate
+        // "remote component", not the runtime itself) behind this explicit
+        // opt-in, and skips it by default. Without it: "n challenge solving
+        // failed" -> "the page needs to be reloaded".
+        '--remote-components', 'ejs:github',
         '-o', outputTemplate,
       ];
       // Optional: see aiConfig.ytDlpCookiesFile for why (YouTube bot-check
