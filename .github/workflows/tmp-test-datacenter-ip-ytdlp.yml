@@ -58,7 +58,8 @@ jobs:
 
       - name: Test captions fetch (youtube-transcript-api) -- no audio download at all
         continue-on-error: true
-        run: echo '{"videoId": "jNQXAC9IVRw"}' | python3 backend/scripts/fetch_captions.py
+        run: |
+          echo '{"videoId": "jNQXAC9IVRw"}' | python3 backend/scripts/fetch_captions.py
 
       - name: Test yt-dlp with PO-token + client spoofing, no cookies
         continue-on-error: true
