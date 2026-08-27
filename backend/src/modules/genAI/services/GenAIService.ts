@@ -1752,6 +1752,16 @@ export class GenAIService extends BaseService {
         let allQuestionsData: any[] = [];
         const uploadParams =
           (jobState.parameters as UploadParameters) ?? jobData.uploadParameters;
+        // Alias, not copy: jobData is written back wholesale on both the
+        // success and failure paths below. Without this, those writes use
+        // whatever jobData.uploadParameters was at the top of this
+        // function -- before the course/module auto-create blocks below
+        // ever ran -- and silently clobber the courseId/versionId/moduleId
+        // those blocks just persisted back to the DB (confirmed live: the
+        // course got created correctly, but the job's own record of its ID
+        // was overwritten back to null by this method's own completion
+        // write).
+        jobData.uploadParameters = uploadParams;
         const curatedQuestions = uploadParams?.questions;
 
         // Prefer curated questions from the upload payload when provided.
