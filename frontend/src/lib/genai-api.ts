@@ -140,8 +140,8 @@ export const createGenAIJob = async (
   params: {
     videoUrl: string;
     transcript?: Transcript;
-    courseId: string;
-    versionId: string;
+    courseId?: string | null;
+    versionId?: string | null;
     moduleId?: string | null;
     sectionId?: string | null;
     videoItemBaseName?: string;
@@ -171,10 +171,9 @@ export const createGenAIJob = async (
     segmentationParameters,
     questionGenerationParameters,
   } = params;
-  const uploadParameters: Record<string, any> = {
-    courseId,
-    versionId,
-  };
+  const uploadParameters: Record<string, any> = {};
+  if (courseId) uploadParameters.courseId = courseId;
+  if (versionId) uploadParameters.versionId = versionId;
   if (videoItemBaseName) uploadParameters.videoItemBaseName = videoItemBaseName;
   if (quizItemBaseName) uploadParameters.quizItemBaseName = quizItemBaseName;
 
@@ -593,6 +592,11 @@ export interface CourseSectionPlan {
 export interface CoursePlan {
   moduleName: string;
   moduleDescription: string;
+  // Only present for jobs with no pre-existing course -- see
+  // course-structure-preview.tsx's hasExistingCourse prop.
+  courseName?: string;
+  courseDescription?: string;
+  versionName?: string;
   videoUrl: string;
   questionsPerQuiz?: number;
   maxAttempts?: number;
@@ -608,7 +612,14 @@ export const getCoursePlan = async (jobId: string): Promise<CoursePlan> => {
 
 export const updateCoursePlan = async (
   jobId: string,
-  plan: { moduleName?: string; moduleDescription?: string; sections: Omit<CourseSectionPlan, 'segmentStart' | 'transcriptExcerpt'>[] },
+  plan: {
+    moduleName?: string;
+    moduleDescription?: string;
+    courseName?: string;
+    courseDescription?: string;
+    versionName?: string;
+    sections: Omit<CourseSectionPlan, 'segmentStart' | 'transcriptExcerpt'>[];
+  },
 ) => {
   return makeAuthenticatedRequest(`/genai/jobs/${jobId}/course-plan`, {
     method: 'PATCH',

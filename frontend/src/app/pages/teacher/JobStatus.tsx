@@ -184,6 +184,7 @@ export default function JobStatusPage() {
         <CourseStructurePreview
           jobId={jobId as string}
           videoUrl={job?.url}
+          hasExistingCourse={!!job?.uploadParameters?.courseId}
           onApproved={async () => {
             await approveContinueTask(jobId as string);
             fetchStatus();

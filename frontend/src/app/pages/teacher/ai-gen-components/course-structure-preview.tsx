@@ -23,14 +23,21 @@ function formatSeconds(total: number): string {
 interface Props {
   jobId: string;
   videoUrl?: string;
+  // Jobs started without a pre-existing courseId/versionId propose (and, on
+  // approval, auto-create) their own Course + CourseVersion -- see
+  // GenAIService's course auto-create block in uploadContent.
+  hasExistingCourse: boolean;
   onApproved: () => void | Promise<void>;
 }
 
-export default function CourseStructurePreview({ jobId, videoUrl, onApproved }: Props) {
+export default function CourseStructurePreview({ jobId, videoUrl, hasExistingCourse, onApproved }: Props) {
   const [plan, setPlan] = useState<CoursePlan | null>(null);
   const [sections, setSections] = useState<CourseSectionPlan[]>([]);
   const [moduleName, setModuleName] = useState("");
   const [moduleDescription, setModuleDescription] = useState("");
+  const [courseName, setCourseName] = useState("");
+  const [courseDescription, setCourseDescription] = useState("");
+  const [versionName, setVersionName] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -45,6 +52,9 @@ export default function CourseStructurePreview({ jobId, videoUrl, onApproved }: 
       setSections(data.sections);
       setModuleName(data.moduleName);
       setModuleDescription(data.moduleDescription);
+      setCourseName(data.courseName ?? "");
+      setCourseDescription(data.courseDescription ?? "");
+      setVersionName(data.versionName ?? "");
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load course plan.");
@@ -102,6 +112,7 @@ export default function CourseStructurePreview({ jobId, videoUrl, onApproved }: 
       await updateCoursePlan(jobId, {
         moduleName,
         moduleDescription,
+        ...(hasExistingCourse ? {} : { courseName, courseDescription, versionName }),
         sections: sections.map(({ segmentEnd, name, description }) => ({ segmentEnd, name, description })),
       });
       toast.success("Changes saved.");
@@ -120,6 +131,7 @@ export default function CourseStructurePreview({ jobId, videoUrl, onApproved }: 
       await updateCoursePlan(jobId, {
         moduleName,
         moduleDescription,
+        ...(hasExistingCourse ? {} : { courseName, courseDescription, versionName }),
         sections: sections.map(({ segmentEnd, name, description }) => ({ segmentEnd, name, description })),
       });
       await onApproved();
@@ -164,6 +176,16 @@ export default function CourseStructurePreview({ jobId, videoUrl, onApproved }: 
               />
             )}
             <div className="flex-1 space-y-2">
+              {!hasExistingCourse && (
+                <>
+                  <Label htmlFor="courseName">Course Title</Label>
+                  <Input id="courseName" value={courseName} onChange={e => setCourseName(e.target.value)} />
+                  <Label htmlFor="courseDescription">Course Description</Label>
+                  <Textarea id="courseDescription" value={courseDescription} onChange={e => setCourseDescription(e.target.value)} rows={2} />
+                  <Label htmlFor="versionName">Version Label</Label>
+                  <Input id="versionName" value={versionName} onChange={e => setVersionName(e.target.value)} />
+                </>
+              )}
               <Label htmlFor="moduleName">Module Name</Label>
               <Input id="moduleName" value={moduleName} onChange={e => setModuleName(e.target.value)} />
               <Label htmlFor="moduleDescription">Module Description</Label>
@@ -171,7 +193,7 @@ export default function CourseStructurePreview({ jobId, videoUrl, onApproved }: 
             </div>
           </div>
           <p className="text-sm text-muted-foreground">
-            1 module &middot; {sections.length} section{sections.length === 1 ? "" : "s"} &middot; {sections.length} quiz{sections.length === 1 ? "" : "es"}
+            {hasExistingCourse ? "" : "1 new course · "}1 module &middot; {sections.length} section{sections.length === 1 ? "" : "s"} &middot; {sections.length} quiz{sections.length === 1 ? "" : "es"}
             {plan.questionsPerQuiz ? ` · ${plan.questionsPerQuiz} questions each` : ""}
             {plan.maxAttempts != null ? ` · ${plan.maxAttempts === -1 ? "unlimited" : plan.maxAttempts} attempts` : ""}
           </p>

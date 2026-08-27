@@ -6,7 +6,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogTitle, DialogTrigger, DialogHeader, DialogFooter} from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Loader2, Wand2 } from "lucide-react";
+import { ChevronDown, Loader2, Wand2 } from "lucide-react";
 import { createGenAIJob } from "@/lib/genai-api";
 
 export default function GenerateSectionPage() {
@@ -14,6 +14,7 @@ export default function GenerateSectionPage() {
     const [courseId, setCourseId] = useState("");
     const [versionId, setVersionId] = useState("");
     const [moduleId, setModuleId] = useState("");
+    const [showAdvanced, setShowAdvanced] = useState(false);
     const [videoUrl, setVideoUrl] = useState("");
     const [questionsPerQuiz, setQuestionsPerQuiz] = useState("3");
     const [maxAttempts, setMaxAttempts] = useState("-1");
@@ -22,9 +23,9 @@ export default function GenerateSectionPage() {
 
 
     const handleGenerateSection = async () => {
-        if(!courseId || !versionId || !videoUrl) {
-            toast.error("Missing Fields", {
-                description: "Please fill in Course ID, Version ID, and the video URL before generating.",
+        if(!videoUrl) {
+            toast.error("Missing video URL", {
+                description: "Please paste a YouTube URL before generating.",
             });
             return;
         }
@@ -32,8 +33,8 @@ export default function GenerateSectionPage() {
         try {
             const { jobId } = await createGenAIJob({
                 videoUrl,
-                courseId,
-                versionId,
+                courseId: courseId || undefined,
+                versionId: versionId || undefined,
                 moduleId: moduleId || undefined,
                 questionsPerQuiz: questionsPerQuiz ? Number(questionsPerQuiz) : undefined,
                 maxAttempts: maxAttempts !== "" ? Number(maxAttempts) : undefined,
@@ -61,20 +62,12 @@ export default function GenerateSectionPage() {
                         <Wand2 className="h-5 w-5 text-primary" />
                         Generate Course from YouTube URL
                     </h2>
+                    <p className="text-sm text-muted-foreground">
+                        Paste a YouTube URL below. A new course, version, and module are proposed automatically --
+                        you'll review and can edit everything (including the title) before anything is created for real.
+                    </p>
 
                     <div className="space-y-4">
-                        <Input
-                            placeholder="Course ID"
-                            value={courseId}
-                            onChange={(e) => setCourseId(e.target.value)}
-                            className="mb-4"
-                        />
-                        <Input
-                            placeholder="Version ID"
-                            value={versionId}
-                            onChange={(e) => setVersionId(e.target.value)}
-                            className="mb-4"
-                        />
                         <Input
                             placeholder="YouTube Video URL"
                             value={videoUrl}
@@ -82,11 +75,33 @@ export default function GenerateSectionPage() {
                             className="mb-4"
                         />
                         <div>
-                            <Input
-                                placeholder="Module ID (optional -- leave blank to auto-create a new module)"
-                                value={moduleId}
-                                onChange={(e) => setModuleId(e.target.value)}
-                            />
+                            <button
+                                type="button"
+                                className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+                                onClick={() => setShowAdvanced(v => !v)}
+                            >
+                                <ChevronDown className={`h-4 w-4 transition-transform ${showAdvanced ? "rotate-180" : ""}`} />
+                                Advanced: add to an existing course
+                            </button>
+                            {showAdvanced && (
+                                <div className="space-y-4 mt-3 pl-1">
+                                    <Input
+                                        placeholder="Course ID (leave blank to auto-create a new course)"
+                                        value={courseId}
+                                        onChange={(e) => setCourseId(e.target.value)}
+                                    />
+                                    <Input
+                                        placeholder="Version ID (leave blank to auto-create a new version)"
+                                        value={versionId}
+                                        onChange={(e) => setVersionId(e.target.value)}
+                                    />
+                                    <Input
+                                        placeholder="Module ID (leave blank to auto-create a new module)"
+                                        value={moduleId}
+                                        onChange={(e) => setModuleId(e.target.value)}
+                                    />
+                                </div>
+                            )}
                         </div>
                         <div>
                             <Label htmlFor="questionsPerQuiz" className="mb-2">Questions per section</Label>
@@ -114,8 +129,8 @@ export default function GenerateSectionPage() {
                     </div>
 
                     <div className="bg-muted/50 rounded-md p-4 mt-6 text-sm text-foreground shadow-sm space-y-1 border">
-                        <p><strong className="text-foreground">Course ID:</strong> {courseId || "-"}</p>
-                        <p><strong className="text-foreground">Version ID:</strong> {versionId || "-"}</p>
+                        <p><strong className="text-foreground">Course:</strong> {courseId || "(auto-create)"}</p>
+                        <p><strong className="text-foreground">Version:</strong> {versionId || "(auto-create)"}</p>
                         <p><strong className="text-foreground">Video URL:</strong> {videoUrl || "-"}</p>
                         <p><strong className="text-foreground">Module ID:</strong> {moduleId || "(auto-create)"}</p>
                         <p><strong className="text-foreground">Questions per section:</strong> {questionsPerQuiz || "-"}</p>
@@ -137,8 +152,8 @@ export default function GenerateSectionPage() {
                                 </div>
                             </DialogHeader>
                             <div className="text-sm text-muted-foreground space-y-2">
-                                <p><strong className="text-foreground">Course ID:</strong> {courseId}</p>
-                                <p><strong className="text-foreground">Version ID:</strong> {versionId}</p>
+                                <p><strong className="text-foreground">Course:</strong> {courseId || "(auto-create)"}</p>
+                                <p><strong className="text-foreground">Version:</strong> {versionId || "(auto-create)"}</p>
                                 <p><strong className="text-foreground">Video URL:</strong> {videoUrl}</p>
                                 <p><strong className="text-foreground">Module ID:</strong> {moduleId || "(auto-create)"}</p>
                                 <p><strong className="text-foreground">Questions per section:</strong> {questionsPerQuiz}</p>
