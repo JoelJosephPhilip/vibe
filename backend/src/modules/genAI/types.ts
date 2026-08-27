@@ -7,6 +7,7 @@ const TYPES = {
   LocalQuestionGenerationService: Symbol.for('LocalQuestionGenerationService'),
   LocalAudioExtractionService: Symbol.for('LocalAudioExtractionService'),
   LocalSegmentationService: Symbol.for('LocalSegmentationService'),
+  LocalCoursePlanService: Symbol.for('LocalCoursePlanService'),
 };
 
 export { TYPES as GENAI_TYPES };

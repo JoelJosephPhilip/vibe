@@ -10,6 +10,7 @@ import { LocalTranscriptionService } from './services/LocalTranscriptionService.
 import { LocalQuestionGenerationService } from './services/LocalQuestionGenerationService.js';
 import { LocalAudioExtractionService } from './services/LocalAudioExtractionService.js';
 import { LocalSegmentationService } from './services/LocalSegmentationService.js';
+import { LocalCoursePlanService } from './services/LocalCoursePlanService.js';
 
 export const genAIContainerModule = new ContainerModule(options => {
   // Repositories
@@ -22,6 +23,7 @@ export const genAIContainerModule = new ContainerModule(options => {
   options.bind(GENAI_TYPES.LocalQuestionGenerationService).to(LocalQuestionGenerationService).inSingletonScope();
   options.bind(GENAI_TYPES.LocalAudioExtractionService).to(LocalAudioExtractionService).inSingletonScope();
   options.bind(GENAI_TYPES.LocalSegmentationService).to(LocalSegmentationService).inSingletonScope();
+  options.bind(GENAI_TYPES.LocalCoursePlanService).to(LocalCoursePlanService).inSingletonScope();
   // Controllers
   options.bind(GenAIController).toSelf().inSingletonScope();
   options.bind(WebhookController).toSelf().inSingletonScope();

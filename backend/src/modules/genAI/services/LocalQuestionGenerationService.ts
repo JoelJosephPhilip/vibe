@@ -11,6 +11,31 @@ interface TranscriptChunk {
 }
 
 /**
+ * segmentMap entries are each segment's END time in seconds (see
+ * GenAIService.ts's uploadContent loop — `currentSegmentEndTime =
+ * currentSegmentId`), in ascending order. A chunk belongs to the first
+ * segment whose end time is after the chunk's start time.
+ *
+ * Exported (not just used by question generation) so LocalCoursePlanService
+ * can group the same transcript by the same segment boundaries when
+ * generating per-section titles/descriptions.
+ */
+export function groupChunksBySegment(
+  chunks: TranscriptChunk[],
+  segmentMap: number[],
+): { segmentId: string; text: string }[] {
+  return segmentMap.map((endTime, i) => {
+    const startTime = i === 0 ? 0 : segmentMap[i - 1];
+    const text = chunks
+      .filter(c => c.timestamp[0] >= startTime && c.timestamp[0] < endTime)
+      .map(c => c.text)
+      .join(' ')
+      .trim();
+    return { segmentId: String(endTime), text };
+  });
+}
+
+/**
  * Matches the exact `{segmentId, question, solution}` shape
  * GenAIService.uploadContent already expects from the real AI server's
  * question-generation output (feeds straight into
@@ -102,7 +127,7 @@ export class LocalQuestionGenerationService {
       );
     }
 
-    const segments = this.groupChunksBySegment(transcriptChunks, segmentMap);
+    const segments = groupChunksBySegment(transcriptChunks, segmentMap);
     const withText = segments.filter(s => s.text.trim().length > 0);
     if (withText.length === 0 || requestedCount <= 0) return [];
 
@@ -125,27 +150,6 @@ export class LocalQuestionGenerationService {
       }
     }
     return results;
-  }
-
-  /**
-   * segmentMap entries are each segment's END time in seconds (see
-   * GenAIService.ts's uploadContent loop — `currentSegmentEndTime =
-   * currentSegmentId`), in ascending order. A chunk belongs to the first
-   * segment whose end time is after the chunk's start time.
-   */
-  private groupChunksBySegment(
-    chunks: TranscriptChunk[],
-    segmentMap: number[],
-  ): { segmentId: string; text: string }[] {
-    return segmentMap.map((endTime, i) => {
-      const startTime = i === 0 ? 0 : segmentMap[i - 1];
-      const text = chunks
-        .filter(c => c.timestamp[0] >= startTime && c.timestamp[0] < endTime)
-        .map(c => c.text)
-        .join(' ')
-        .trim();
-      return { segmentId: String(endTime), text };
-    });
   }
 
   private async generateOneQuestion(
