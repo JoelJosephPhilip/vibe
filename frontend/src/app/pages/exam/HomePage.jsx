@@ -1,7 +1,7 @@
 import { Link, useNavigate } from 'react-router-dom'
 import { DEMO_EXAM } from '@/lib/examStore'
 import { useAuthStore } from '@/store/auth-store'
-import { usePublishedExams } from '@/hooks/exam-hooks'
+import { usePublishedExams, useMyAttempts } from '@/hooks/exam-hooks'
 
 function totalMarks(exam) {
   return (exam.questions || []).reduce((sum, q) => sum + (Number(q.marks) || 0), 0)
@@ -38,7 +38,16 @@ export default function HomePage() {
   // simply unreachable — that's the whole point of it (see the module
   // migration plan's "Frontend" section).
   const { data: publishedExams } = usePublishedExams()
+  const { data: myAttempts } = useMyAttempts()
   const exams = [DEMO_EXAM, ...(publishedExams ?? [])]
+
+  // Per-exam attempt history for the current user — drives both the
+  // "already attempted" lock (retakes disabled + at least one attempt) and
+  // the attempts-used count shown when retakes are allowed.
+  const attemptsByExam = (myAttempts ?? []).reduce((acc, a) => {
+    (acc[a.examId] ??= []).push(a)
+    return acc
+  }, {})
 
   return (
     <div className="min-h-screen bg-background px-4 py-12">
@@ -93,6 +102,15 @@ export default function HomePage() {
               {exams.map((e) => {
                 const total = totalMarks(e)
                 const { status } = getScheduleState(e)
+                const retakesAllowed = e.allowRetakes !== false
+                const myExamAttempts = [...(attemptsByExam[e.id] ?? [])].sort(
+                  (a, b) => (b.submittedAt ?? 0) - (a.submittedAt ?? 0)
+                )
+                const attemptCount = myExamAttempts.length
+                // Retakes off + already attempted: nothing left to start —
+                // don't even open the exam page, offer the past result
+                // instead of a "Start Test" that would just fail server-side.
+                const alreadyAttempted = !retakesAllowed && attemptCount > 0
                 return (
                   <li
                     key={e.id}
@@ -100,10 +118,16 @@ export default function HomePage() {
                   >
                     <div className="flex items-start justify-between gap-2">
                       <h3 className="font-semibold text-foreground">{e.title}</h3>
-                      {e.allowRetakes !== false && (
+                      {retakesAllowed ? (
                         <span className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
-                          Multiple attempts allowed
+                          Multiple attempts allowed{attemptCount > 0 ? ` · ${attemptCount} used` : ''}
                         </span>
+                      ) : (
+                        alreadyAttempted && (
+                          <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                            Already attempted
+                          </span>
+                        )
                       )}
                     </div>
                     <p className="mt-1 text-xs text-muted-foreground">
@@ -119,14 +143,24 @@ export default function HomePage() {
                         Closed {e.closesAt ? `on ${formatDateTime(e.closesAt)}` : ''}
                       </p>
                     )}
-                    <button
-                      type="button"
-                      disabled={status !== 'open'}
-                      onClick={() => navigate(`/exam/${e.id}`)}
-                      className="mt-3 inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {status === 'not-open' ? 'Not open yet' : status === 'closed' ? 'Closed' : 'Start Test'}
-                    </button>
+                    {alreadyAttempted ? (
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/result/${myExamAttempts[0].id}`)}
+                        className="mt-3 inline-flex items-center justify-center rounded-md border border-input bg-background px-4 py-2 text-sm font-medium hover:bg-accent"
+                      >
+                        View Result
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={status !== 'open'}
+                        onClick={() => navigate(`/exam/${e.id}`)}
+                        className="mt-3 inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {status === 'not-open' ? 'Not open yet' : status === 'closed' ? 'Closed' : 'Start Test'}
+                      </button>
+                    )}
                     <p className="mt-2 text-[11px] text-muted-foreground">
                       Opens in fullscreen. Exiting fullscreen or switching tabs is recorded.
                     </p>
