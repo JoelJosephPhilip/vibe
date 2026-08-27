@@ -98,7 +98,14 @@ export default function HomePage() {
                     key={e.id}
                     className="rounded-md border border-border bg-card p-4 shadow-sm"
                   >
-                    <h3 className="font-semibold text-foreground">{e.title}</h3>
+                    <div className="flex items-start justify-between gap-2">
+                      <h3 className="font-semibold text-foreground">{e.title}</h3>
+                      {e.allowRetakes !== false && (
+                        <span className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
+                          Multiple attempts allowed
+                        </span>
+                      )}
+                    </div>
                     <p className="mt-1 text-xs text-muted-foreground">
                       {e.questions.length} questions · {e.duration} min · {total} marks
                     </p>

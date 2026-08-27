@@ -1211,7 +1211,7 @@ export default function ResultPage() {
                     key={i}
                     type="button"
                     onClick={() => setLightboxEvent(e)}
-                    className="flex w-24 flex-col items-center gap-1 rounded-md border border-amber-300 bg-white p-1.5 text-left hover:border-amber-500"
+                    className="flex w-24 flex-col items-center gap-1 rounded-md border border-amber-300 bg-card p-1.5 text-left hover:border-amber-500"
                   >
                     <img
                       src={e.imageDataUrl}
@@ -1238,7 +1238,7 @@ export default function ResultPage() {
             onClick={() => setLightboxEvent(null)}
           >
             <div
-              className="max-w-lg rounded-lg bg-white p-3 shadow-2xl"
+              className="max-w-lg rounded-lg bg-card p-3 shadow-2xl"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="mb-2 flex items-center justify-between gap-4">

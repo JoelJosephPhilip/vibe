@@ -463,13 +463,17 @@ function ExamPageInner({ examId, isDemo, examData, navigate }) {
     })
   }
 
-  // Circular, like GATE's CBT interface: Next from the last question wraps
-  // to the first, Previous from the first wraps to the last, instead of
-  // dead-ending.
-  const goNext = () => setCurrentIndex((i) => (i + 1) % questions.length)
-  const goPrev = () => setCurrentIndex((i) => (i - 1 + questions.length) % questions.length)
+  const goNext = () => setCurrentIndex((i) => Math.min(questions.length - 1, i + 1))
+  const goPrev = () => setCurrentIndex((i) => Math.max(0, i - 1))
 
-  const handleSaveAndNext = () => goNext()
+  // On the last question there's nowhere for "Next" to go, so it opens the
+  // review-and-submit popup (counts of answered/marked/not-visited, with a
+  // "Keep Reviewing" escape hatch) instead of doing nothing.
+  const isLastQuestion = currentIndex === questions.length - 1
+  const handleSaveAndNext = () => {
+    if (isLastQuestion) setShowSubmitConfirm(true)
+    else goNext()
+  }
   const handleMarkReviewNext = () => {
     // Toggles rather than always setting true — previously there was no way
     // to unmark a question once flagged short of clearing its whole answer.
@@ -927,7 +931,7 @@ function ExamPageInner({ examId, isDemo, examData, navigate }) {
               <button onClick={handleClearResponse} className="min-h-[44px] rounded-sm border border-gray-300 bg-white px-3 py-2 text-[13px] font-bold text-gray-700 hover:bg-gray-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 sm:px-4">
                 Clear Response
               </button>
-              <button onClick={goPrev} className="min-h-[44px] rounded-sm border border-gray-300 bg-white px-3 py-2 text-[13px] font-bold text-gray-700 hover:bg-gray-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:opacity-50 sm:px-4">
+              <button onClick={goPrev} disabled={currentIndex === 0} className="min-h-[44px] rounded-sm border border-gray-300 bg-white px-3 py-2 text-[13px] font-bold text-gray-700 hover:bg-gray-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:opacity-50 sm:px-4">
                 &lt;&lt; Previous
               </button>
             </div>
@@ -937,7 +941,7 @@ function ExamPageInner({ examId, isDemo, examData, navigate }) {
                 className="min-h-[44px] rounded-sm border px-3 py-2 text-[13px] font-bold text-white hover:brightness-125 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 sm:px-4"
                 style={{ borderColor: INK, backgroundColor: INK }}
               >
-                Save &amp; Next
+                {isLastQuestion ? 'Save & Review' : 'Save & Next'}
               </button>
             </div>
           </div>
