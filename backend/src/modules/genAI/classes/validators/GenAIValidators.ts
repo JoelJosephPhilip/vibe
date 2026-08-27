@@ -12,6 +12,7 @@ import {
   IsArray,
   IsJSON,
   IsBoolean,
+  Min,
 } from 'class-validator';
 import { JSONSchema } from 'class-validator-jsonschema';
 import { Type, Transform } from 'class-transformer';
@@ -298,21 +299,21 @@ class UploadParameters {
 
   @JSONSchema({
     title: 'Video Item Base Name',
-    description: 'Base name for the video item to be created',
+    description: 'Base name for the video item to be created. Optional when a course plan (auto-created module/sections) exists -- the plan supplies per-section names instead.',
     example: 'video_item',
     type: 'string',
   })
-  @IsNotEmpty()
+  @IsOptional()
   @IsString()
   videoItemBaseName?: string;
 
   @JSONSchema({
     title: 'Quiz Item Base Name',
-    description: 'Base name for the quiz item to be created',
+    description: 'Base name for the quiz item to be created. Optional when a course plan (auto-created module/sections) exists -- the plan supplies per-section names instead.',
     example: 'quiz_item',
     type: 'string',
   })
-  @IsNotEmpty()
+  @IsOptional()
   @IsString()
   quizItemBaseName?: string;
 
@@ -325,6 +326,17 @@ class UploadParameters {
   @IsOptional()
   @IsNumber()
   questionsPerQuiz?: number;
+
+  @JSONSchema({
+    title: 'Max Attempts',
+    description: 'Max attempts allowed per quiz item. -1 means unlimited.',
+    example: 3,
+    type: 'number',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(-1)
+  maxAttempts?: number;
 
   @JSONSchema({
     title: 'Smart Bloom Enabled',
@@ -422,6 +434,17 @@ class PartialUploadParameters {
   @IsOptional()
   @IsNumber()
   questionsPerQuiz?: number;
+
+  @JSONSchema({
+    title: 'Max Attempts',
+    description: 'Max attempts allowed per quiz item. -1 means unlimited.',
+    example: 3,
+    type: 'number',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(-1)
+  maxAttempts?: number;
 
   @JSONSchema({
     title: 'Smart Bloom Enabled',
@@ -937,6 +960,62 @@ class EditSegmentMapBody {
 }
 
 
+class CourseSectionPlanBody {
+  @JSONSchema({
+    title: 'Segment End',
+    description: "End time (seconds) of the video segment this section corresponds to -- matches an entry in the job's segmentMap",
+    type: 'number',
+    example: 120,
+  })
+  @IsNotEmpty()
+  @IsNumber()
+  segmentEnd: number;
+
+  @JSONSchema({
+    title: 'Section Name',
+    type: 'string',
+  })
+  @IsNotEmpty()
+  @IsString()
+  name: string;
+
+  @JSONSchema({
+    title: 'Section Description',
+    type: 'string',
+  })
+  @IsOptional()
+  @IsString()
+  description?: string;
+}
+
+class EditCoursePlanBody {
+  @JSONSchema({
+    title: 'Module Name',
+    type: 'string',
+  })
+  @IsOptional()
+  @IsString()
+  moduleName?: string;
+
+  @JSONSchema({
+    title: 'Module Description',
+    type: 'string',
+  })
+  @IsOptional()
+  @IsString()
+  moduleDescription?: string;
+
+  @JSONSchema({
+    title: 'Sections',
+    description: 'Full replacement list of planned sections',
+    type: 'array',
+  })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CourseSectionPlanBody)
+  sections: CourseSectionPlanBody[];
+}
+
 class EditQuestionData {
   @JSONSchema({
     title: 'Question Data',
@@ -1123,6 +1202,8 @@ export {
   EditQuestionData,
   EditTranscript,
   TaskStatusdetailsResponse,
+  CourseSectionPlanBody,
+  EditCoursePlanBody,
 };
 
 export const GENAI_VALIDATORS = [
@@ -1143,4 +1224,6 @@ export const GENAI_VALIDATORS = [
   EditQuestionData,
   EditTranscript,
   TaskStatusdetailsResponse,
+  CourseSectionPlanBody,
+  EditCoursePlanBody,
 ];

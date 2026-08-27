@@ -71,8 +71,24 @@ export interface UploadParameters {
 	videoItemBaseName?: string;
 	quizItemBaseName?: string;
 	questionsPerQuiz?: number;
+	maxAttempts?: number;
 	smartBloomEnabled?: boolean;
 	questions?: any[];
+}
+
+// One planned section per detected video segment. Keyed by segmentEnd (not
+// array index) so a segment-boundary edit (merge/split) only invalidates the
+// plan entries whose boundary actually changed -- see GenAIService.getCoursePlan.
+export interface CourseSectionPlan {
+	segmentEnd: number;
+	name: string;
+	description: string;
+}
+
+export interface CoursePlan {
+	moduleName: string;
+	moduleDescription: string;
+	sections: CourseSectionPlan[];
 }
 
 export interface audioData {
@@ -135,6 +151,7 @@ export class GenAI {
 	segmentationParameters?: SegmentationParameters;
 	questionGenerationParameters?: QuestionGenerationParameters;
 	uploadParameters: UploadParameters;
+	coursePlan?: CoursePlan;
 }
 
 export class GenAIBody extends GenAI {
