@@ -3,13 +3,11 @@ import { useNavigate } from "@tanstack/react-router";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogTitle, DialogTrigger, DialogHeader, DialogFooter} from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { Loader2, Wand2 } from "lucide-react";
-
-function getApiUrl(path: string) {
-  return `${import.meta.env.VITE_BASE_URL}${path}`;
-}
+import { createGenAIJob } from "@/lib/genai-api";
 
 export default function GenerateSectionPage() {
     const navigate = useNavigate();
@@ -17,49 +15,35 @@ export default function GenerateSectionPage() {
     const [versionId, setVersionId] = useState("");
     const [moduleId, setModuleId] = useState("");
     const [videoUrl, setVideoUrl] = useState("");
+    const [questionsPerQuiz, setQuestionsPerQuiz] = useState("3");
+    const [maxAttempts, setMaxAttempts] = useState("-1");
     const [isLoading, setIsLoading] = useState(false);
     const [showDialog, setShowDialog] = useState(false);
 
 
     const handleGenerateSection = async () => {
-        if(!courseId || !versionId || !moduleId || !videoUrl) {
+        if(!courseId || !versionId || !videoUrl) {
             toast.error("Missing Fields", {
-                description: "Please fill in all fields before generating the section.",
+                description: "Please fill in Course ID, Version ID, and the video URL before generating.",
             });
             return;
         }
         setIsLoading(true);
         try {
-            const res = await fetch(getApiUrl('/genai/jobs'), {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "Authorization": `Bearer ${localStorage.getItem('firebase-auth-token')}`,
-                },
-                body: JSON.stringify({
-                    type: "VIDEO",
-                    url: videoUrl,
-                    uploadParameters: {
-                        courseId,
-                        versionId,
-                        moduleId,
-                        videoItemBaseName: 'video_item',
-                        quizItemBaseName: 'quiz_item',
-                    }
-                }),
+            const { jobId } = await createGenAIJob({
+                videoUrl,
+                courseId,
+                versionId,
+                moduleId: moduleId || undefined,
+                questionsPerQuiz: questionsPerQuiz ? Number(questionsPerQuiz) : undefined,
+                maxAttempts: maxAttempts !== "" ? Number(maxAttempts) : undefined,
             });
-
-            const data = await res.json();
-
-            if(!res.ok || !data.jobId) {
-                throw new Error(data.message || "Job creation failed");
-            }
 
             toast.success("Job started successfully!", {
-                description: `Your Job has been created with ID: ${data.jobId}`,
+                description: `Your Job has been created with ID: ${jobId}`,
             });
             setShowDialog(false);
-            navigate({ to: "/teacher/jobs/$jobId", params: { jobId: data.jobId } });
+            navigate({ to: "/teacher/jobs/$jobId", params: { jobId } });
 
         } catch (error) {
             toast.error("Error starting job", {
@@ -75,10 +59,10 @@ export default function GenerateSectionPage() {
                 <CardContent className="space-y-4 py-6">
                     <h2 className="text-xl font-semibold flex items-center gap-2">
                         <Wand2 className="h-5 w-5 text-primary" />
-                        Generate Section from YouTube URL
+                        Generate Course from YouTube URL
                     </h2>
 
-                    <div className="space-y-4"> 
+                    <div className="space-y-4">
                         <Input
                             placeholder="Course ID"
                             value={courseId}
@@ -92,25 +76,51 @@ export default function GenerateSectionPage() {
                             className="mb-4"
                         />
                         <Input
-                            placeholder="Module ID"
-                            value={moduleId}
-                            onChange={(e) => setModuleId(e.target.value)}
-                            className="mb-4"
-                        />
-                        <Input
                             placeholder="YouTube Video URL"
                             value={videoUrl}
                             onChange={(e) => setVideoUrl(e.target.value)}
                             className="mb-4"
                         />
+                        <div>
+                            <Input
+                                placeholder="Module ID (optional -- leave blank to auto-create a new module)"
+                                value={moduleId}
+                                onChange={(e) => setModuleId(e.target.value)}
+                            />
+                        </div>
+                        <div>
+                            <Label htmlFor="questionsPerQuiz" className="mb-2">Questions per section</Label>
+                            <Input
+                                id="questionsPerQuiz"
+                                type="number"
+                                min="1"
+                                value={questionsPerQuiz}
+                                onChange={(e) => setQuestionsPerQuiz(e.target.value)}
+                            />
+                        </div>
+                        <div>
+                            <Label htmlFor="maxAttempts" className="mb-2">Attempts allowed</Label>
+                            <Input
+                                id="maxAttempts"
+                                type="number"
+                                min="-1"
+                                value={maxAttempts}
+                                onChange={(e) => setMaxAttempts(e.target.value)}
+                            />
+                            <p className="text-xs text-muted-foreground mt-1">
+                                Maximum attempts allowed (-1 for unlimited)
+                            </p>
+                        </div>
                     </div>
 
                     <div className="bg-muted/50 rounded-md p-4 mt-6 text-sm text-foreground shadow-sm space-y-1 border">
                         <p><strong className="text-foreground">Course ID:</strong> {courseId || "-"}</p>
                         <p><strong className="text-foreground">Version ID:</strong> {versionId || "-"}</p>
-                        <p><strong className="text-foreground">Module ID:</strong> {moduleId || "-"}</p>
                         <p><strong className="text-foreground">Video URL:</strong> {videoUrl || "-"}</p>
-                    </div> 
+                        <p><strong className="text-foreground">Module ID:</strong> {moduleId || "(auto-create)"}</p>
+                        <p><strong className="text-foreground">Questions per section:</strong> {questionsPerQuiz || "-"}</p>
+                        <p><strong className="text-foreground">Attempts allowed:</strong> {maxAttempts === "-1" ? "Unlimited" : maxAttempts || "-"}</p>
+                    </div>
 
                     <Dialog open={showDialog} onOpenChange={setShowDialog}>
                         <DialogTrigger asChild>
@@ -129,8 +139,10 @@ export default function GenerateSectionPage() {
                             <div className="text-sm text-muted-foreground space-y-2">
                                 <p><strong className="text-foreground">Course ID:</strong> {courseId}</p>
                                 <p><strong className="text-foreground">Version ID:</strong> {versionId}</p>
-                                <p><strong className="text-foreground">Module ID:</strong> {moduleId}</p>
                                 <p><strong className="text-foreground">Video URL:</strong> {videoUrl}</p>
+                                <p><strong className="text-foreground">Module ID:</strong> {moduleId || "(auto-create)"}</p>
+                                <p><strong className="text-foreground">Questions per section:</strong> {questionsPerQuiz}</p>
+                                <p><strong className="text-foreground">Attempts allowed:</strong> {maxAttempts === "-1" ? "Unlimited" : maxAttempts}</p>
                             </div>
                             <DialogFooter className="mt-4">
                                 <Button variant={"outline"} onClick={() => setShowDialog(false)}>

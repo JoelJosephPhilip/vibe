@@ -147,6 +147,7 @@ export const createGenAIJob = async (
     videoItemBaseName?: string;
     quizItemBaseName?: string;
     questionsPerQuiz?: number | null;
+    maxAttempts?: number | null;
 
     // optional parameters
     transcriptParameters?: TranscriptParameters;
@@ -162,9 +163,10 @@ export const createGenAIJob = async (
     versionId,
     moduleId,
     sectionId,
-    videoItemBaseName = 'video_item',
-    quizItemBaseName = 'quiz_item',
+    videoItemBaseName,
+    quizItemBaseName,
     questionsPerQuiz,
+    maxAttempts,
     transcriptParameters,
     segmentationParameters,
     questionGenerationParameters,
@@ -172,14 +174,15 @@ export const createGenAIJob = async (
   const uploadParameters: Record<string, any> = {
     courseId,
     versionId,
-    videoItemBaseName,
-    quizItemBaseName,
   };
+  if (videoItemBaseName) uploadParameters.videoItemBaseName = videoItemBaseName;
+  if (quizItemBaseName) uploadParameters.quizItemBaseName = quizItemBaseName;
 
   // Setting optional parameters
   if (moduleId) uploadParameters.moduleId = moduleId;
   if (sectionId) uploadParameters.sectionId = sectionId;
   if (questionsPerQuiz) uploadParameters.questionsPerQuiz = questionsPerQuiz;
+  if (maxAttempts !== undefined && maxAttempts !== null) uploadParameters.maxAttempts = maxAttempts;
 
   const body: Record<string, any> = {
     type: 'VIDEO',
@@ -579,6 +582,40 @@ export const editSegmentMap = async (jobId: string, segmentMap: number[], index?
   });
 };
 
+export interface CourseSectionPlan {
+  segmentStart: number;
+  segmentEnd: number;
+  name: string;
+  description: string;
+  transcriptExcerpt?: string;
+}
+
+export interface CoursePlan {
+  moduleName: string;
+  moduleDescription: string;
+  videoUrl: string;
+  questionsPerQuiz?: number;
+  maxAttempts?: number;
+  sections: CourseSectionPlan[];
+}
+
+export const getCoursePlan = async (jobId: string): Promise<CoursePlan> => {
+  const response = await makeAuthenticatedRequest(`/genai/jobs/${jobId}/course-plan`, {
+    method: 'GET',
+  });
+  return response.json();
+};
+
+export const updateCoursePlan = async (
+  jobId: string,
+  plan: { moduleName?: string; moduleDescription?: string; sections: Omit<CourseSectionPlan, 'segmentStart' | 'transcriptExcerpt'>[] },
+) => {
+  return makeAuthenticatedRequest(`/genai/jobs/${jobId}/course-plan`, {
+    method: 'PATCH',
+    body: JSON.stringify(plan),
+  });
+};
+
 // aiSectionAPI for modal usage
 export const aiSectionAPI: {
   createJob: typeof createGenAIJob;
@@ -595,6 +632,8 @@ export const aiSectionAPI: {
   editSegmentMap: typeof editSegmentMap;
   stopJobTask: typeof stopJobTask;
   getTaskStatus: typeof getTaskStatus;
+  getCoursePlan: typeof getCoursePlan;
+  updateCoursePlan: typeof updateCoursePlan;
 } = {
   createJob: createGenAIJob,
   getJobStatus,
@@ -610,6 +649,8 @@ export const aiSectionAPI: {
   editQuestionData,
   editTranscriptData,
   getTaskStatus,
+  getCoursePlan,
+  updateCoursePlan,
 };
 
 aiSectionAPI.editQuestionData = editQuestionData;
