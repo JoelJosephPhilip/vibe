@@ -45,6 +45,18 @@ export default function HomePage() {
       <div className="mx-auto max-w-4xl space-y-8">
         <header className="flex flex-wrap items-start justify-between gap-4">
           <div>
+            {/* A real <a>, not react-router's <Link>: this page renders
+                inside ExamAppShell's own MemoryRouter, so a <Link> can only
+                navigate within that isolated router — there was previously
+                no way to leave the exam module and get back to the main
+                ViBe dashboard at all. A plain anchor forces a real browser
+                navigation the outer app's router picks up instead. */}
+            <a
+              href="/"
+              className="mb-2 inline-block text-sm text-muted-foreground hover:text-foreground hover:underline"
+            >
+              ← Back to ViBe Dashboard
+            </a>
             <h1 className="text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
               ViBe Test Platform
             </h1>

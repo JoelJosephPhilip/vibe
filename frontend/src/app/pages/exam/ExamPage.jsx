@@ -468,7 +468,9 @@ function ExamPageInner({ examId, isDemo, examData, navigate }) {
 
   const handleSaveAndNext = () => goNext()
   const handleMarkReviewNext = () => {
-    updateResponse({ isMarkedForReview: true })
+    // Toggles rather than always setting true — previously there was no way
+    // to unmark a question once flagged short of clearing its whole answer.
+    updateResponse({ isMarkedForReview: !responses[currentIndex]?.isMarkedForReview })
     goNext()
   }
   const handleClearResponse = () => {
@@ -914,7 +916,7 @@ function ExamPageInner({ examId, isDemo, examData, navigate }) {
           <div className="flex flex-wrap justify-between gap-2 lg:col-span-3 lg:flex-nowrap lg:border-r lg:border-gray-300 lg:pr-4">
             <div className="flex flex-wrap gap-2">
               <button onClick={handleMarkReviewNext} className="min-h-[44px] rounded-sm border border-gray-300 bg-white px-3 py-2 text-[13px] font-bold text-gray-700 hover:bg-gray-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 sm:px-4">
-                Mark for Review &amp; Next
+                {responses[currentIndex]?.isMarkedForReview ? 'Unmark & Next' : 'Mark for Review & Next'}
               </button>
               <button onClick={handleClearResponse} className="min-h-[44px] rounded-sm border border-gray-300 bg-white px-3 py-2 text-[13px] font-bold text-gray-700 hover:bg-gray-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 sm:px-4">
                 Clear Response
@@ -926,7 +928,9 @@ function ExamPageInner({ examId, isDemo, examData, navigate }) {
             <div>
               <button
                 onClick={handleSaveAndNext}
-                className="min-h-[44px] rounded-sm border px-3 py-2 text-[13px] font-bold text-white hover:brightness-125 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 sm:px-4"
+                disabled={currentIndex === questions.length - 1}
+                title={currentIndex === questions.length - 1 ? 'Your answer is already saved — use Submit to finish the test' : undefined}
+                className="min-h-[44px] rounded-sm border px-3 py-2 text-[13px] font-bold text-white hover:brightness-125 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-50 sm:px-4"
                 style={{ borderColor: INK, backgroundColor: INK }}
               >
                 Save &amp; Next

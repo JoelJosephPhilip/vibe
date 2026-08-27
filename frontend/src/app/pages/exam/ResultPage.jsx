@@ -1386,12 +1386,18 @@ export default function ResultPage() {
             Close Window
           </button>
         ) : (
-          <Link
-            to="/"
+          // A real <a>, not react-router's <Link>: this page renders inside
+          // ExamAppShell's own MemoryRouter, so a <Link to="/"> would only
+          // navigate within that isolated router (back to the exam module's
+          // own HomePage) rather than actually leaving the exam app. A plain
+          // anchor forces a real browser navigation that the outer app's
+          // router picks up instead.
+          <a
+            href="/"
             className="inline-block px-4 py-2 rounded-md border border-border hover:bg-muted"
           >
             Back to home
-          </Link>
+          </a>
         )}
       </div>
     </div>
