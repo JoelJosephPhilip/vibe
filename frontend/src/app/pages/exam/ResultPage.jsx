@@ -23,6 +23,19 @@ const PROCTORING_EVENT_LABELS = {
   cameraIntegrity: "Camera integrity issue",
 };
 
+// `option.label` is rarely actually stored — every other option-letter
+// lookup in this file (see the `opt.label || String.fromCharCode(65 + idx)`
+// call sites below) falls back to the array-index letter for that reason.
+// These two used the raw option id instead, which only ever showed up as a
+// bug once a real attempt with unlabeled options (e.g. AI-generated
+// questions) got rendered here.
+function optionLetter(options, id) {
+  const opt = (options || []).find((o) => o.id === id);
+  if (opt?.label) return opt.label;
+  const idx = (options || []).findIndex((o) => o.id === id);
+  return idx >= 0 ? String.fromCharCode(65 + idx) : id;
+}
+
 function formatUserAnswer(q, r) {
   if (!r) return "Not Answered";
   if (q.type === "NAT") return (r.natAnswer || "").trim() || "Not Answered";
@@ -31,8 +44,7 @@ function formatUserAnswer(q, r) {
   return sel
     .map((id) => {
       const opt = (q.options || []).find((o) => o.id === id);
-      const label = opt?.label || id;
-      return `${label}. ${opt?.text ?? ""}`;
+      return `${optionLetter(q.options, id)}. ${opt?.text ?? ""}`;
     })
     .join(" | ");
 }
@@ -44,8 +56,7 @@ function formatCorrectAnswer(q, key) {
   return arr
     .map((id) => {
       const opt = (q.options || []).find((o) => o.id === id);
-      const label = opt?.label || id;
-      return `${label}. ${opt?.text ?? ""}`;
+      return `${optionLetter(q.options, id)}. ${opt?.text ?? ""}`;
     })
     .join(" | ");
 }
