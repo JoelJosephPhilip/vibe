@@ -328,6 +328,31 @@ function ExamPageInner({ examId, isDemo, examData, navigate }) {
 
   const [currentIndex, setCurrentIndex] = useState(savedSession?.currentIndex ?? 0)
   const [showCalc, setShowCalc] = useState(false)
+  // Offset from the calculator's default docked position (sm:left-8
+  // sm:top-24), dragged via its title bar. Reset per exam mount rather than
+  // persisted — it's a scratch tool, not exam state worth saving/restoring.
+  const [calcOffset, setCalcOffset] = useState({ x: 0, y: 0 })
+  const calcDragRef = useRef(null)
+  const handleCalcDragStart = (e) => {
+    const point = e.touches ? e.touches[0] : e
+    calcDragRef.current = { startX: point.clientX, startY: point.clientY, origin: calcOffset }
+    const handleMove = (moveEvent) => {
+      const movePoint = moveEvent.touches ? moveEvent.touches[0] : moveEvent
+      const { startX, startY, origin } = calcDragRef.current
+      setCalcOffset({ x: origin.x + (movePoint.clientX - startX), y: origin.y + (movePoint.clientY - startY) })
+    }
+    const handleEnd = () => {
+      calcDragRef.current = null
+      window.removeEventListener('mousemove', handleMove)
+      window.removeEventListener('mouseup', handleEnd)
+      window.removeEventListener('touchmove', handleMove)
+      window.removeEventListener('touchend', handleEnd)
+    }
+    window.addEventListener('mousemove', handleMove)
+    window.addEventListener('mouseup', handleEnd)
+    window.addEventListener('touchmove', handleMove)
+    window.addEventListener('touchend', handleEnd)
+  }
   // Below the `lg` breakpoint the question palette collapses into a
   // toggleable panel under the question (see the "Question Palette" button
   // in the main grid below) instead of sitting beside it — at `lg` and up
@@ -1001,14 +1026,20 @@ function ExamPageInner({ examId, isDemo, examData, navigate }) {
           to run off the right edge of any phone-width viewport. From `sm`
           up it's back to the original floating box in its original spot. */}
       {showCalc && (
-        <div className="fixed inset-x-0 bottom-0 z-50 max-h-[85vh] w-full overflow-y-auto rounded-t-xl border border-gray-400 bg-[#dadada] shadow-2xl sm:inset-x-auto sm:bottom-auto sm:left-8 sm:top-24 sm:max-h-none sm:w-[380px] sm:rounded-md">
+        <div
+          className="fixed inset-x-0 bottom-0 z-50 max-h-[85vh] w-full overflow-y-auto rounded-t-xl border border-gray-400 bg-[#dadada] shadow-2xl sm:inset-x-auto sm:bottom-auto sm:left-8 sm:top-24 sm:max-h-none sm:w-[380px] sm:rounded-md"
+          style={{ transform: `translate(${calcOffset.x}px, ${calcOffset.y}px)` }}
+        >
           <div
-            className="flex items-center justify-between px-3 py-2 text-white sm:py-1.5"
+            className="flex cursor-move items-center justify-between px-3 py-2 text-white select-none sm:py-1.5"
             style={{ backgroundColor: INK }}
+            onMouseDown={handleCalcDragStart}
+            onTouchStart={handleCalcDragStart}
           >
             <span className="text-sm font-semibold">Scientific Calculator</span>
             <button
               onClick={() => setShowCalc(false)}
+              onMouseDown={(e) => e.stopPropagation()}
               aria-label="Close calculator"
               className="min-h-[44px] min-w-[44px] rounded text-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white sm:min-h-0 sm:min-w-0"
             >
