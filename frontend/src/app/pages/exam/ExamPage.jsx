@@ -463,8 +463,11 @@ function ExamPageInner({ examId, isDemo, examData, navigate }) {
     })
   }
 
-  const goNext = () => setCurrentIndex((i) => Math.min(questions.length - 1, i + 1))
-  const goPrev = () => setCurrentIndex((i) => Math.max(0, i - 1))
+  // Circular, like GATE's CBT interface: Next from the last question wraps
+  // to the first, Previous from the first wraps to the last, instead of
+  // dead-ending.
+  const goNext = () => setCurrentIndex((i) => (i + 1) % questions.length)
+  const goPrev = () => setCurrentIndex((i) => (i - 1 + questions.length) % questions.length)
 
   const handleSaveAndNext = () => goNext()
   const handleMarkReviewNext = () => {
@@ -474,7 +477,10 @@ function ExamPageInner({ examId, isDemo, examData, navigate }) {
     goNext()
   }
   const handleClearResponse = () => {
-    updateResponse({ selectedOptions: [], natAnswer: '', isAnswered: false })
+    // Also resets isMarkedForReview — previously a question that had been
+    // marked stayed showing the "marked" color after clearing, even though
+    // clearing is meant to reset the question to a clean, unanswered state.
+    updateResponse({ selectedOptions: [], natAnswer: '', isAnswered: false, isMarkedForReview: false })
   }
 
   const handleSubmit = () => {
@@ -921,16 +927,14 @@ function ExamPageInner({ examId, isDemo, examData, navigate }) {
               <button onClick={handleClearResponse} className="min-h-[44px] rounded-sm border border-gray-300 bg-white px-3 py-2 text-[13px] font-bold text-gray-700 hover:bg-gray-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 sm:px-4">
                 Clear Response
               </button>
-              <button onClick={goPrev} disabled={currentIndex === 0} className="min-h-[44px] rounded-sm border border-gray-300 bg-white px-3 py-2 text-[13px] font-bold text-gray-700 hover:bg-gray-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:opacity-50 sm:px-4">
+              <button onClick={goPrev} className="min-h-[44px] rounded-sm border border-gray-300 bg-white px-3 py-2 text-[13px] font-bold text-gray-700 hover:bg-gray-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:opacity-50 sm:px-4">
                 &lt;&lt; Previous
               </button>
             </div>
             <div>
               <button
                 onClick={handleSaveAndNext}
-                disabled={currentIndex === questions.length - 1}
-                title={currentIndex === questions.length - 1 ? 'Your answer is already saved — use Submit to finish the test' : undefined}
-                className="min-h-[44px] rounded-sm border px-3 py-2 text-[13px] font-bold text-white hover:brightness-125 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-50 sm:px-4"
+                className="min-h-[44px] rounded-sm border px-3 py-2 text-[13px] font-bold text-white hover:brightness-125 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 sm:px-4"
                 style={{ borderColor: INK, backgroundColor: INK }}
               >
                 Save &amp; Next
