@@ -152,7 +152,11 @@ export class JobStatus {
 
 export class GenAI {
 	type: JobType;
-	url: string;
+	url?: string;
+	// An uploaded video (see /media/video-assets) used instead of url --
+	// mutually exclusive with it, always paired with a supplied transcript
+	// since an upload has no YouTube auto-transcription path.
+	videoAssetId?: string;
 	transcriptParameters?: TranscriptParameters;
 	segmentationParameters?: SegmentationParameters;
 	questionGenerationParameters?: QuestionGenerationParameters;

@@ -6,6 +6,7 @@ import { LocalQuestionGenerationService } from './LocalQuestionGenerationService
 import { LocalAudioExtractionService } from './LocalAudioExtractionService.js';
 import { LocalSegmentationService } from './LocalSegmentationService.js';
 import { LocalCoursePlanService } from './LocalCoursePlanService.js';
+import { LocalTranscriptFormatService, FormattedChunk } from './LocalTranscriptFormatService.js';
 import { GENAI_TYPES } from '../types.js';
 import { JobBody } from '../classes/validators/GenAIValidators.js';
 import { GenAIRepository } from '../repositories/providers/mongodb/GenAIRepository.js';
@@ -118,6 +119,9 @@ export class GenAIService extends BaseService {
 
     @inject(GENAI_TYPES.LocalCoursePlanService)
     private readonly localCoursePlanService: LocalCoursePlanService,
+
+    @inject(GENAI_TYPES.LocalTranscriptFormatService)
+    private readonly localTranscriptFormatService: LocalTranscriptFormatService,
 
     @inject(COURSES_TYPES.ModuleService)
     private readonly moduleService: ModuleService,
@@ -1024,6 +1028,14 @@ export class GenAIService extends BaseService {
       };
       await this.genAIRepository.update(jobId, job, session);
     });
+  }
+
+  // Stateless: no job exists yet at this point in the flow (a teacher
+  // pastes a raw transcript on the create-job form before submitting), so
+  // this just converts text and returns it -- the caller feeds the result
+  // straight into startJob's existing transcript field.
+  async convertTranscript(rawText: string): Promise<{ chunks: FormattedChunk[] }> {
+    return this.localTranscriptFormatService.convertToChunks(rawText);
   }
 
   async getAllTasksStatus(jobId: string): Promise<any> {
@@ -2006,16 +2018,30 @@ export class GenAIService extends BaseService {
               ? jobData.uploadParameters.videoItemBaseName
               : `Video`);
 
+          // An uploaded video's playback URL is a time-boxed grant (see
+          // VideoAssetController.getPlaybackUrl) -- baking one into the item
+          // would go stale. Uploaded videos are referenced by assetId
+          // instead, the same way the course-video-library flow already
+          // does it (VideoDetailsPayloadValidator), and a fresh grant is
+          // resolved at watch-time.
           const videoItemBody: CreateItemBody = {
             name: videoSegName,
             description: planEntry?.description || `Video content`,
             type: ItemType.VIDEO,
-            videoDetails: {
-              URL: jobData.url,
-              startTime: this.secondsToTimeString(segmentStartTime),
-              endTime: this.secondsToTimeString(currentSegmentEndTime),
-              points: 10,
-            },
+            videoDetails: jobData.videoAssetId
+              ? {
+                  source: 'GCS',
+                  assetId: jobData.videoAssetId,
+                  startTime: this.secondsToTimeString(segmentStartTime),
+                  endTime: this.secondsToTimeString(currentSegmentEndTime),
+                  points: 10,
+                }
+              : {
+                  URL: jobData.url,
+                  startTime: this.secondsToTimeString(segmentStartTime),
+                  endTime: this.secondsToTimeString(currentSegmentEndTime),
+                  points: 10,
+                },
           };
           const createdVideoItem = await this.itemService.createItem(
             (jobState.parameters as UploadParameters).versionId,

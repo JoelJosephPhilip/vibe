@@ -13,6 +13,7 @@ import {
   IsJSON,
   IsBoolean,
   Min,
+  ValidateIf,
 } from 'class-validator';
 import { JSONSchema } from 'class-validator-jsonschema';
 import { Type, Transform } from 'class-transformer';
@@ -390,6 +391,19 @@ class Transcript {
   chunks: Array<Chunk>;
 }
 
+@JSONSchema({ title: 'ConvertTranscriptBody' })
+class ConvertTranscriptBody {
+  @JSONSchema({
+    title: 'Raw Transcript',
+    description: 'Plain text with a timestamp (mm:ss or h:mm:ss) on its own line before each spoken block, followed by the text spoken until the next timestamp.',
+    example: '0:00\nHello and welcome...\n0:45\nToday we are covering...',
+    type: 'string',
+  })
+  @IsNotEmpty()
+  @IsString()
+  rawText: string;
+}
+
 class GenAIResponse {
   @JSONSchema({
     description: 'Unique identifier for the genAI job',
@@ -434,14 +448,25 @@ class JobBody {
 
   @JSONSchema({
     title: 'Source URL',
-    description: 'URL of the video or playlist to process',
+    description: 'URL of the video or playlist to process. Required unless videoAssetId is provided instead (an uploaded video).',
     example: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
     type: 'string',
   })
+  @ValidateIf(o => !o.videoAssetId)
   @IsNotEmpty()
   @IsString()
   @IsUrl()
-  url: string;
+  url?: string;
+
+  @JSONSchema({
+    title: 'Video Asset ID',
+    description: 'ID of an uploaded video (see /media/video-assets/upload-url) to use instead of a URL. Requires a transcript to be supplied too -- an uploaded video has no YouTube auto-transcription path.',
+    type: 'string',
+  })
+  @ValidateIf(o => !o.url)
+  @IsNotEmpty()
+  @IsMongoId()
+  videoAssetId?: string;
 
   @JSONSchema({
     title: 'Transcript',
@@ -1123,6 +1148,7 @@ export {
   TaskStatusdetailsResponse,
   CourseSectionPlanBody,
   EditCoursePlanBody,
+  ConvertTranscriptBody,
 };
 
 export const GENAI_VALIDATORS = [
@@ -1145,4 +1171,5 @@ export const GENAI_VALIDATORS = [
   TaskStatusdetailsResponse,
   CourseSectionPlanBody,
   EditCoursePlanBody,
+  ConvertTranscriptBody,
 ];

@@ -35,6 +35,7 @@ import {
   VideoSnapPointsQuery,
   VideoSnapPointsResponse,
   EditCoursePlanBody,
+  ConvertTranscriptBody,
 } from '../classes/validators/GenAIValidators.js';
 import { GenAIService } from '../services/GenAIService.js';
 import { WebhookService } from '../services/WebhookService.js';
@@ -527,6 +528,22 @@ export class GenAIController {
         description: s.description ?? '',
       })),
     });
+  }
+
+  @OpenAPI({
+    summary: 'Convert a raw timestamped transcript to the pipeline format',
+    description: `Converts plain text (a timestamp on its own line before each spoken block, mm:ss or h:mm:ss, followed by the text spoken until the next timestamp) into the {chunks: [{timestamp, text}]} shape job creation's transcript field expects, via MiniMax.<br/>
+    Stateless -- no job needs to exist yet; feed the result into POST /genai/jobs's transcript field.`,
+  })
+  @Post("/transcript/convert")
+  @Authorized()
+  @HttpCode(200)
+  @ResponseSchema(BadRequestErrorResponse, {
+    description: 'Bad Request Error',
+    statusCode: 400,
+  })
+  async convertTranscript(@Body() body: ConvertTranscriptBody) {
+    return this.genAIService.convertTranscript(body.rawText);
   }
 
   @OpenAPI({
