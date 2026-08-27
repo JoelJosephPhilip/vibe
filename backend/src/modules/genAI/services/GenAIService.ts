@@ -694,8 +694,17 @@ export class GenAIService extends BaseService {
       const job = await this.genAIRepository.getById(jobId, session);
       if (job) {
         job.jobStatus.segmentation = TaskStatus.COMPLETED;
-        // Optionally set the next task to WAITING if it was PENDING
-        if (job.jobStatus.questionGeneration === TaskStatus.PENDING) {
+        // Optionally set the next task to WAITING if it was PENDING -- but
+        // not when a coursePlan is attached: that PENDING state is the
+        // course-structure preview gate (see JobStatus.tsx's driver and
+        // CourseStructurePreview), and a merge/split edit here is exactly
+        // the in-preview action that gate exists to allow before the user
+        // explicitly approves. Auto-advancing on every edit was confirmed
+        // live to skip the approval step entirely.
+        if (
+          job.jobStatus.questionGeneration === TaskStatus.PENDING &&
+          !job.coursePlan
+        ) {
           job.jobStatus.questionGeneration = TaskStatus.WAITING;
         }
         await this.genAIRepository.update(jobId, job, session);

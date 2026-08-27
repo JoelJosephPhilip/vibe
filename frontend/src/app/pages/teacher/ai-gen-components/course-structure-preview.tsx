@@ -173,7 +173,7 @@ export default function CourseStructurePreview({ jobId, videoUrl, onApproved }: 
           <p className="text-sm text-muted-foreground">
             1 module &middot; {sections.length} section{sections.length === 1 ? "" : "s"} &middot; {sections.length} quiz{sections.length === 1 ? "" : "es"}
             {plan.questionsPerQuiz ? ` · ${plan.questionsPerQuiz} questions each` : ""}
-            {plan.maxAttempts !== undefined ? ` · ${plan.maxAttempts === -1 ? "unlimited" : plan.maxAttempts} attempts` : ""}
+            {plan.maxAttempts != null ? ` · ${plan.maxAttempts === -1 ? "unlimited" : plan.maxAttempts} attempts` : ""}
           </p>
         </CardContent>
       </Card>
