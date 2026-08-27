@@ -23,6 +23,10 @@ export default defineConfig({
     },
   },
   server: {
+    // Allows the Cloudflare quick-tunnel's Host header through — Vite
+    // rejects unrecognized hosts by default. Fine for this throwaway test
+    // tunnel; not meant to stay on for a real deployment.
+    allowedHosts: true,
     proxy: {
       // Proxy API requests to staging backend to avoid CORS issues
       '/api': {
