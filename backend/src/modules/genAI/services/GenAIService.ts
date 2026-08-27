@@ -42,8 +42,11 @@ import { COURSES_TYPES } from '#root/modules/courses/types.js';
 import { ItemService } from '#root/modules/courses/services/ItemService.js';
 import { ModuleService } from '#root/modules/courses/services/ModuleService.js';
 import { SectionService } from '#root/modules/courses/services/SectionService.js';
+import { CourseService } from '#root/modules/courses/services/CourseService.js';
+import { Course } from '#root/modules/courses/classes/transformers/Course.js';
 import { CreateModuleBody } from '#root/modules/courses/classes/validators/ModuleValidators.js';
 import { CreateSectionBody } from '#root/modules/courses/classes/validators/SectionValidators.js';
+import { CourseBody } from '#root/modules/courses/classes/validators/CourseValidators.js';
 import { QuestionBank } from '#root/modules/quizzes/classes/transformers/QuestionBank.js';
 import { QUIZZES_TYPES } from '#root/modules/quizzes/types.js';
 import {
@@ -121,6 +124,9 @@ export class GenAIService extends BaseService {
 
     @inject(COURSES_TYPES.SectionService)
     private readonly sectionService: SectionService,
+
+    @inject(COURSES_TYPES.CourseService)
+    private readonly courseService: CourseService,
 
     private storage = new Storage({
       projectId: appConfig.firebase.projectId,
@@ -278,6 +284,15 @@ export class GenAIService extends BaseService {
           if (job.uploadParameters.sectionId) {
             resolvedUploadParameters.sectionId = job.uploadParameters.sectionId;
           }
+          // Same for an auto-created course/version once uploadContent has
+          // persisted one -- a stray override shouldn't fork a job onto a
+          // second course mid-pipeline.
+          if (job.uploadParameters.courseId) {
+            resolvedUploadParameters.courseId = job.uploadParameters.courseId;
+          }
+          if (job.uploadParameters.versionId) {
+            resolvedUploadParameters.versionId = job.uploadParameters.versionId;
+          }
 
           await this.genAIRepository.update(jobId, {
             uploadParameters: resolvedUploadParameters,
@@ -374,6 +389,15 @@ export class GenAIService extends BaseService {
             }
             if (job.uploadParameters.sectionId) {
               resolvedUploadParameters.sectionId = job.uploadParameters.sectionId;
+            }
+            // Same for an auto-created course/version once uploadContent has
+            // persisted one -- a stray override on retry shouldn't fork the
+            // job onto a second course mid-pipeline.
+            if (job.uploadParameters.courseId) {
+              resolvedUploadParameters.courseId = job.uploadParameters.courseId;
+            }
+            if (job.uploadParameters.versionId) {
+              resolvedUploadParameters.versionId = job.uploadParameters.versionId;
             }
 
             await this.genAIRepository.update(jobId, {
@@ -843,6 +867,9 @@ export class GenAIService extends BaseService {
   async getCoursePlan(jobId: string): Promise<{
     moduleName: string;
     moduleDescription: string;
+    courseName?: string;
+    courseDescription?: string;
+    versionName?: string;
     videoUrl: string;
     questionsPerQuiz?: number;
     maxAttempts?: number;
@@ -905,7 +932,29 @@ export class GenAIService extends BaseService {
       moduleDescription = generatedModule.description;
     }
 
-    job.coursePlan = { moduleName, moduleDescription, sections };
+    // Only relevant for jobs with no pre-existing courseId/versionId --
+    // reuses the module LLM output rather than a second prompt, since a
+    // single-video course-generation job's course and module are, in
+    // practice, the same thing.
+    const hasRealCourse =
+      !!job.uploadParameters?.courseId && !!job.uploadParameters?.versionId;
+    let courseName = job.coursePlan?.courseName;
+    let courseDescription = job.coursePlan?.courseDescription ?? '';
+    let versionName = job.coursePlan?.versionName;
+    if (!hasRealCourse) {
+      if (!courseName) {
+        courseName = moduleName;
+        courseDescription = moduleDescription;
+      }
+      if (!versionName) versionName = 'v1';
+    }
+
+    job.coursePlan = {
+      moduleName,
+      moduleDescription,
+      sections,
+      ...(hasRealCourse ? {} : { courseName, courseDescription, versionName }),
+    };
     await this._withTransaction(session =>
       this.genAIRepository.update(jobId, job, session),
     );
@@ -914,6 +963,7 @@ export class GenAIService extends BaseService {
     return {
       moduleName,
       moduleDescription,
+      ...(hasRealCourse ? {} : { courseName, courseDescription, versionName }),
       videoUrl: job.url,
       questionsPerQuiz: job.uploadParameters?.questionsPerQuiz,
       maxAttempts: job.uploadParameters?.maxAttempts,
@@ -932,17 +982,31 @@ export class GenAIService extends BaseService {
 
   async updateCoursePlan(
     jobId: string,
-    body: { moduleName?: string; moduleDescription?: string; sections: CourseSectionPlan[] },
+    body: {
+      moduleName?: string;
+      moduleDescription?: string;
+      courseName?: string;
+      courseDescription?: string;
+      versionName?: string;
+      sections: CourseSectionPlan[];
+    },
   ): Promise<void> {
     return this._withTransaction(async session => {
       const job = await this.genAIRepository.getById(jobId, session);
       if (!job) {
         throw new NotFoundError(`GenAI job ${jobId} not found`);
       }
+      const hasRealCourse =
+        !!job.uploadParameters?.courseId && !!job.uploadParameters?.versionId;
       job.coursePlan = {
         moduleName: body.moduleName ?? job.coursePlan?.moduleName ?? 'Module',
         moduleDescription: body.moduleDescription ?? job.coursePlan?.moduleDescription ?? '',
         sections: body.sections,
+        ...(hasRealCourse ? {} : {
+          courseName: body.courseName ?? job.coursePlan?.courseName,
+          courseDescription: body.courseDescription ?? job.coursePlan?.courseDescription ?? '',
+          versionName: body.versionName ?? job.coursePlan?.versionName,
+        }),
       };
       await this.genAIRepository.update(jobId, job, session);
     });
@@ -1783,6 +1847,46 @@ export class GenAIService extends BaseService {
         // attached, so AISectionPage/AiWorkflow's existing pre-existing-section
         // flow is untouched.
         const coursePlan = jobData.coursePlan;
+        // Same deferred-creation idea as the module block below, one level
+        // up: a job started from just a YouTube URL (no pre-existing
+        // course) carries a proposed courseName/versionName in coursePlan
+        // (see getCoursePlan's course-level self-heal); the real Course +
+        // CourseVersion only get created here, on approval.
+        if (coursePlan && (!uploadParams.courseId || !uploadParams.versionId)) {
+          try {
+            const course = new Course({
+              name: coursePlan.courseName || coursePlan.moduleName,
+              description: coursePlan.courseDescription || coursePlan.moduleDescription || '',
+            } as CourseBody);
+            const createdCourse = await this.courseService.createCourse(
+              course,
+              coursePlan.versionName || 'v1',
+              coursePlan.courseDescription || '',
+              jobData.userId.toString(),
+              [],
+              false,
+              0,
+            );
+            uploadParams.courseId = createdCourse._id.toString();
+            uploadParams.versionId = createdCourse.versions.at(-1).toString();
+          } catch (err) {
+            throw new BadRequestError(
+              `Could not auto-create course "${coursePlan.courseName}": ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+          // Idempotency: persist immediately, same reasoning as the
+          // RUNNING-guard write at the top of this method -- without this, a
+          // rerunTask retry after a mid-loop crash would see no courseId in
+          // job.uploadParameters and create a second course.
+          await this._withTransaction(session =>
+            this.genAIRepository.update(
+              jobId,
+              { uploadParameters: { ...uploadParams } },
+              session,
+            ),
+          );
+        }
+
         let moduleIdForUpload = (jobState.parameters as UploadParameters).moduleId;
         if (coursePlan && !moduleIdForUpload) {
           try {
@@ -1802,6 +1906,16 @@ export class GenAIService extends BaseService {
               `Could not auto-create module "${coursePlan.moduleName}": ${err instanceof Error ? err.message : String(err)}`,
             );
           }
+          // Idempotency, same as the course block above -- a pre-existing
+          // gap this closes: without persisting moduleId back, a retry
+          // after a mid-loop crash would create a second module too.
+          await this._withTransaction(session =>
+            this.genAIRepository.update(
+              jobId,
+              { uploadParameters: { ...uploadParams, moduleId: moduleIdForUpload } },
+              session,
+            ),
+          );
         }
 
         for (const currentSegmentId of jobState.segmentMap) {

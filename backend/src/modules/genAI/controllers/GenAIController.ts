@@ -518,6 +518,9 @@ export class GenAIController {
     await this.genAIService.updateCoursePlan(id, {
       moduleName: body.moduleName,
       moduleDescription: body.moduleDescription,
+      courseName: body.courseName,
+      courseDescription: body.courseDescription,
+      versionName: body.versionName,
       sections: body.sections.map(s => ({
         segmentEnd: s.segmentEnd,
         name: s.name,

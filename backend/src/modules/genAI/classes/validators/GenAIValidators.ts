@@ -259,114 +259,6 @@ class UploadParameters {
     example: '60d5f484f1c4d8b3c8f8e4b1',
     type: 'string',
   })
-  @IsNotEmpty()
-  @IsMongoId()
-  @IsString()
-  courseId: string;
-
-  @JSONSchema({
-    title: 'Version ID',
-    description: 'ID of the course version to upload the content to',
-    example: '60d5f484f1c4d8b3c8f8e4b2',
-    type: 'string',
-  })
-  @IsNotEmpty()
-  @IsMongoId()
-  @IsString()
-  versionId: string;
-
-  @JSONSchema({
-    title: 'Module ID',
-    description: 'ID of the module to upload the content to',
-    example: '60d5f484f1c4d8b3c8f8e4b3',
-    type: 'string',
-  })
-  @IsOptional()
-  @IsMongoId()
-  @IsString()
-  moduleId?: string;
-
-  @JSONSchema({
-    title: 'Section ID',
-    description: 'ID of the section to upload the content to',
-    example: '60d5f484f1c4d8b3c8f8e4b4',
-    type: 'string',
-  })
-  @IsOptional()
-  @IsMongoId()
-  @IsString()
-  sectionId?: string;
-
-  @JSONSchema({
-    title: 'Video Item Base Name',
-    description: 'Base name for the video item to be created. Optional when a course plan (auto-created module/sections) exists -- the plan supplies per-section names instead.',
-    example: 'video_item',
-    type: 'string',
-  })
-  @IsOptional()
-  @IsString()
-  videoItemBaseName?: string;
-
-  @JSONSchema({
-    title: 'Quiz Item Base Name',
-    description: 'Base name for the quiz item to be created. Optional when a course plan (auto-created module/sections) exists -- the plan supplies per-section names instead.',
-    example: 'quiz_item',
-    type: 'string',
-  })
-  @IsOptional()
-  @IsString()
-  quizItemBaseName?: string;
-
-  @JSONSchema({
-    title: 'Questions Per Quiz',
-    description: 'Number of questions to show per quiz item',
-    example: 5,
-    type: 'number',
-  })
-  @IsOptional()
-  @IsNumber()
-  questionsPerQuiz?: number;
-
-  @JSONSchema({
-    title: 'Max Attempts',
-    description: 'Max attempts allowed per quiz item. -1 means unlimited.',
-    example: 3,
-    type: 'number',
-  })
-  @IsOptional()
-  @IsNumber()
-  @Min(-1)
-  maxAttempts?: number;
-
-  @JSONSchema({
-    title: 'Smart Bloom Enabled',
-    description: 'Forces bloom-level question-bank split during upload',
-    example: true,
-    type: 'boolean',
-  })
-  @IsOptional()
-  @IsBoolean()
-  smartBloomEnabled?: boolean;
-
-  @JSONSchema({
-    title: 'Curated Questions',
-    description: 'Optional curated questions payload for upload content task',
-    type: 'array',
-  })
-  @IsOptional()
-  @IsArray()
-  @IsObject({ each: true })
-  questions?: any[];
-}
-
-@JSONSchema({ title: 'PartialUploadParameters' })
-class PartialUploadParameters {
-  @JSONSchema({
-    title: 'Course ID',
-    description: 'ID of the course to upload the content to',
-    example: '60d5f484f1c4d8b3c8f8e4b1',
-    type: 'string',
-  })
   @IsOptional()
   @IsMongoId()
   @IsString()
@@ -407,7 +299,7 @@ class PartialUploadParameters {
 
   @JSONSchema({
     title: 'Video Item Base Name',
-    description: 'Base name for the video item to be created',
+    description: 'Base name for the video item to be created. Optional when a course plan (auto-created module/sections) exists -- the plan supplies per-section names instead.',
     example: 'video_item',
     type: 'string',
   })
@@ -417,7 +309,7 @@ class PartialUploadParameters {
 
   @JSONSchema({
     title: 'Quiz Item Base Name',
-    description: 'Base name for the quiz item to be created',
+    description: 'Base name for the quiz item to be created. Optional when a course plan (auto-created module/sections) exists -- the plan supplies per-section names instead.',
     example: 'quiz_item',
     type: 'string',
   })
@@ -714,12 +606,12 @@ class ApproveStartBody {
       case TaskType.QUESTION_GENERATION:
         return QuestionGenerationParameters;
       case TaskType.UPLOAD_CONTENT:
-        return PartialUploadParameters;
+        return UploadParameters;
       default:
         return Object;
     }
   })
-  parameters?: Partial<TranscriptParameters | SegmentationParameters | QuestionGenerationParameters | PartialUploadParameters>;
+  parameters?: Partial<TranscriptParameters | SegmentationParameters | QuestionGenerationParameters | UploadParameters>;
 
   @JSONSchema({
     title: 'Use Previous',
@@ -775,12 +667,12 @@ class RerunTaskBody {
       case TaskType.QUESTION_GENERATION:
         return QuestionGenerationParameters;
       case TaskType.UPLOAD_CONTENT:
-        return PartialUploadParameters;
+        return UploadParameters;
       default:
         return Object;
     }
   })
-  parameters?: Partial<TranscriptParameters | SegmentationParameters | QuestionGenerationParameters | PartialUploadParameters>;
+  parameters?: Partial<TranscriptParameters | SegmentationParameters | QuestionGenerationParameters | UploadParameters>;
 
   @JSONSchema({
     title: 'Use Previous',
@@ -1004,6 +896,33 @@ class EditCoursePlanBody {
   @IsOptional()
   @IsString()
   moduleDescription?: string;
+
+  @JSONSchema({
+    title: 'Course Title',
+    description: 'Only used for jobs with no pre-existing course -- ignored otherwise',
+    type: 'string',
+  })
+  @IsOptional()
+  @IsString()
+  courseName?: string;
+
+  @JSONSchema({
+    title: 'Course Description',
+    description: 'Only used for jobs with no pre-existing course -- ignored otherwise',
+    type: 'string',
+  })
+  @IsOptional()
+  @IsString()
+  courseDescription?: string;
+
+  @JSONSchema({
+    title: 'Version Label',
+    description: 'Only used for jobs with no pre-existing course -- ignored otherwise',
+    type: 'string',
+  })
+  @IsOptional()
+  @IsString()
+  versionName?: string;
 
   @JSONSchema({
     title: 'Sections',

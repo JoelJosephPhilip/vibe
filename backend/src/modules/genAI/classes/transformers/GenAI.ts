@@ -64,8 +64,8 @@ export interface QuestionGenerationParameters {
 }
 
 export interface UploadParameters {
-	courseId: string;
-	versionId: string;
+	courseId?: string;
+	versionId?: string;
 	moduleId?: string;
 	sectionId?: string;
 	videoItemBaseName?: string;
@@ -89,6 +89,12 @@ export interface CoursePlan {
 	moduleName: string;
 	moduleDescription: string;
 	sections: CourseSectionPlan[];
+	// Only populated for jobs with no pre-existing courseId/versionId --
+	// see GenAIService.getCoursePlan's course-level self-heal and
+	// uploadContent's course auto-create block.
+	courseName?: string;
+	courseDescription?: string;
+	versionName?: string;
 }
 
 export interface audioData {
