@@ -2,6 +2,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { DEMO_EXAM } from '@/lib/examStore'
 import { useAuthStore } from '@/store/auth-store'
 import { usePublishedExams, useMyAttempts } from '@/hooks/exam-hooks'
+import { ThemeToggle } from '@/components/theme-toggle'
 
 function totalMarks(exam) {
   return (exam.questions || []).reduce((sum, q) => sum + (Number(q.marks) || 0), 0)
@@ -70,14 +71,21 @@ export default function HomePage() {
               ViBe Test Platform
             </h1>
           </div>
-          {user?.role === 'teacher' && (
-            <Link
-              to="/admin"
-              className="inline-flex items-center justify-center rounded-md border border-input bg-background px-4 py-2 text-sm font-medium hover:bg-accent"
-            >
-              Admin Panel
-            </Link>
-          )}
+          <div className="flex items-center gap-2">
+            {/* This page has no persistent dashboard header/sidebar of its
+                own (ExamAppShell renders it standalone inside a
+                MemoryRouter), so it had no way to reach the theme toggle
+                that lives in that outer chrome. */}
+            <ThemeToggle />
+            {user?.role === 'teacher' && (
+              <Link
+                to="/admin"
+                className="inline-flex items-center justify-center rounded-md border border-input bg-background px-4 py-2 text-sm font-medium hover:bg-accent"
+              >
+                Admin Panel
+              </Link>
+            )}
+          </div>
         </header>
 
         <section>
