@@ -138,7 +138,11 @@ export interface Transcript {
 // 1. Create GenAI Job
 export const createGenAIJob = async (
   params: {
-    videoUrl: string;
+    // Exactly one of these is expected: a YouTube URL, or an uploaded
+    // video's asset id (see /media/video-assets/upload-url) paired with a
+    // transcript.
+    videoUrl?: string;
+    videoAssetId?: string;
     transcript?: Transcript;
     courseId?: string | null;
     versionId?: string | null;
@@ -158,6 +162,7 @@ export const createGenAIJob = async (
 ): Promise<{ jobId: string }> => {
   const {
     videoUrl,
+    videoAssetId,
     transcript,
     courseId,
     versionId,
@@ -185,9 +190,13 @@ export const createGenAIJob = async (
 
   const body: Record<string, any> = {
     type: 'VIDEO',
-    url: videoUrl,
     uploadParameters,
   };
+  if (videoAssetId) {
+    body.videoAssetId = videoAssetId;
+  } else {
+    body.url = videoUrl;
+  }
 
   // Add transcription chunks
   if (transcript)
@@ -625,6 +634,17 @@ export const updateCoursePlan = async (
     method: 'PATCH',
     body: JSON.stringify(plan),
   });
+};
+
+// Converts a raw mm:ss/h:mm:ss-timestamped transcript into the {chunks:[...]}
+// shape createGenAIJob's transcript param expects, via MiniMax. Stateless --
+// no job needs to exist yet.
+export const convertTranscript = async (rawText: string): Promise<Transcript> => {
+  const response = await makeAuthenticatedRequest('/genai/transcript/convert', {
+    method: 'POST',
+    body: JSON.stringify({ rawText }),
+  });
+  return response.json();
 };
 
 // aiSectionAPI for modal usage
