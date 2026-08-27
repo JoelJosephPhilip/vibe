@@ -246,69 +246,83 @@ export class GenAIService extends BaseService {
       | UploadParameters
     >,
   ): Promise<any> {
-    return this._withTransaction(async session => {
-      const job = await this.genAIRepository.getById(jobId, session);
-      if (!job) {
-        throw new NotFoundError(`Job with ID ${jobId} not found`);
-      }
-      // if (job.userId !== userId) {
-      //   throw new NotFoundError(`User with ID ${userId} does not have permission to approve this job`);
-      // }
-      const jobState = await this.getJobState(jobId, usePrevious);
-      jobState.parameters = {
-        ...jobState.parameters,
-        ...this.removeUndefined(parameters),
-      };
-      if (jobState.taskStatus == TaskStatus.COMPLETED) {
-        throw new BadRequestError(
-          `The task ${jobState.currentTask} for job ID ${jobId} is already completed, you can either rerun the task or approve to move to the next taask.`,
-        );
-      }
-      if (jobState.currentTask === TaskType.UPLOAD_CONTENT) {
-        // Persist upload parameters to DB before content upload
-        let resolvedUploadParameters = {
-          ...job.uploadParameters,
-        } as UploadParameters;
-
-        if (parameters) {
-          resolvedUploadParameters = {
-            ...job.uploadParameters,
-            ...this.removeUndefined(parameters as Partial<UploadParameters>),
-          };
-
-          // Keep upload destination stable for the life of this job.
-          // UI-provided module/section at upload time should not redirect content elsewhere.
-          if (job.uploadParameters.moduleId) {
-            resolvedUploadParameters.moduleId = job.uploadParameters.moduleId;
-          }
-          if (job.uploadParameters.sectionId) {
-            resolvedUploadParameters.sectionId = job.uploadParameters.sectionId;
-          }
-          // Same for an auto-created course/version once uploadContent has
-          // persisted one -- a stray override shouldn't fork a job onto a
-          // second course mid-pipeline.
-          if (job.uploadParameters.courseId) {
-            resolvedUploadParameters.courseId = job.uploadParameters.courseId;
-          }
-          if (job.uploadParameters.versionId) {
-            resolvedUploadParameters.versionId = job.uploadParameters.versionId;
-          }
-
-          await this.genAIRepository.update(jobId, {
-            uploadParameters: resolvedUploadParameters,
-          }, session);
+    // Same split as rerunTask below: only the guard checks and parameter
+    // bookkeeping are transactional. uploadContent (and the webhook/
+    // fallback call for every other task type) is long-running network
+    // work that doesn't use this transaction's session, so wrapping it
+    // here just re-creates the exact long-held-transaction hang
+    // uploadContent's own internal restructuring was meant to eliminate --
+    // this is the primary path callers use to start UPLOAD_CONTENT (not
+    // just the rerunTask retry path), so it needs the same fix.
+    const {jobState, isUploadContentRun} = await this._withTransaction(
+      async session => {
+        const job = await this.genAIRepository.getById(jobId, session);
+        if (!job) {
+          throw new NotFoundError(`Job with ID ${jobId} not found`);
         }
+        // if (job.userId !== userId) {
+        //   throw new NotFoundError(`User with ID ${userId} does not have permission to approve this job`);
+        // }
+        const jobState = await this.getJobState(jobId, usePrevious);
+        jobState.parameters = {
+          ...jobState.parameters,
+          ...this.removeUndefined(parameters),
+        };
+        if (jobState.taskStatus == TaskStatus.COMPLETED) {
+          throw new BadRequestError(
+            `The task ${jobState.currentTask} for job ID ${jobId} is already completed, you can either rerun the task or approve to move to the next taask.`,
+          );
+        }
+        if (jobState.currentTask === TaskType.UPLOAD_CONTENT) {
+          // Persist upload parameters to DB before content upload
+          let resolvedUploadParameters = {
+            ...job.uploadParameters,
+          } as UploadParameters;
 
-        jobState.parameters = resolvedUploadParameters;
-        const result = await this.uploadContent(jobId, jobState);
-        return result;
-      }
-      // Direct call, replaced below by a fallback-aware wrapper:
-      // return this.webhookService.approveTaskStart(jobId, jobState);
-      return this._callAiServerOrFallback(jobId, jobState, (id, state) =>
-        this.webhookService.approveTaskStart(id, state),
-      );
-    });
+          if (parameters) {
+            resolvedUploadParameters = {
+              ...job.uploadParameters,
+              ...this.removeUndefined(parameters as Partial<UploadParameters>),
+            };
+
+            // Keep upload destination stable for the life of this job.
+            // UI-provided module/section at upload time should not redirect content elsewhere.
+            if (job.uploadParameters.moduleId) {
+              resolvedUploadParameters.moduleId = job.uploadParameters.moduleId;
+            }
+            if (job.uploadParameters.sectionId) {
+              resolvedUploadParameters.sectionId = job.uploadParameters.sectionId;
+            }
+            // Same for an auto-created course/version once uploadContent has
+            // persisted one -- a stray override shouldn't fork a job onto a
+            // second course mid-pipeline.
+            if (job.uploadParameters.courseId) {
+              resolvedUploadParameters.courseId = job.uploadParameters.courseId;
+            }
+            if (job.uploadParameters.versionId) {
+              resolvedUploadParameters.versionId = job.uploadParameters.versionId;
+            }
+
+            await this.genAIRepository.update(jobId, {
+              uploadParameters: resolvedUploadParameters,
+            }, session);
+          }
+
+          jobState.parameters = resolvedUploadParameters;
+          return {jobState, isUploadContentRun: true};
+        }
+        return {jobState, isUploadContentRun: false};
+      },
+    );
+
+    if (isUploadContentRun) {
+      return this.uploadContent(jobId, jobState);
+    }
+    // Direct call, replaced below by a fallback-aware wrapper:
+    // return this.webhookService.approveTaskStart(jobId, jobState);
+    return this._callAiServerOrFallback(jobId, jobState, (id, state) =>
+      this.webhookService.approveTaskStart(id, state),
+    );
   }
 
   async rerunTask(
@@ -1857,6 +1871,23 @@ export class GenAIService extends BaseService {
         // attached, so AISectionPage/AiWorkflow's existing pre-existing-section
         // flow is untouched.
         const coursePlan = jobData.coursePlan;
+        // courseId/versionId are meant to travel together (one identifies
+        // a course, the other a specific version of it) -- supplying only
+        // one is always a mistake, never a valid "auto-create just the
+        // missing half" request, since a version can't be auto-created
+        // into an arbitrary existing course without knowing which module/
+        // section structure it should match. Catch that here rather than
+        // silently falling through to the auto-create branch below, which
+        // would otherwise create a whole new, unrelated course and quietly
+        // discard the one ID the caller did supply.
+        if (
+          (uploadParams.courseId && !uploadParams.versionId) ||
+          (!uploadParams.courseId && uploadParams.versionId)
+        ) {
+          throw new BadRequestError(
+            'courseId and versionId must be provided together, or both left empty to auto-create a new course.',
+          );
+        }
         // Same deferred-creation idea as the module block below, one level
         // up: a job started from just a YouTube URL (no pre-existing
         // course) carries a proposed courseName/versionName in coursePlan

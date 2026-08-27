@@ -29,6 +29,12 @@ export default function GenerateSectionPage() {
             });
             return;
         }
+        if(!!courseId !== !!versionId) {
+            toast.error("Course ID and Version ID go together", {
+                description: "Provide both to add to an existing course, or leave both blank to auto-create a new one.",
+            });
+            return;
+        }
         setIsLoading(true);
         try {
             const { jobId } = await createGenAIJob({
