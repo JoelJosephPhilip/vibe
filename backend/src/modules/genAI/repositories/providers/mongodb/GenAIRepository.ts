@@ -176,7 +176,7 @@ export class GenAIRepository {
     return result.insertedId?.toString();
   }
 
-  async getById(jobId: string, session: ClientSession): Promise<GenAIBody> {
+  async getById(jobId: string, session?: ClientSession): Promise<GenAIBody> {
     await this.init();
     const result = await this.genAICollection.findOne(
       {

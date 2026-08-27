@@ -1440,8 +1440,22 @@ export class GenAIService extends BaseService {
       preCheck.jobStatus.uploadContent = TaskStatus.RUNNING;
       await this.genAIRepository.update(jobId, preCheck, session);
     });
-    return this._withTransaction(async session => {
-      const jobData = await this.genAIRepository.getById(jobId, session);
+    // Deliberately NOT one big transaction around the whole loop below.
+    // Every module/section/item/question-bank create already runs its own
+    // independent transaction (see comment above), so the outer transaction
+    // bought no atomicity for any of that -- it only held a MongoDB session
+    // open for the entire loop's duration (minutes, for a multi-segment
+    // video: confirmed live, a 13-section upload sat with the outer
+    // transaction open for over 50 minutes without completing or erroring).
+    // MongoDB aborts transactions past transactionLifetimeLimitSeconds
+    // (60s default) server-side; whether that produces a driver-visible
+    // retry or a silently-hung session on a dead transaction, wrapping ~150
+    // sequential network round-trips in one transaction was never going to
+    // finish reliably. The only two things that actually need atomicity are
+    // the setup read and the final status write, both bookended in their
+    // own short transactions below, matching the RUNNING-guard above.
+    const jobData = await this.genAIRepository.getById(jobId);
+    {
       const normalizeBloomLevel = (input: unknown): BloomLevelKey => {
         if (typeof input === 'number') {
           if (input === 1) return 'knowledge';
@@ -2201,18 +2215,20 @@ export class GenAIService extends BaseService {
           previousSegmentEndTime = currentSegmentEndTime;
         }
         jobData.jobStatus.uploadContent = TaskStatus.COMPLETED;
-        const taskDAta = await this.genAIRepository.getTaskDataByJobId(
-          jobId,
-          session,
-        );
-        if (!taskDAta.uploadContent) {
-          taskDAta.uploadContent = [{ status: TaskStatus.COMPLETED }];
-        }
-        taskDAta.uploadContent.push({
-          status: TaskStatus.COMPLETED,
+        await this._withTransaction(async session => {
+          const taskDAta = await this.genAIRepository.getTaskDataByJobId(
+            jobId,
+            session,
+          );
+          if (!taskDAta.uploadContent) {
+            taskDAta.uploadContent = [{ status: TaskStatus.COMPLETED }];
+          }
+          taskDAta.uploadContent.push({
+            status: TaskStatus.COMPLETED,
+          });
+          await this.genAIRepository.updateTaskData(jobId, taskDAta, session);
+          await this.genAIRepository.update(jobId, jobData, session);
         });
-        await this.genAIRepository.updateTaskData(jobId, taskDAta, session);
-        await this.genAIRepository.update(jobId, jobData, session);
         return {
           message:
             'Video items, Quiz items, and Question banks for segments generated successfully from video.',
@@ -2233,29 +2249,31 @@ export class GenAIService extends BaseService {
         };
       } catch (error) {
         jobData.jobStatus.uploadContent = TaskStatus.FAILED;
-        await this.genAIRepository.update(jobId, jobData, session);
-        const taskDAta = await this.genAIRepository.getTaskDataByJobId(
-          jobId,
-          session,
-        );
-        if (!taskDAta) {
-          throw new NotFoundError(`Task data for job ID ${jobId} not found`);
-        }
-        if (!taskDAta.uploadContent) {
-          taskDAta.uploadContent = [
-            { status: TaskStatus.FAILED, error: error.message },
-          ];
-        }
-        taskDAta.uploadContent.push({
-          status: TaskStatus.FAILED,
-          error: error.message,
+        await this._withTransaction(async session => {
+          await this.genAIRepository.update(jobId, jobData, session);
+          const taskDAta = await this.genAIRepository.getTaskDataByJobId(
+            jobId,
+            session,
+          );
+          if (!taskDAta) {
+            throw new NotFoundError(`Task data for job ID ${jobId} not found`);
+          }
+          if (!taskDAta.uploadContent) {
+            taskDAta.uploadContent = [
+              { status: TaskStatus.FAILED, error: error.message },
+            ];
+          }
+          taskDAta.uploadContent.push({
+            status: TaskStatus.FAILED,
+            error: error.message,
+          });
+          await this.genAIRepository.updateTaskData(jobId, taskDAta, session);
         });
-        await this.genAIRepository.updateTaskData(jobId, taskDAta, session);
         console.error(`Error during content upload for job ${jobId}:`, error);
         throw new InternalServerError(
           `Failed to upload content for job ${jobId}: ${error.message}`,
         );
       }
-    });
+    }
   }
 }
