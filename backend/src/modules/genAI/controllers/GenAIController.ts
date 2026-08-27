@@ -34,6 +34,7 @@ import {
   TaskStatusdetailsResponse,
   VideoSnapPointsQuery,
   VideoSnapPointsResponse,
+  EditCoursePlanBody,
 } from '../classes/validators/GenAIValidators.js';
 import { GenAIService } from '../services/GenAIService.js';
 import { WebhookService } from '../services/WebhookService.js';
@@ -453,6 +454,76 @@ export class GenAIController {
     }
 
     await this.genAIService.editTranscript(id, transcript, index);
+  }
+
+  @OpenAPI({
+    summary: 'Get course plan preview',
+    description: `Returns the AI-generated course-structure preview (module + one section per segment) for a job, generating any missing entries first.`,
+  })
+  @Get("/jobs/:id/course-plan")
+  @Authorized()
+  @ResponseSchema(GenAINotFoundErrorResponse, {
+    description: 'GenAI not found',
+    statusCode: 404,
+  })
+  @ResponseSchema(BadRequestErrorResponse, {
+    description: 'Bad Request Error',
+    statusCode: 400,
+  })
+  @ResponseSchema(ForbiddenErrorResponse, {
+    description: 'Forbidden Error',
+    statusCode: 403,
+  })
+  async getCoursePlan(@Params() params: GenAIIdParams, @Ability(getGenAIAbility) {ability}) {
+    const { id } = params;
+    const job = await this.genAIService.getJobStatus(id);
+
+    const genaiRes = subject('GenAI', { courseId: job.uploadParameters.courseId, versionId: job.uploadParameters.versionId });
+    if (!ability.can('modify', genaiRes)) {
+      //throw new ForbiddenError('You do not have permission to view the course plan of this job');
+    }
+
+    return this.genAIService.getCoursePlan(id);
+  }
+
+  @OpenAPI({
+    summary: 'Update course plan',
+    description: `Overwrites the course-structure preview (module/section names, descriptions, and section boundaries) for a job.<br/>
+    It returns an empty body with a 200 status code.`,
+  })
+  @Patch("/jobs/:id/course-plan")
+  @Authorized()
+  @OnUndefined(200)
+  @ResponseSchema(GenAINotFoundErrorResponse, {
+    description: 'GenAI not found',
+    statusCode: 404,
+  })
+  @ResponseSchema(BadRequestErrorResponse, {
+    description: 'Bad Request Error',
+    statusCode: 400,
+  })
+  @ResponseSchema(ForbiddenErrorResponse, {
+    description: 'Forbidden Error',
+    statusCode: 403,
+  })
+  async updateCoursePlan(@Params() params: GenAIIdParams, @Body() body: EditCoursePlanBody, @Ability(getGenAIAbility) {ability}) {
+    const { id } = params;
+    const job = await this.genAIService.getJobStatus(id);
+
+    const genaiRes = subject('GenAI', { courseId: job.uploadParameters.courseId, versionId: job.uploadParameters.versionId });
+    if (!ability.can('modify', genaiRes)) {
+      //throw new ForbiddenError('You do not have permission to edit the course plan of this job');
+    }
+
+    await this.genAIService.updateCoursePlan(id, {
+      moduleName: body.moduleName,
+      moduleDescription: body.moduleDescription,
+      sections: body.sections.map(s => ({
+        segmentEnd: s.segmentEnd,
+        name: s.name,
+        description: s.description ?? '',
+      })),
+    });
   }
 
   @OpenAPI({

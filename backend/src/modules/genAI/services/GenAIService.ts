@@ -5,6 +5,7 @@ import { LocalTranscriptionService } from './LocalTranscriptionService.js';
 import { LocalQuestionGenerationService } from './LocalQuestionGenerationService.js';
 import { LocalAudioExtractionService } from './LocalAudioExtractionService.js';
 import { LocalSegmentationService } from './LocalSegmentationService.js';
+import { LocalCoursePlanService } from './LocalCoursePlanService.js';
 import { GENAI_TYPES } from '../types.js';
 import { JobBody } from '../classes/validators/GenAIValidators.js';
 import { GenAIRepository } from '../repositories/providers/mongodb/GenAIRepository.js';
@@ -20,6 +21,7 @@ import {
 import {
   audioData,
   contentUploadData,
+  CourseSectionPlan,
   GenAIBody,
   JobState,
   JobStatus,
@@ -38,6 +40,10 @@ import { QuestionFactory } from '#root/modules/quizzes/classes/index.js';
 import { CreateItemBody } from '#root/modules/courses/classes/index.js';
 import { COURSES_TYPES } from '#root/modules/courses/types.js';
 import { ItemService } from '#root/modules/courses/services/ItemService.js';
+import { ModuleService } from '#root/modules/courses/services/ModuleService.js';
+import { SectionService } from '#root/modules/courses/services/SectionService.js';
+import { CreateModuleBody } from '#root/modules/courses/classes/validators/ModuleValidators.js';
+import { CreateSectionBody } from '#root/modules/courses/classes/validators/SectionValidators.js';
 import { QuestionBank } from '#root/modules/quizzes/classes/transformers/QuestionBank.js';
 import { QUIZZES_TYPES } from '#root/modules/quizzes/types.js';
 import {
@@ -106,6 +112,15 @@ export class GenAIService extends BaseService {
 
     @inject(GENAI_TYPES.LocalSegmentationService)
     private readonly localSegmentationService: LocalSegmentationService,
+
+    @inject(GENAI_TYPES.LocalCoursePlanService)
+    private readonly localCoursePlanService: LocalCoursePlanService,
+
+    @inject(COURSES_TYPES.ModuleService)
+    private readonly moduleService: ModuleService,
+
+    @inject(COURSES_TYPES.SectionService)
+    private readonly sectionService: SectionService,
 
     private storage = new Storage({
       projectId: appConfig.firebase.projectId,
@@ -785,6 +800,122 @@ export class GenAIService extends BaseService {
     });
   }
 
+  /**
+   * Course-structure preview shown before UPLOAD_CONTENT runs (see
+   * GENAI_COURSE_PREVIEW_PLAN.md). Self-healing: only generates AI
+   * name/description for segmentEnds that don't already have a stored plan
+   * entry, so a merge/split (via editSegmentMap) only costs LLM calls for the
+   * boundaries that actually changed -- untouched segments, including any the
+   * user hand-edited, keep their existing entry.
+   */
+  async getCoursePlan(jobId: string): Promise<{
+    moduleName: string;
+    moduleDescription: string;
+    videoUrl: string;
+    questionsPerQuiz?: number;
+    maxAttempts?: number;
+    sections: Array<{
+      segmentStart: number;
+      segmentEnd: number;
+      name: string;
+      description: string;
+      transcriptExcerpt: string;
+    }>;
+  }> {
+    const job = await this._withTransaction(session =>
+      this.genAIRepository.getById(jobId, session),
+    );
+    if (!job) {
+      throw new NotFoundError(`GenAI job ${jobId} not found`);
+    }
+    const task = await this.genAIRepository.getTaskDataByJobId(jobId);
+    const segmentation = task?.segmentation?.[task.segmentation.length - 1];
+    const segmentMap: number[] = segmentation?.segmentationMap ?? [];
+    if (segmentMap.length === 0) {
+      throw new BadRequestError(
+        `Job ${jobId} has no segmentation yet -- the course plan can only be previewed after SEGMENTATION completes.`,
+      );
+    }
+
+    const chunks = segmentation?.transcriptFileUrl
+      ? await this.fetchTranscriptChunks(segmentation.transcriptFileUrl)
+      : [];
+    const transcriptChunks = chunks.map(c => ({
+      timestamp: [c.start, c.end] as [number, number | null],
+      text: c.text,
+    }));
+
+    const existingByEnd = new Map(
+      (job.coursePlan?.sections ?? []).map(s => [s.segmentEnd, s]),
+    );
+    const missingEnds = segmentMap.filter(end => !existingByEnd.has(end));
+    if (missingEnds.length > 0) {
+      const generated = await this.localCoursePlanService.generateSectionPlans(
+        transcriptChunks,
+        missingEnds,
+      );
+      for (const plan of generated) {
+        existingByEnd.set(plan.segmentEnd, plan);
+      }
+    }
+    // Prune entries for segment boundaries that no longer exist (merge/split).
+    // Every entry in segmentMap is now guaranteed present: it either already
+    // existed in existingByEnd or was just generated for a missingEnd above.
+    const sections: CourseSectionPlan[] = segmentMap.map(end => existingByEnd.get(end)!);
+
+    let moduleName = job.coursePlan?.moduleName;
+    let moduleDescription = job.coursePlan?.moduleDescription ?? '';
+    if (!moduleName) {
+      const generatedModule = await this.localCoursePlanService.generateModulePlan(
+        sections.map(s => s.name),
+      );
+      moduleName = generatedModule.name;
+      moduleDescription = generatedModule.description;
+    }
+
+    job.coursePlan = { moduleName, moduleDescription, sections };
+    await this._withTransaction(session =>
+      this.genAIRepository.update(jobId, job, session),
+    );
+
+    let previousEnd = 0;
+    return {
+      moduleName,
+      moduleDescription,
+      videoUrl: job.url,
+      questionsPerQuiz: job.uploadParameters?.questionsPerQuiz,
+      maxAttempts: job.uploadParameters?.maxAttempts,
+      sections: sections.map(s => {
+        const segmentStart = previousEnd;
+        previousEnd = s.segmentEnd;
+        const transcriptExcerpt = transcriptChunks
+          .filter(c => c.timestamp[0] >= segmentStart && c.timestamp[0] < s.segmentEnd)
+          .map(c => c.text)
+          .join(' ')
+          .slice(0, 400);
+        return { segmentStart, segmentEnd: s.segmentEnd, name: s.name, description: s.description, transcriptExcerpt };
+      }),
+    };
+  }
+
+  async updateCoursePlan(
+    jobId: string,
+    body: { moduleName?: string; moduleDescription?: string; sections: CourseSectionPlan[] },
+  ): Promise<void> {
+    return this._withTransaction(async session => {
+      const job = await this.genAIRepository.getById(jobId, session);
+      if (!job) {
+        throw new NotFoundError(`GenAI job ${jobId} not found`);
+      }
+      job.coursePlan = {
+        moduleName: body.moduleName ?? job.coursePlan?.moduleName ?? 'Module',
+        moduleDescription: body.moduleDescription ?? job.coursePlan?.moduleDescription ?? '',
+        sections: body.sections,
+      };
+      await this.genAIRepository.update(jobId, job, session);
+    });
+  }
+
   async getAllTasksStatus(jobId: string): Promise<any> {
     return this._withTransaction(async session => {
       const taskData = await this.genAIRepository.getTaskDataByJobId(
@@ -1212,6 +1343,22 @@ export class GenAIService extends BaseService {
           task.segmentation[
             usePrevious ? usePrevious : task.segmentation.length - 1
           ]?.segmentationMap;
+
+        // questionsPerQuiz is a per-section count the caller sets once for the
+        // whole job (see UploadParameters.questionsPerQuiz); SOL is the local
+        // fallback's total-questions-for-the-whole-job knob (see
+        // LocalQuestionGenerationService.generateItems). Multiplying by the
+        // segment count here is what makes "3 questions per section" actually
+        // generate 3 per section instead of leaving SOL undefined and
+        // collapsing to 1 per segment -- this also reaches the real AI server,
+        // since jobState.parameters is what gets forwarded to it too.
+        const perQuiz = job.uploadParameters?.questionsPerQuiz;
+        if (perQuiz && jobState.segmentMap?.length) {
+          jobState.parameters = {
+            ...job.questionGenerationParameters,
+            SOL: perQuiz * jobState.segmentMap.length,
+          };
+        }
       }
       if (
         job.jobStatus.audioExtraction === TaskStatus.COMPLETED &&
@@ -1582,18 +1729,79 @@ export class GenAIService extends BaseService {
 
         let previousSegmentEndTime = 0.0;
 
+        // Auto-create mode: jobData.coursePlan (see GenAIController's
+        // course-plan endpoints) means the user approved an AI-generated
+        // module + one section per segment, instead of uploading into a
+        // pre-existing section. Falls back to the original
+        // moduleId/sectionId-from-uploadParameters behavior when no plan is
+        // attached, so AISectionPage/AiWorkflow's existing pre-existing-section
+        // flow is untouched.
+        const coursePlan = jobData.coursePlan;
+        let moduleIdForUpload = (jobState.parameters as UploadParameters).moduleId;
+        if (coursePlan && !moduleIdForUpload) {
+          try {
+            const moduleBody = new CreateModuleBody();
+            moduleBody.name = coursePlan.moduleName;
+            moduleBody.description = coursePlan.moduleDescription || 'Auto-generated module.';
+            const versionAfterModule = await this.moduleService.createModule(
+              (jobState.parameters as UploadParameters).versionId,
+              moduleBody,
+            );
+            const newModule = versionAfterModule.modules
+              .filter(m => !m.isDeleted)
+              .at(-1);
+            moduleIdForUpload = newModule.moduleId.toString();
+          } catch (err) {
+            throw new BadRequestError(
+              `Could not auto-create module "${coursePlan.moduleName}": ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        }
+
         for (const currentSegmentId of jobState.segmentMap) {
           const segmentStartTime = previousSegmentEndTime;
           const currentSegmentEndTime = currentSegmentId;
 
+          // In auto-create mode, each segment gets its own new section --
+          // created here, immediately before its items, because
+          // SectionService.createSection refuses to create a new section
+          // while the previous one is still empty of items.
+          let sectionIdForSegment = (jobState.parameters as UploadParameters).sectionId;
+          const planEntry = coursePlan?.sections.find(s => s.segmentEnd === currentSegmentId);
+          if (coursePlan) {
+            const sectionName = planEntry?.name ?? `Section ${createdVideoItemsInfo.length + 1}`;
+            try {
+              const sectionBody = new CreateSectionBody();
+              sectionBody.name = sectionName;
+              sectionBody.description = planEntry?.description || 'Auto-generated section.';
+              const versionAfterSection = await this.sectionService.createSection(
+                (jobState.parameters as UploadParameters).versionId,
+                moduleIdForUpload,
+                sectionBody,
+              );
+              const moduleAfterSection = versionAfterSection.modules.find(
+                m => m.moduleId.toString() === moduleIdForUpload,
+              );
+              const newSection = moduleAfterSection.sections
+                .filter(s => !s.isDeleted)
+                .at(-1);
+              sectionIdForSegment = newSection.sectionId.toString();
+            } catch (err) {
+              throw new BadRequestError(
+                `Could not auto-create section "${sectionName}": ${err instanceof Error ? err.message : String(err)}`,
+              );
+            }
+          }
+
           // Create Video Item for the segment
-          const videoSegName = jobData.uploadParameters.videoItemBaseName
-            ? jobData.uploadParameters.videoItemBaseName
-            : `Video`;
+          const videoSegName = planEntry?.name
+            ?? (jobData.uploadParameters.videoItemBaseName
+              ? jobData.uploadParameters.videoItemBaseName
+              : `Video`);
 
           const videoItemBody: CreateItemBody = {
             name: videoSegName,
-            description: `Video content`,
+            description: planEntry?.description || `Video content`,
             type: ItemType.VIDEO,
             videoDetails: {
               URL: jobData.url,
@@ -1604,8 +1812,8 @@ export class GenAIService extends BaseService {
           };
           const createdVideoItem = await this.itemService.createItem(
             (jobState.parameters as UploadParameters).versionId,
-            (jobState.parameters as UploadParameters).moduleId,
-            (jobState.parameters as UploadParameters).sectionId,
+            moduleIdForUpload,
+            sectionIdForSegment,
             videoItemBody,
           );
           createdVideoItemsInfo.push({
@@ -1791,9 +1999,11 @@ export class GenAIService extends BaseService {
                 });
               }
 
-            const quizSegName = jobData.uploadParameters.quizItemBaseName
-              ? jobData.uploadParameters.quizItemBaseName
-              : `Quiz`;
+            const quizSegName = planEntry?.name
+              ? `${planEntry.name} Quiz`
+              : (jobData.uploadParameters.quizItemBaseName
+                ? jobData.uploadParameters.quizItemBaseName
+                : `Quiz`);
 
             const quizItemBody: CreateItemBody = {
               name: quizSegName,
@@ -1801,7 +2011,7 @@ export class GenAIService extends BaseService {
               type: ItemType.QUIZ,
               quizDetails: {
                 passThreshold: 0.7,
-                maxAttempts: 1000,
+                maxAttempts: (jobState.parameters as UploadParameters).maxAttempts ?? 1000,
                 quizType: 'NO_DEADLINE',
                 approximateTimeToComplete: '00:05:00',
                 allowPartialGrading: true,
@@ -1818,8 +2028,8 @@ export class GenAIService extends BaseService {
 
             const createdQuizItem = await this.itemService.createItem(
               (jobState.parameters as UploadParameters).versionId,
-              (jobState.parameters as UploadParameters).moduleId,
-              (jobState.parameters as UploadParameters).sectionId,
+              moduleIdForUpload,
+              sectionIdForSegment,
               quizItemBody,
             );
 
@@ -1918,9 +2128,11 @@ export class GenAIService extends BaseService {
                 }
               }
 
-              const legacyQuizName = jobData.uploadParameters.quizItemBaseName
-                ? jobData.uploadParameters.quizItemBaseName
-                : `Quiz`;
+              const legacyQuizName = planEntry?.name
+                ? `${planEntry.name} Quiz`
+                : (jobData.uploadParameters.quizItemBaseName
+                  ? jobData.uploadParameters.quizItemBaseName
+                  : `Quiz`);
 
               const legacyQuizItemBody: CreateItemBody = {
                 name: legacyQuizName,
@@ -1928,7 +2140,7 @@ export class GenAIService extends BaseService {
                 type: ItemType.QUIZ,
                 quizDetails: {
                   passThreshold: 0.7,
-                  maxAttempts: 1000,
+                  maxAttempts: (jobState.parameters as UploadParameters).maxAttempts ?? 1000,
                   quizType: 'NO_DEADLINE',
                   approximateTimeToComplete: '00:05:00',
                   allowPartialGrading: true,
@@ -1945,8 +2157,8 @@ export class GenAIService extends BaseService {
 
               const legacyQuizItem = await this.itemService.createItem(
                 (jobState.parameters as UploadParameters).versionId,
-                (jobState.parameters as UploadParameters).moduleId,
-                (jobState.parameters as UploadParameters).sectionId,
+                moduleIdForUpload,
+                sectionIdForSegment,
                 legacyQuizItemBody,
               );
 
