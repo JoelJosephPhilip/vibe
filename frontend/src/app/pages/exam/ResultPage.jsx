@@ -248,14 +248,32 @@ const PDF_UNSAFE_CHAR_MAP = {
   "”": '"', // right double quote
   "•": "-", // bullet
   "…": "...", // ellipsis
+  // U+2212 MINUS SIGN — distinct from the ASCII hyphen-minus, and already
+  // inside the arrows/math-operators block matched below, but with no map
+  // entry it fell through to the generic "?" fallback (seen as "2n ? 1"
+  // instead of "2n − 1" for floor/ceiling-derived comparison-count formulas).
+  "−": "-",
+  // Ceiling/floor brackets: unlike the single-character symbols above, these
+  // are a delimiter *pair* wrapping an expression, so the 1:1 char map
+  // spells the function name out instead of trying to approximate a bracket
+  // glyph WinAnsi doesn't have (which — like the minus sign above — didn't
+  // even fall through to "?"; being outside every range in the regex below
+  // meant it reached jsPDF completely unmapped, corrupting that line's
+  // kerning, e.g. "⌈3n/2⌉" -> "# 3 n / 2# " with the rest of the line
+  // stretched out letter by letter).
+  "⌈": " ceil(",
+  "⌉": ")",
+  "⌊": " floor(",
+  "⌋": ")",
 };
-// Greek block (0370-03FF) + arrows/math-operators block (2190-22FF) + the
-// General Punctuation dash/quote/ellipsis/bullet codepoints mapped above
-// (deliberately NOT the 2000-200B space-family range, which
-// PDF_WHITESPACE_RUN_RE below already collapses to a plain space): map
-// known symbols, fall back to "?" for anything unmapped rather than letting
-// jsPDF silently draw a wrong-but-plausible-looking glyph.
-const PDF_UNSAFE_CHAR_RE = /[Ͱ-Ͽ←-⋿‐-―‘-‚“”•…]/g;
+// Greek block (0370-03FF) + arrows/math-operators block (2190-22FF) +
+// ceiling/floor brackets (2308-230B) + the General Punctuation dash/quote/
+// ellipsis/bullet codepoints mapped above (deliberately NOT the 2000-200B
+// space-family range, which PDF_WHITESPACE_RUN_RE below already collapses
+// to a plain space): map known symbols, fall back to "?" for anything
+// unmapped rather than letting jsPDF silently draw a wrong-but-plausible-
+// looking glyph.
+const PDF_UNSAFE_CHAR_RE = /[Ͱ-Ͽ←-⋿⌈-⌋‐-―‘-‚“”•…]/g;
 // Every Unicode whitespace variant a model might emit (regular space, tab,
 // no-break space, the U+2000-U+200A "general punctuation" space family,
 // narrow no-break space, ideographic space) — collapsed to one plain space.
