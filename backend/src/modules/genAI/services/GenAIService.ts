@@ -1916,13 +1916,19 @@ export class GenAIService extends BaseService {
               `Could not auto-create module "${coursePlan.moduleName}": ${err instanceof Error ? err.message : String(err)}`,
             );
           }
+          // Mutate the canonical object (not just the DB write below) --
+          // uploadParams is what the completion write at the end of this
+          // method persists via its jobData alias, so without this the
+          // intermediate write here would get clobbered right back to null
+          // the same way courseId/versionId were before that alias fix.
+          uploadParams.moduleId = moduleIdForUpload;
           // Idempotency, same as the course block above -- a pre-existing
           // gap this closes: without persisting moduleId back, a retry
           // after a mid-loop crash would create a second module too.
           await this._withTransaction(session =>
             this.genAIRepository.update(
               jobId,
-              { uploadParameters: { ...uploadParams, moduleId: moduleIdForUpload } },
+              { uploadParameters: { ...uploadParams } },
               session,
             ),
           );
