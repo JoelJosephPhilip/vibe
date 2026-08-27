@@ -307,72 +307,95 @@ export class GenAIService extends BaseService {
       | UploadParameters
     >,
   ): Promise<any> {
-    return this._withTransaction(async session => {
-      const job = await this.genAIRepository.getById(jobId, session);
-      if (!job) {
-        throw new NotFoundError(`Job with ID ${jobId} not found`);
-      }
-      // if (job.userId !== userId) {
-      //   throw new NotFoundError(`User with ID ${userId} does not have permission to approve this job`);
-      // }
-      const jobState = await this.getJobState(jobId, usePrevious);
-      // UPLOAD_CONTENT stuck at RUNNING (see uploadContent's own RUNNING
-      // guard) has no other recovery path -- abortTask explicitly refuses to
-      // abort it. rerunTask is an explicit, deliberate caller action, unlike
-      // approveTaskToStart's silent auto-retry, so it's the one place
-      // allowed to force a retry out of RUNNING for this task specifically.
-      const isStuckUploadRerun =
-        jobState.currentTask === TaskType.UPLOAD_CONTENT &&
-        jobState.taskStatus === TaskStatus.RUNNING;
-      if (
-        jobState.taskStatus !== TaskStatus.COMPLETED &&
-        jobState.taskStatus !== TaskStatus.FAILED &&
-        jobState.taskStatus !== TaskStatus.ABORTED &&
-        !isStuckUploadRerun
-      ) {
-        throw new BadRequestError(
-          `The task ${jobState.currentTask} for job ID ${jobId} has not been completed yet, please approve the task to start.`,
-        );
-      }
-      jobState.parameters = {
-        ...jobState.parameters,
-        ...this.removeUndefined(parameters),
-      };
-      if (jobState.currentTask === TaskType.UPLOAD_CONTENT) {
-        // Persist upload parameters to DB before content upload
-        let resolvedUploadParameters = {
-          ...job.uploadParameters,
-        } as UploadParameters;
-
-        if (parameters) {
-          resolvedUploadParameters = {
-            ...job.uploadParameters,
-            ...this.removeUndefined(parameters as Partial<UploadParameters>),
-          };
-
-          // Keep upload destination stable for the life of this job.
-          if (job.uploadParameters.moduleId) {
-            resolvedUploadParameters.moduleId = job.uploadParameters.moduleId;
-          }
-          if (job.uploadParameters.sectionId) {
-            resolvedUploadParameters.sectionId = job.uploadParameters.sectionId;
-          }
-
-          await this.genAIRepository.update(jobId, {
-            uploadParameters: resolvedUploadParameters,
-          }, session);
+    // Only the guard checks and the parameter bookkeeping below need to be
+    // transactional; the actual dispatch (uploadContent, or the webhook/
+    // fallback call for every other task type) is long-running network work
+    // that was never part of what needed atomicity here, so it now runs
+    // after this transaction has already committed -- same reasoning as
+    // uploadContent's own transaction split above.
+    const {jobState, isUploadContentRerun} = await this._withTransaction(
+      async session => {
+        const job = await this.genAIRepository.getById(jobId, session);
+        if (!job) {
+          throw new NotFoundError(`Job with ID ${jobId} not found`);
         }
+        // if (job.userId !== userId) {
+        //   throw new NotFoundError(`User with ID ${userId} does not have permission to approve this job`);
+        // }
+        const jobState = await this.getJobState(jobId, usePrevious);
+        // UPLOAD_CONTENT stuck at RUNNING (see uploadContent's own RUNNING
+        // guard) has no other recovery path -- abortTask explicitly refuses
+        // to abort it. rerunTask is an explicit, deliberate caller action,
+        // unlike approveTaskToStart's silent auto-retry, so it's the one
+        // place allowed to force a retry out of RUNNING for this task
+        // specifically.
+        const isStuckUploadRerun =
+          jobState.currentTask === TaskType.UPLOAD_CONTENT &&
+          jobState.taskStatus === TaskStatus.RUNNING;
+        if (
+          jobState.taskStatus !== TaskStatus.COMPLETED &&
+          jobState.taskStatus !== TaskStatus.FAILED &&
+          jobState.taskStatus !== TaskStatus.ABORTED &&
+          !isStuckUploadRerun
+        ) {
+          throw new BadRequestError(
+            `The task ${jobState.currentTask} for job ID ${jobId} has not been completed yet, please approve the task to start.`,
+          );
+        }
+        if (isStuckUploadRerun) {
+          // uploadContent() has its own RUNNING guard (it's what got us
+          // stuck in the first place) -- bypassing rerunTask's gate above
+          // isn't enough, that guard would immediately throw again since
+          // jobStatus.uploadContent is still RUNNING from the abandoned
+          // attempt. Reset it here, inside this transaction, so the call
+          // below starts clean.
+          job.jobStatus.uploadContent = TaskStatus.WAITING;
+          await this.genAIRepository.update(jobId, job, session);
+        }
+        jobState.parameters = {
+          ...jobState.parameters,
+          ...this.removeUndefined(parameters),
+        };
+        if (jobState.currentTask === TaskType.UPLOAD_CONTENT) {
+          // Persist upload parameters to DB before content upload
+          let resolvedUploadParameters = {
+            ...job.uploadParameters,
+          } as UploadParameters;
 
-        jobState.parameters = resolvedUploadParameters;
-        const result = await this.uploadContent(jobId, jobState);
-        return result;
-      }
-      // Direct call, replaced below by a fallback-aware wrapper:
-      // return this.webhookService.rerunTask(jobId, jobState);
-      return this._callAiServerOrFallback(jobId, jobState, (id, state) =>
-        this.webhookService.rerunTask(id, state),
-      );
-    });
+          if (parameters) {
+            resolvedUploadParameters = {
+              ...job.uploadParameters,
+              ...this.removeUndefined(parameters as Partial<UploadParameters>),
+            };
+
+            // Keep upload destination stable for the life of this job.
+            if (job.uploadParameters.moduleId) {
+              resolvedUploadParameters.moduleId = job.uploadParameters.moduleId;
+            }
+            if (job.uploadParameters.sectionId) {
+              resolvedUploadParameters.sectionId = job.uploadParameters.sectionId;
+            }
+
+            await this.genAIRepository.update(jobId, {
+              uploadParameters: resolvedUploadParameters,
+            }, session);
+          }
+
+          jobState.parameters = resolvedUploadParameters;
+          return {jobState, isUploadContentRerun: true};
+        }
+        return {jobState, isUploadContentRerun: false};
+      },
+    );
+
+    if (isUploadContentRerun) {
+      return this.uploadContent(jobId, jobState);
+    }
+    // Direct call, replaced below by a fallback-aware wrapper:
+    // return this.webhookService.rerunTask(jobId, jobState);
+    return this._callAiServerOrFallback(jobId, jobState, (id, state) =>
+      this.webhookService.rerunTask(id, state),
+    );
   }
 
   /**
