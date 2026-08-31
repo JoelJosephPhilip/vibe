@@ -45,8 +45,43 @@ function splitIntoBlocks(rawText: string): string[] {
   });
 }
 
+// A real transcript's timestamps mark where the speaker pauses, not a fixed
+// cadence -- a host talking for minutes straight before the next mark
+// produces one block far bigger than windowChars on its own. The packer
+// below only ever combines whole blocks, so an oversized block used to ride
+// through as its own giant window every single retry, failing the exact
+// same way each time (confirmed live: a request that retried this window 9
+// times over 344s still ended in the same 500). Splitting the block itself
+// at word boundaries -- each piece re-prefixed with its original timestamp
+// line so it still matches the "timestamp line, then text" shape the prompt
+// expects -- is what actually bounds every window's size regardless of how
+// the source transcript happens to be punctuated with timestamps.
+function splitOversizedBlock(block: string, windowChars: number): string[] {
+  const newlineIdx = block.indexOf('\n');
+  const timestampLine = newlineIdx === -1 ? '' : block.slice(0, newlineIdx);
+  const body = newlineIdx === -1 ? block : block.slice(newlineIdx + 1);
+  const bodyBudget = Math.max(windowChars - timestampLine.length - 1, 200);
+
+  const words = body.split(/\s+/).filter(Boolean);
+  const pieces: string[] = [];
+  let current = '';
+  for (const word of words) {
+    if (current && current.length + 1 + word.length > bodyBudget) {
+      pieces.push(current);
+      current = word;
+    } else {
+      current = current ? `${current} ${word}` : word;
+    }
+  }
+  if (current) pieces.push(current);
+
+  return pieces.map(piece => (timestampLine ? `${timestampLine}\n${piece}` : piece));
+}
+
 function splitIntoWindows(rawText: string, windowChars: number): string[] {
-  const blocks = splitIntoBlocks(rawText);
+  const blocks = splitIntoBlocks(rawText).flatMap(block =>
+    block.length > windowChars ? splitOversizedBlock(block, windowChars) : [block],
+  );
   const windows: string[] = [];
   let current: string[] = [];
   let currentLen = 0;
