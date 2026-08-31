@@ -6,11 +6,12 @@ export interface FormattedChunk {
   text: string;
 }
 
-// Kept well under screeningConfig.timeoutMs (9s default) per call, rather
-// than raising that shared timeout for every other screening use in the app
-// -- mirrors LocalCoursePlanService's one-call-per-segment approach instead
-// of one huge call for the whole transcript.
-const WINDOW_CHARS = 3500;
+// Confirmed live: a window this size regularly took MiniMax past the 9s
+// screening timeout on every one of its 3 attempts (~30s total before the
+// whole conversion failed). Response time is governed by output size, not
+// input size, and a dense window can need to echo back a lot of chunks --
+// smaller windows means less to generate per call, not just less to read.
+const WINDOW_CHARS = 1200;
 
 const CONVERT_PROMPT = (windowText: string) => `The text below is one portion of a longer transcript. Each spoken block is preceded by its own timestamp line, in mm:ss or h:mm:ss format (e.g. "12:34" or "1:02:15"). Convert it into chunks, one per timestamped block, giving each chunk's start and end time in seconds as a two-element array. If a block's end time isn't clear from the next timestamp, estimate it reasonably. Reply ONLY with one JSON object, no prose, no markdown fences.
 
@@ -22,21 +23,43 @@ ${windowText}
 Reply with exactly this shape:
 {"chunks": [{"timestamp": [start, end], "text": "..."}, ...]}`;
 
-// Splits on the blank line nearest the target window size, rather than a
-// hard character cut, so a timestamped block is never split across two
-// windows and handed to the LLM half-formed.
+const TIMESTAMP_LINE = /^\d{1,2}:\d{2}(?::\d{2})?\s*$/;
+
+// One entry per timestamped block (from one timestamp line up to, but not
+// including, the next). The required format has no blank lines between
+// blocks -- just a single newline -- so splitting on blank lines (as an
+// earlier version of this function did) essentially never found one and
+// fell through to a hard character cut, handing MiniMax windows truncated
+// mid-sentence. Splitting on the timestamp lines actually present in the
+// format is what genuinely guarantees a block is never divided.
+function splitIntoBlocks(rawText: string): string[] {
+  const lines = rawText.split('\n');
+  const starts: number[] = [];
+  lines.forEach((line, i) => {
+    if (TIMESTAMP_LINE.test(line.trim())) starts.push(i);
+  });
+  if (starts.length === 0) return [rawText];
+  return starts.map((from, i) => {
+    const to = i + 1 < starts.length ? starts[i + 1] : lines.length;
+    return lines.slice(from, to).join('\n');
+  });
+}
+
 function splitIntoWindows(rawText: string, windowChars: number): string[] {
+  const blocks = splitIntoBlocks(rawText);
   const windows: string[] = [];
-  let start = 0;
-  while (start < rawText.length) {
-    let end = Math.min(start + windowChars, rawText.length);
-    if (end < rawText.length) {
-      const blankLine = rawText.lastIndexOf('\n\n', end);
-      if (blankLine > start) end = blankLine;
+  let current: string[] = [];
+  let currentLen = 0;
+  for (const block of blocks) {
+    if (current.length > 0 && currentLen + block.length > windowChars) {
+      windows.push(current.join('\n').trim());
+      current = [];
+      currentLen = 0;
     }
-    windows.push(rawText.slice(start, end).trim());
-    start = end;
+    current.push(block);
+    currentLen += block.length;
   }
+  if (current.length > 0) windows.push(current.join('\n').trim());
   return windows.filter(w => w.length > 0);
 }
 
