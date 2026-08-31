@@ -63,6 +63,21 @@ function splitIntoWindows(rawText: string, windowChars: number): string[] {
   return windows.filter(w => w.length > 0);
 }
 
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+// A long real transcript needs many sequential windows, and each window
+// already gets 3 attempts of its own inside MinimaxScreeningLlm (~30s worth
+// of internal retries). Confirmed live: even with small windows, a run of
+// 20+ windows occasionally has ONE window exhaust all 3 of those internal
+// attempts anyway (transient provider slowness, not a sizing problem) --
+// which used to abort the entire conversion and throw away every window
+// that had already succeeded. A few more outer attempts, spaced further
+// apart than the internal backoff ever gets, absorbs that without touching
+// MinimaxScreeningLlm's shared retry/timeout config (used by other features
+// too).
+const OUTER_ATTEMPTS = 3;
+const OUTER_RETRY_DELAY_MS = 5000;
+
 /**
  * Converts a raw, mm:ss/h:mm:ss-timestamped plain-text transcript (the
  * format a teacher would paste from a YouTube transcript export or similar)
@@ -74,12 +89,23 @@ function splitIntoWindows(rawText: string, windowChars: number): string[] {
 export class LocalTranscriptFormatService {
   private readonly llm = new MinimaxScreeningLlm();
 
+  private async askJsonWithRetry(prompt: string): Promise<Record<string, unknown>> {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await this.llm.askJson(prompt);
+      } catch (err) {
+        if (attempt >= OUTER_ATTEMPTS) throw err;
+        await sleep(OUTER_RETRY_DELAY_MS);
+      }
+    }
+  }
+
   async convertToChunks(rawText: string): Promise<{ chunks: FormattedChunk[] }> {
     const windows = splitIntoWindows(rawText, WINDOW_CHARS);
     const allChunks: FormattedChunk[] = [];
 
     for (let i = 0; i < windows.length; i++) {
-      const verdict = await this.llm.askJson(CONVERT_PROMPT(windows[i]));
+      const verdict = await this.askJsonWithRetry(CONVERT_PROMPT(windows[i]));
       const rawChunks = verdict.chunks;
       if (!Array.isArray(rawChunks)) {
         throw new Error(
