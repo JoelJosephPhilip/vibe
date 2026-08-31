@@ -58,7 +58,13 @@ export default function GenerateSectionPage() {
         try {
             const result = await convertTranscript(rawTranscript);
             setConvertedTranscript(result);
-            toast.success(`Converted ${result.chunks.length} chunk${result.chunks.length === 1 ? "" : "s"}.`);
+            if (result.skippedWindows) {
+                toast.warning(
+                    `Converted ${result.chunks.length} chunk${result.chunks.length === 1 ? "" : "s"}, but ${result.skippedWindows} portion${result.skippedWindows === 1 ? "" : "s"} of the transcript could not be converted and were skipped.`,
+                );
+            } else {
+                toast.success(`Converted ${result.chunks.length} chunk${result.chunks.length === 1 ? "" : "s"}.`);
+            }
         } catch (error) {
             toast.error("Failed to convert transcript", {
                 description: error instanceof Error ? error.message : "An unexpected error occurred.",
@@ -258,6 +264,11 @@ export default function GenerateSectionPage() {
                                             <CheckCircle2 className="h-3 w-3" />
                                             {convertedTranscript.chunks.length} chunk{convertedTranscript.chunks.length === 1 ? "" : "s"} extracted,
                                             covering 0:00–{formatDuration(convertedTranscript.chunks.at(-1)?.timestamp[1] ?? convertedTranscript.chunks.at(-1)?.timestamp[0] ?? 0)}.
+                                            {!!convertedTranscript.skippedWindows && (
+                                                <span className="text-amber-600 dark:text-amber-500">
+                                                    {" "}{convertedTranscript.skippedWindows} portion{convertedTranscript.skippedWindows === 1 ? "" : "s"} of the transcript couldn't be converted and {convertedTranscript.skippedWindows === 1 ? "was" : "were"} skipped.
+                                                </span>
+                                            )}
                                         </p>
                                     )}
                                 </div>

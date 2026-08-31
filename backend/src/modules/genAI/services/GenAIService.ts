@@ -6,7 +6,7 @@ import { LocalQuestionGenerationService } from './LocalQuestionGenerationService
 import { LocalAudioExtractionService } from './LocalAudioExtractionService.js';
 import { LocalSegmentationService } from './LocalSegmentationService.js';
 import { LocalCoursePlanService } from './LocalCoursePlanService.js';
-import { LocalTranscriptFormatService, FormattedChunk } from './LocalTranscriptFormatService.js';
+import { LocalTranscriptFormatService, ConvertToChunksResult } from './LocalTranscriptFormatService.js';
 import { GENAI_TYPES } from '../types.js';
 import { JobBody } from '../classes/validators/GenAIValidators.js';
 import { GenAIRepository } from '../repositories/providers/mongodb/GenAIRepository.js';
@@ -1034,7 +1034,7 @@ export class GenAIService extends BaseService {
   // pastes a raw transcript on the create-job form before submitting), so
   // this just converts text and returns it -- the caller feeds the result
   // straight into startJob's existing transcript field.
-  async convertTranscript(rawText: string): Promise<{ chunks: FormattedChunk[] }> {
+  async convertTranscript(rawText: string): Promise<ConvertToChunksResult> {
     return this.localTranscriptFormatService.convertToChunks(rawText);
   }
 

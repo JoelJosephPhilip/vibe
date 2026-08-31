@@ -6,6 +6,14 @@ export interface FormattedChunk {
   text: string;
 }
 
+export interface ConvertToChunksResult {
+  chunks: FormattedChunk[];
+  // Count of windows that still failed after every retry and were left out
+  // of chunks rather than failing the whole conversion -- see the note above
+  // convertToChunks for why. 0 on a fully clean run.
+  skippedWindows: number;
+}
+
 // Confirmed live: a window this size regularly took MiniMax past the 9s
 // screening timeout on every one of its 3 attempts (~30s total before the
 // whole conversion failed). Response time is governed by output size, not
@@ -135,33 +143,57 @@ export class LocalTranscriptFormatService {
     }
   }
 
-  async convertToChunks(rawText: string): Promise<{ chunks: FormattedChunk[] }> {
+  async convertToChunks(rawText: string): Promise<ConvertToChunksResult> {
     const windows = splitIntoWindows(rawText, WINDOW_CHARS);
     const allChunks: FormattedChunk[] = [];
+    let skippedWindows = 0;
 
+    // A real transcript with tightly-spaced timestamps can need hundreds of
+    // sequential windows. Confirmed live: even with every window properly
+    // bounded (see splitOversizedBlock above), a conversion that size still
+    // eventually failed outright -- after 890s -- because across enough
+    // calls, the odds that *some* window exhausts every retry approach
+    // certainty, no matter how generous the retry budget is. Aborting the
+    // whole conversion for one bad window is the wrong tradeoff at that
+    // scale: it guarantees total failure on any sufficiently long
+    // transcript. Skipping just that window's content and continuing gives
+    // a near-complete result instead -- skippedWindows tells the caller how
+    // much was lost so it isn't silent.
     for (let i = 0; i < windows.length; i++) {
-      const verdict = await this.askJsonWithRetry(CONVERT_PROMPT(windows[i]));
-      const rawChunks = verdict.chunks;
-      if (!Array.isArray(rawChunks)) {
-        throw new Error(
-          `MiniMax did not return a chunks array for transcript window ${i + 1}/${windows.length}`,
-        );
-      }
-      for (const c of rawChunks) {
-        const timestamp = (c as any)?.timestamp;
-        const text = (c as any)?.text;
-        if (
-          !Array.isArray(timestamp) ||
-          typeof timestamp[0] !== 'number' ||
-          typeof text !== 'string' ||
-          !text.trim()
-        ) {
+      try {
+        const verdict = await this.askJsonWithRetry(CONVERT_PROMPT(windows[i]));
+        const rawChunks = verdict.chunks;
+        if (!Array.isArray(rawChunks)) {
           throw new Error(
-            `MiniMax returned a malformed chunk in transcript window ${i + 1}/${windows.length}`,
+            `MiniMax did not return a chunks array for transcript window ${i + 1}/${windows.length}`,
           );
         }
-        allChunks.push({ timestamp, text: text.trim() });
+        for (const c of rawChunks) {
+          const timestamp = (c as any)?.timestamp;
+          const text = (c as any)?.text;
+          if (
+            !Array.isArray(timestamp) ||
+            typeof timestamp[0] !== 'number' ||
+            typeof text !== 'string' ||
+            !text.trim()
+          ) {
+            throw new Error(
+              `MiniMax returned a malformed chunk in transcript window ${i + 1}/${windows.length}`,
+            );
+          }
+          allChunks.push({ timestamp, text: text.trim() });
+        }
+      } catch (err) {
+        skippedWindows++;
+        console.error(
+          `[LocalTranscriptFormatService] window ${i + 1}/${windows.length} failed, skipping:`,
+          err,
+        );
       }
+    }
+
+    if (allChunks.length === 0) {
+      throw new Error('MiniMax failed to convert every window of this transcript');
     }
 
     allChunks.sort((a, b) => a.timestamp[0] - b.timestamp[0]);
@@ -174,6 +206,7 @@ export class LocalTranscriptFormatService {
     // next chunk's start, the same "runs until the next one begins"
     // inference a human would make.
     return {
+      skippedWindows,
       chunks: allChunks.map((c, i) => {
         const isLast = i === allChunks.length - 1;
         const hasEnd = typeof c.timestamp[1] === 'number' && c.timestamp[1] > c.timestamp[0];
