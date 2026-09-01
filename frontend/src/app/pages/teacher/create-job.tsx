@@ -15,12 +15,38 @@ import { useCreateCourse } from "@/hooks/hooks";
 const REQUIRED_TRANSCRIPT_FORMAT_HINT =
     "Paste text with a timestamp on its own line before each spoken block -- mm:ss or h:mm:ss " +
     "(e.g. \"12:34\" or \"1:02:15\") -- followed by the text spoken until the next timestamp. " +
-    "This gets converted into the pipeline's format: {\"chunks\": [{\"timestamp\": [start, end], \"text\": \"...\"}]}.";
+    "This gets converted into the pipeline's format: {\"chunks\": [{\"timestamp\": [start, end], \"text\": \"...\"}]}. " +
+    "Already have it in that exact JSON shape (e.g. reused from an earlier conversion)? Paste the JSON directly " +
+    "instead -- it's used as-is with no AI call, so it costs no tokens and no wait.";
 
 function formatDuration(totalSeconds: number): string {
     const m = Math.floor(totalSeconds / 60);
     const s = Math.round(totalSeconds % 60);
     return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+// Lets a teacher who already has a correctly-shaped transcript (e.g. reused
+// from a prior conversion, or produced by some other tool) skip the MiniMax
+// call entirely -- same validation shape the backend's Chunk/Transcript
+// validators enforce, just checked client-side so a bad/partial paste falls
+// through to the normal AI conversion path instead of silently misfiring.
+function tryParseAlreadyFormattedTranscript(rawText: string): Transcript | null {
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(rawText);
+    } catch {
+        return null;
+    }
+    const chunks = (parsed as { chunks?: unknown } | null)?.chunks;
+    if (!Array.isArray(chunks) || chunks.length === 0) return null;
+    for (const c of chunks) {
+        const timestamp = (c as { timestamp?: unknown } | null)?.timestamp;
+        const text = (c as { text?: unknown } | null)?.text;
+        if (!Array.isArray(timestamp) || typeof timestamp[0] !== "number" || typeof text !== "string" || !text.trim()) {
+            return null;
+        }
+    }
+    return { chunks: chunks as Transcript["chunks"] };
 }
 
 export default function GenerateSectionPage() {
@@ -103,6 +129,14 @@ export default function GenerateSectionPage() {
     const handleConvertTranscript = async () => {
         if (!rawTranscript.trim()) {
             toast.error("Paste a transcript first");
+            return;
+        }
+        const alreadyFormatted = tryParseAlreadyFormattedTranscript(rawTranscript);
+        if (alreadyFormatted) {
+            setConvertedTranscript(alreadyFormatted);
+            toast.success(
+                `Already in the required format -- used ${alreadyFormatted.chunks.length} chunk${alreadyFormatted.chunks.length === 1 ? "" : "s"} as-is, no AI conversion needed.`,
+            );
             return;
         }
         setIsConverting(true);

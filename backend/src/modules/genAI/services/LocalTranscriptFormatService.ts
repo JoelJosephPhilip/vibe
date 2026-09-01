@@ -121,6 +121,34 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const OUTER_ATTEMPTS = 3;
 const OUTER_RETRY_DELAY_MS = 5000;
 
+// Confirmed live: a 62-minute transcript needed ~586 chunks across hundreds
+// of windows and took 39 minutes run strictly one-at-a-time -- a 3+ hour
+// course transcript would scale past that linearly. Windows are independent
+// (each is a self-contained portion of the prompt, no shared state --
+// MinimaxScreeningLlm.askJson carries no mutable instance state either, so
+// concurrent calls on the same instance are safe), so there's no correctness
+// reason to serialize them. Bounded at 8 rather than firing all of them at
+// once: enough to cut wall-clock time by roughly that factor without turning
+// a burst of hundreds of simultaneous requests into a self-inflicted 429
+// storm against the provider.
+const WINDOW_CONCURRENCY = 8;
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    for (let i = next++; i < items.length; i = next++) {
+      results[i] = await fn(items[i], i);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
+  return results;
+}
+
 /**
  * Converts a raw, mm:ss/h:mm:ss-timestamped plain-text transcript (the
  * format a teacher would paste from a YouTube transcript export or similar)
@@ -145,29 +173,29 @@ export class LocalTranscriptFormatService {
 
   async convertToChunks(rawText: string): Promise<ConvertToChunksResult> {
     const windows = splitIntoWindows(rawText, WINDOW_CHARS);
-    const allChunks: FormattedChunk[] = [];
     let skippedWindows = 0;
 
     // A real transcript with tightly-spaced timestamps can need hundreds of
-    // sequential windows. Confirmed live: even with every window properly
-    // bounded (see splitOversizedBlock above), a conversion that size still
-    // eventually failed outright -- after 890s -- because across enough
-    // calls, the odds that *some* window exhausts every retry approach
-    // certainty, no matter how generous the retry budget is. Aborting the
-    // whole conversion for one bad window is the wrong tradeoff at that
-    // scale: it guarantees total failure on any sufficiently long
-    // transcript. Skipping just that window's content and continuing gives
-    // a near-complete result instead -- skippedWindows tells the caller how
-    // much was lost so it isn't silent.
-    for (let i = 0; i < windows.length; i++) {
+    // windows. Confirmed live: even with every window properly bounded (see
+    // splitOversizedBlock above), a conversion that size still eventually
+    // failed outright run sequentially -- after 890s -- because across
+    // enough calls, the odds that *some* window exhausts every retry
+    // approach certainty, no matter how generous the retry budget is.
+    // Aborting the whole conversion for one bad window is the wrong
+    // tradeoff at that scale: it guarantees total failure on any
+    // sufficiently long transcript. Skipping just that window's content and
+    // continuing gives a near-complete result instead -- skippedWindows
+    // tells the caller how much was lost so it isn't silent.
+    const perWindowChunks = await mapWithConcurrency(windows, WINDOW_CONCURRENCY, async (windowText, i) => {
       try {
-        const verdict = await this.askJsonWithRetry(CONVERT_PROMPT(windows[i]));
+        const verdict = await this.askJsonWithRetry(CONVERT_PROMPT(windowText));
         const rawChunks = verdict.chunks;
         if (!Array.isArray(rawChunks)) {
           throw new Error(
             `MiniMax did not return a chunks array for transcript window ${i + 1}/${windows.length}`,
           );
         }
+        const chunks: FormattedChunk[] = [];
         for (const c of rawChunks) {
           const timestamp = (c as any)?.timestamp;
           const text = (c as any)?.text;
@@ -181,16 +209,20 @@ export class LocalTranscriptFormatService {
               `MiniMax returned a malformed chunk in transcript window ${i + 1}/${windows.length}`,
             );
           }
-          allChunks.push({ timestamp, text: text.trim() });
+          chunks.push({ timestamp, text: text.trim() });
         }
+        return chunks;
       } catch (err) {
         skippedWindows++;
         console.error(
           `[LocalTranscriptFormatService] window ${i + 1}/${windows.length} failed, skipping:`,
           err,
         );
+        return [] as FormattedChunk[];
       }
-    }
+    });
+
+    const allChunks = perWindowChunks.flat();
 
     if (allChunks.length === 0) {
       throw new Error('MiniMax failed to convert every window of this transcript');
