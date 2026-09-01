@@ -127,7 +127,7 @@ const OUTER_RETRY_DELAY_MS = 5000;
 // first failure.
 const RECOVERY_ATTEMPTS = 4;
 const RECOVERY_RETRY_DELAY_MS = 8000;
-const RECOVERY_CONCURRENCY = 3;
+const RECOVERY_CONCURRENCY = 2;
 
 // Confirmed live: a 62-minute transcript needed ~586 chunks across hundreds
 // of windows and took 39 minutes run strictly one-at-a-time -- a 3+ hour
@@ -135,11 +135,17 @@ const RECOVERY_CONCURRENCY = 3;
 // (each is a self-contained portion of the prompt, no shared state --
 // MinimaxScreeningLlm.askJson carries no mutable instance state either, so
 // concurrent calls on the same instance are safe), so there's no correctness
-// reason to serialize them. Bounded at 8 rather than firing all of them at
-// once: enough to cut wall-clock time by roughly that factor without turning
-// a burst of hundreds of simultaneous requests into a self-inflicted 429
-// storm against the provider.
-const WINDOW_CONCURRENCY = 8;
+// reason to serialize them.
+//
+// Confirmed live at 8: a run that failed only 3/67 windows the first time
+// failed 13+/67 the next, scattered essentially at random across the whole
+// transcript rather than clustered in one bad spot -- the signature of
+// self-inflicted throttling, not a content problem. Since a persistently
+// stuck window now aborts the whole conversion (see convertToChunks) rather
+// than being silently skipped, a higher failure rate is no longer just a
+// quality tradeoff, it's a reliability one. Dropped to 3: still faster than
+// fully sequential, far less likely to overwhelm the provider than 8 was.
+const WINDOW_CONCURRENCY = 3;
 
 async function mapWithConcurrency<T, R>(
   items: T[],
