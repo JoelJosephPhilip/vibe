@@ -48,7 +48,15 @@ export class MinimaxScreeningLlm implements ScreeningLlm {
         });
 
         if (res.status === 429 || res.status >= 500) {
-          throw new ScreeningLlmError(`minimax transient ${res.status}`);
+          // Previously discarded entirely -- capturing it because a 429's
+          // body/headers are the only way to tell an evenly-spread rate
+          // limit apart from a longer account-level cooldown/quota block
+          // without provider dashboard access.
+          const retryAfter = res.headers.get('retry-after');
+          const bodyText = (await res.text().catch(() => '')).slice(0, 300);
+          throw new ScreeningLlmError(
+            `minimax transient ${res.status}${retryAfter ? ` (retry-after: ${retryAfter})` : ''}${bodyText ? `: ${bodyText}` : ''}`,
+          );
         }
         if (!res.ok) {
           throw new ScreeningLlmError(`minimax error ${res.status}: ${(await res.text()).slice(0, 200)}`);
