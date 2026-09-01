@@ -35,6 +35,7 @@ import {
   VideoSnapPointsQuery,
   VideoSnapPointsResponse,
   EditCoursePlanBody,
+  RegenerateSectionBody,
   ConvertTranscriptBody,
 } from '../classes/validators/GenAIValidators.js';
 import { GenAIService } from '../services/GenAIService.js';
@@ -528,6 +529,66 @@ export class GenAIController {
         description: s.description ?? '',
       })),
     });
+  }
+
+  @OpenAPI({
+    summary: 'Regenerate the entire course plan',
+    description: `Discards every AI-generated name/description (module, course, and all sections) and lets the next GET .../course-plan call regenerate them from scratch. Segment time boundaries are untouched.<br/>
+    It returns an empty body with a 200 status code.`,
+  })
+  @Post("/jobs/:id/course-plan/regenerate")
+  @Authorized()
+  @OnUndefined(200)
+  @ResponseSchema(GenAINotFoundErrorResponse, {
+    description: 'GenAI not found',
+    statusCode: 404,
+  })
+  @ResponseSchema(ForbiddenErrorResponse, {
+    description: 'Forbidden Error',
+    statusCode: 403,
+  })
+  async regenerateCoursePlan(@Params() params: GenAIIdParams, @Ability(getGenAIAbility) {ability}) {
+    const { id } = params;
+    const job = await this.genAIService.getJobStatus(id);
+
+    const genaiRes = subject('GenAI', { courseId: job.uploadParameters.courseId, versionId: job.uploadParameters.versionId });
+    if (!ability.can('modify', genaiRes)) {
+      //throw new ForbiddenError('You do not have permission to regenerate the course plan of this job');
+    }
+
+    await this.genAIService.regenerateCoursePlan(id);
+  }
+
+  @OpenAPI({
+    summary: 'Regenerate one section of the course plan',
+    description: `Discards the AI-generated name/description for a single section (identified by segmentEnd) and lets the next GET .../course-plan call regenerate just that one. Every other section, and the module/course names, are untouched.<br/>
+    It returns an empty body with a 200 status code.`,
+  })
+  @Post("/jobs/:id/course-plan/sections/regenerate")
+  @Authorized()
+  @OnUndefined(200)
+  @ResponseSchema(GenAINotFoundErrorResponse, {
+    description: 'GenAI not found',
+    statusCode: 404,
+  })
+  @ResponseSchema(BadRequestErrorResponse, {
+    description: 'Bad Request Error',
+    statusCode: 400,
+  })
+  @ResponseSchema(ForbiddenErrorResponse, {
+    description: 'Forbidden Error',
+    statusCode: 403,
+  })
+  async regenerateSection(@Params() params: GenAIIdParams, @Body() body: RegenerateSectionBody, @Ability(getGenAIAbility) {ability}) {
+    const { id } = params;
+    const job = await this.genAIService.getJobStatus(id);
+
+    const genaiRes = subject('GenAI', { courseId: job.uploadParameters.courseId, versionId: job.uploadParameters.versionId });
+    if (!ability.can('modify', genaiRes)) {
+      //throw new ForbiddenError('You do not have permission to regenerate a section of this job');
+    }
+
+    await this.genAIService.regenerateSection(id, body.segmentEnd);
   }
 
   @OpenAPI({

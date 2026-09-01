@@ -960,6 +960,17 @@ class EditCoursePlanBody {
   sections: CourseSectionPlanBody[];
 }
 
+class RegenerateSectionBody {
+  @JSONSchema({
+    title: 'Segment End',
+    description: "Identifies which section to regenerate -- matches an entry in the job's segmentMap",
+    type: 'number',
+  })
+  @IsNotEmpty()
+  @IsNumber()
+  segmentEnd: number;
+}
+
 class EditQuestionData {
   @JSONSchema({
     title: 'Question Data',
@@ -1148,6 +1159,7 @@ export {
   TaskStatusdetailsResponse,
   CourseSectionPlanBody,
   EditCoursePlanBody,
+  RegenerateSectionBody,
   ConvertTranscriptBody,
 };
 
@@ -1171,5 +1183,6 @@ export const GENAI_VALIDATORS = [
   TaskStatusdetailsResponse,
   CourseSectionPlanBody,
   EditCoursePlanBody,
+  RegenerateSectionBody,
   ConvertTranscriptBody,
 ];

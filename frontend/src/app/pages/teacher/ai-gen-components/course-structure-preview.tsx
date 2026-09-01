@@ -1,12 +1,22 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
-import { Loader2, Wand2, Scissors, Combine } from "lucide-react";
+import { Loader2, Wand2, Scissors, Combine, Trash2, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
-import { getCoursePlan, updateCoursePlan, editSegmentMap, type CoursePlan, type CourseSectionPlan } from "@/lib/genai-api";
+import {
+  getCoursePlan,
+  updateCoursePlan,
+  editSegmentMap,
+  regenerateCoursePlan,
+  regenerateSection,
+  type CoursePlan,
+  type CourseSectionPlan,
+} from "@/lib/genai-api";
+import { loadYouTubeIframeApi } from "@/lib/youtube";
+import type { YTPlayerInstance } from "@/types/video.types";
 
 function getYouTubeId(url?: string): string | null {
   if (!url) return null;
@@ -18,6 +28,72 @@ function formatSeconds(total: number): string {
   const m = Math.floor(total / 60);
   const s = Math.floor(total % 60);
   return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+// A plain <iframe src="...&end=..."> looks like it should stop at `end`, but
+// YouTube's embed `end` param is unreliable on its own -- confirmed live:
+// playback just continues past it. Driving a real YT.Player and polling
+// getCurrentTime() to call pauseVideo() ourselves is what actually stops it.
+function SegmentPreviewPlayer({
+  videoId,
+  segmentStart,
+  segmentEnd,
+  title,
+}: {
+  videoId: string;
+  segmentStart: number;
+  segmentEnd: number;
+  title: string;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const playerRef = useRef<YTPlayerInstance | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let pollInterval: ReturnType<typeof setInterval> | null = null;
+
+    loadYouTubeIframeApi().then(YT => {
+      if (cancelled || !containerRef.current) return;
+      playerRef.current = new YT.Player(containerRef.current, {
+        videoId,
+        playerVars: { start: Math.floor(segmentStart), end: Math.ceil(segmentEnd), rel: 0 },
+        events: {
+          onReady: () => {},
+          onStateChange: e => {
+            if (pollInterval) {
+              clearInterval(pollInterval);
+              pollInterval = null;
+            }
+            if (e.data === YT.PlayerState.PLAYING) {
+              pollInterval = setInterval(() => {
+                const current = playerRef.current?.getCurrentTime?.();
+                if (typeof current === "number" && current >= segmentEnd) {
+                  playerRef.current?.pauseVideo?.();
+                  if (pollInterval) {
+                    clearInterval(pollInterval);
+                    pollInterval = null;
+                  }
+                }
+              }, 250);
+            }
+          },
+        },
+      });
+    });
+
+    return () => {
+      cancelled = true;
+      if (pollInterval) clearInterval(pollInterval);
+      playerRef.current?.destroy?.();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [videoId, segmentStart, segmentEnd]);
+
+  return (
+    <div className="aspect-video w-full max-w-sm rounded-md overflow-hidden border">
+      <div ref={containerRef} className="w-full h-full" title={`Preview: ${title}`} />
+    </div>
+  );
 }
 
 interface Props {
@@ -104,6 +180,54 @@ export default function CourseStructurePreview({ jobId, videoUrl, hasExistingCou
     }
     const newSegmentMap = [...sections.map(s => s.segmentEnd), midpoint].sort((a, b) => a - b);
     applySegmentMapEdit(newSegmentMap);
+  };
+
+  // There's no concept of "exclude this time range from the video" in the
+  // data model -- segmentMap always tiles the full video with no gaps -- so
+  // "delete" a section the same way the model allows removing one at all:
+  // drop its boundary, folding its time range into a neighbor. Prefers the
+  // next section; the last section merges backward into the previous one
+  // instead, since it has no "next" to fold into.
+  const deleteSection = (index: number) => {
+    if (sections.length <= 1) {
+      toast.error("Can't delete the only section.");
+      return;
+    }
+    if (index < sections.length - 1) {
+      mergeWithNext(index);
+    } else {
+      mergeWithNext(index - 1);
+    }
+  };
+
+  const regenerateOneSection = async (index: number) => {
+    setBusy(true);
+    try {
+      await regenerateSection(jobId, sections[index].segmentEnd);
+      await fetchPlan();
+      toast.success("Section regenerated.");
+    } catch (err) {
+      toast.error("Failed to regenerate section", {
+        description: err instanceof Error ? err.message : "Unknown error",
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const regenerateAll = async () => {
+    setBusy(true);
+    try {
+      await regenerateCoursePlan(jobId);
+      await fetchPlan();
+      toast.success("Course structure regenerated.");
+    } catch (err) {
+      toast.error("Failed to regenerate course structure", {
+        description: err instanceof Error ? err.message : "Unknown error",
+      });
+    } finally {
+      setBusy(false);
+    }
   };
 
   const saveEdits = async () => {
@@ -208,6 +332,10 @@ export default function CourseStructurePreview({ jobId, videoUrl, hasExistingCou
                 {formatSeconds(section.segmentStart)} &ndash; {formatSeconds(section.segmentEnd)}
               </span>
               <div className="flex gap-2">
+                <Button variant="outline" size="sm" disabled={busy} onClick={() => regenerateOneSection(index)}>
+                  <RefreshCw className="h-3.5 w-3.5 mr-1" />
+                  Regenerate
+                </Button>
                 <Button variant="outline" size="sm" disabled={busy} onClick={() => splitSection(index)}>
                   <Scissors className="h-3.5 w-3.5 mr-1" />
                   Split
@@ -218,6 +346,10 @@ export default function CourseStructurePreview({ jobId, videoUrl, hasExistingCou
                     Merge with next
                   </Button>
                 )}
+                <Button variant="outline" size="sm" disabled={busy} onClick={() => deleteSection(index)}>
+                  <Trash2 className="h-3.5 w-3.5 mr-1" />
+                  Delete
+                </Button>
               </div>
             </div>
 
@@ -238,15 +370,12 @@ export default function CourseStructurePreview({ jobId, videoUrl, hasExistingCou
             )}
 
             {videoId && (
-              <div className="aspect-video w-full max-w-sm rounded-md overflow-hidden border">
-                <iframe
-                  className="w-full h-full"
-                  src={`https://www.youtube.com/embed/${videoId}?start=${Math.floor(section.segmentStart)}&end=${Math.ceil(section.segmentEnd)}`}
-                  title={`Preview: ${section.name}`}
-                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                  allowFullScreen
-                />
-              </div>
+              <SegmentPreviewPlayer
+                videoId={videoId}
+                segmentStart={section.segmentStart}
+                segmentEnd={section.segmentEnd}
+                title={section.name}
+              />
             )}
           </CardContent>
         </Card>
@@ -254,6 +383,10 @@ export default function CourseStructurePreview({ jobId, videoUrl, hasExistingCou
 
       <Card className="border-muted bg-muted/10">
         <CardContent className="py-4 flex justify-end gap-2">
+          <Button variant="outline" disabled={busy} onClick={regenerateAll}>
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Regenerate entire structure
+          </Button>
           <Button variant="outline" disabled={busy} onClick={saveEdits}>
             Save edits
           </Button>

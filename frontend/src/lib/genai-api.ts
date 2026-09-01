@@ -636,6 +636,24 @@ export const updateCoursePlan = async (
   });
 };
 
+// Discards every AI-generated name/description (module, course, all
+// sections) -- the next getCoursePlan call regenerates them from scratch.
+// Segment time boundaries are untouched.
+export const regenerateCoursePlan = async (jobId: string) => {
+  return makeAuthenticatedRequest(`/genai/jobs/${jobId}/course-plan/regenerate`, {
+    method: 'POST',
+  });
+};
+
+// Same idea, scoped to one section (identified by segmentEnd) -- every
+// other section and the module/course names are untouched.
+export const regenerateSection = async (jobId: string, segmentEnd: number) => {
+  return makeAuthenticatedRequest(`/genai/jobs/${jobId}/course-plan/sections/regenerate`, {
+    method: 'POST',
+    body: JSON.stringify({ segmentEnd }),
+  });
+};
+
 // Converts a raw mm:ss/h:mm:ss-timestamped transcript into the {chunks:[...]}
 // shape createGenAIJob's transcript param expects, via MiniMax. Stateless --
 // no job needs to exist yet.

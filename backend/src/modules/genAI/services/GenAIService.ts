@@ -1030,6 +1030,45 @@ export class GenAIService extends BaseService {
     });
   }
 
+  // Clears the whole cached plan (module/course names + every section) so
+  // the next getCoursePlan call regenerates everything from scratch via its
+  // existing missing-entry fill logic -- no separate AI-calling code needed
+  // here, this just makes every entry look "missing" again. Segment
+  // boundaries themselves (job's segmentationMap) are untouched, only the
+  // AI-generated names/descriptions are discarded.
+  async regenerateCoursePlan(jobId: string): Promise<void> {
+    return this._withTransaction(async session => {
+      const job = await this.genAIRepository.getById(jobId, session);
+      if (!job) {
+        throw new NotFoundError(`GenAI job ${jobId} not found`);
+      }
+      job.coursePlan = undefined;
+      await this.genAIRepository.update(jobId, job, session);
+    });
+  }
+
+  // Same idea as regenerateCoursePlan, but for one section only -- drops
+  // just that section's cached entry (by segmentEnd) so getCoursePlan
+  // regenerates a fresh name/description for it alone, leaving the module
+  // name, course name, and every other section's entry untouched.
+  async regenerateSection(jobId: string, segmentEnd: number): Promise<void> {
+    return this._withTransaction(async session => {
+      const job = await this.genAIRepository.getById(jobId, session);
+      if (!job) {
+        throw new NotFoundError(`GenAI job ${jobId} not found`);
+      }
+      if (!job.coursePlan) {
+        throw new BadRequestError(`Job ${jobId} has no course plan yet -- fetch it first.`);
+      }
+      const before = job.coursePlan.sections.length;
+      job.coursePlan.sections = job.coursePlan.sections.filter(s => s.segmentEnd !== segmentEnd);
+      if (job.coursePlan.sections.length === before) {
+        throw new BadRequestError(`No section found with segmentEnd ${segmentEnd}.`);
+      }
+      await this.genAIRepository.update(jobId, job, session);
+    });
+  }
+
   // Stateless: no job exists yet at this point in the flow (a teacher
   // pastes a raw transcript on the create-job form before submitting), so
   // this just converts text and returns it -- the caller feeds the result
