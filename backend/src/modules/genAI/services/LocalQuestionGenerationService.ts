@@ -58,13 +58,16 @@ interface GeneratedQuestionItem {
   };
 }
 
-const QUESTION_PROMPT = (segmentText: string) => `You are writing a single multiple-choice quiz question testing understanding of the lesson segment below. Reply ONLY with one JSON object, no prose, no markdown fences.
+const QUESTION_PROMPT = (segmentText: string, avoidQuestions: string[]) => `You are writing a single multiple-choice quiz question testing understanding of the lesson segment below. Reply ONLY with one JSON object, no prose, no markdown fences.
 
 Lesson segment:
 """
 ${segmentText}
 """
-
+${avoidQuestions.length > 0 ? `
+This segment already has the following question(s). Write about a DIFFERENT fact, step, or idea from the segment -- do not repeat or closely rephrase any of these:
+${avoidQuestions.map((q, i) => `${i + 1}. ${q}`).join('\n')}
+` : ''}
 Requirements:
 - The question must be answerable from the segment content alone.
 - Exactly 4 options, plausible, only one correct.
@@ -137,9 +140,18 @@ export class LocalQuestionGenerationService {
     for (const segment of withText) {
       if (results.length >= requestedCount) break;
       const toGenerate = Math.min(perSegment, requestedCount - results.length);
+      // requestedCount is questionsPerQuiz * segmentCount (see GenAIService),
+      // so when every segment has text, toGenerate here IS questionsPerQuiz --
+      // the same segment.text would otherwise get sent to this deterministic
+      // (temperature: 0) prompt multiple times in a row with zero variation,
+      // producing near-duplicate questions. Track what's already been asked
+      // for this segment and tell the LLM to avoid repeating it.
+      const askedForThisSegment: string[] = [];
       for (let i = 0; i < toGenerate; i++) {
         try {
-          results.push(await this.generateOneQuestion(segment.text, segment.segmentId));
+          const item = await this.generateOneQuestion(segment.text, segment.segmentId, askedForThisSegment);
+          askedForThisSegment.push(item.question.text);
+          results.push(item);
         } catch (err) {
           // Best-effort: one bad segment/LLM response shouldn't abort the whole job.
           console.warn(
@@ -155,8 +167,9 @@ export class LocalQuestionGenerationService {
   private async generateOneQuestion(
     segmentText: string,
     segmentId: string,
+    avoidQuestions: string[],
   ): Promise<GeneratedQuestionItem> {
-    const verdict = await this.llm.askJson(QUESTION_PROMPT(segmentText));
+    const verdict = await this.llm.askJson(QUESTION_PROMPT(segmentText, avoidQuestions));
     const text = typeof verdict.question === 'string' ? verdict.question.trim() : '';
     const options = Array.isArray(verdict.options) ? verdict.options.map(String) : [];
     const correctIndex = Number(verdict.correctIndex);
