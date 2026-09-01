@@ -104,24 +104,24 @@ function splitIntoWindows(rawText: string, windowChars: number): string[] {
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-// Confirmed live: MinimaxScreeningLlm's shared per-call timeout (9s,
-// screeningConfig.timeoutMs) is fine for every OTHER caller of that class --
+// MinimaxScreeningLlm's shared per-call timeout (9s, screeningConfig
+// .timeoutMs) is tuned for every OTHER caller of that class --
 // LocalQuestionGenerationService, LocalCoursePlanService, and the screening
-// filter itself all ask for one small, fixed-shape JSON object. This service
-// asks for a JSON ARRAY that grows with how much content is in the window,
-// so 9s is a systematic near-miss here, not a rare transient one -- proven
-// by ruling out concurrency as the cause (lowering WINDOW_CONCURRENCY from
-// 8 to 3 didn't reduce the failure rate at all, only made failures slower to
-// surface). MinimaxScreeningLlm takes an optional per-instance override
-// specifically so this service can have its own longer deadline without
-// loosening the shared 9s timeout the other three callers still rely on.
+// filter itself all ask for one small, fixed-shape JSON object, where 9s is
+// plenty. This service asks for a JSON ARRAY that grows with how much
+// content is in the window, so it gets its own longer deadline via
+// MinimaxScreeningLlm's optional per-instance override, without loosening
+// the shared 9s timeout the other three callers still rely on. (Confirmed
+// live this alone doesn't explain this service's real-world failures --
+// see the rate-limit note below -- but a bigger, growing JSON payload
+// genuinely can take longer than 9s to generate, so the extra headroom
+// still stands on its own merits.)
 const WINDOW_TIMEOUT_MS = 30000;
 
 // The outer retry loop below is this service's OWN retrying, layered above
 // a single real attempt per call (maxRetries: 0 on the llm instance) rather
 // than compounding with MinimaxScreeningLlm's own internal retries at the
-// same too-short timeout, which is what happened before WINDOW_TIMEOUT_MS
-// existed.
+// same shared timeout.
 const OUTER_ATTEMPTS = 3;
 const OUTER_RETRY_DELAY_MS = 5000;
 
@@ -129,13 +129,50 @@ const OUTER_RETRY_DELAY_MS = 5000;
 // own retries. Deliberately more patient (more attempts, longer spacing)
 // than the main pass, and run at low concurrency afterward rather than
 // competing with WINDOW_CONCURRENCY other in-flight calls for the same
-// window's own retry slots -- a window that failed once, in a burst of
-// hundreds of other simultaneous requests, gets dedicated attention here
-// instead of the same crowded conditions that likely contributed to the
-// first failure.
+// window's own retry slots.
 const RECOVERY_ATTEMPTS = 4;
 const RECOVERY_RETRY_DELAY_MS = 8000;
 const RECOVERY_CONCURRENCY = 2;
+
+// Confirmed live: every single failure across every test run of this
+// service -- at WINDOW_CONCURRENCY 3 and 8, with both the original 9s
+// timeout and the longer WINDOW_TIMEOUT_MS above -- was a genuine HTTP 429
+// from MiniMax, starting consistently once ~48-50 requests had gone out
+// within a few minutes. That's an account/API-key-level rate limit, not
+// something a longer timeout or a smaller concurrency number touches --
+// lowering concurrency didn't change the total number of requests needed
+// or reduce how many landed within the limit's rolling window, it just
+// spread the same request count over more wall-clock time before still
+// hitting the same wall.
+//
+// Two changes actually target this: (1) pace every outgoing call --
+// including retries, and shared module-level so it applies across the main
+// pass AND the recovery pass together, since the constraint is per-API-key
+// for the whole process, not per-pass or per-window -- to no faster than
+// one request start every MIN_REQUEST_INTERVAL_MS, so WINDOW_CONCURRENCY
+// now only bounds how many requests can be in flight awaiting a response at
+// once, not how fast new ones start; (2) back off much longer, and growing,
+// specifically when the error is a 429, instead of retrying after the same
+// few-second delay used for other transient errors -- retrying quickly
+// after a 429 just re-hits the same still-active limit.
+const MIN_REQUEST_INTERVAL_MS = 4000;
+let nextAllowedRequestAt = 0;
+
+async function paceRequest(): Promise<void> {
+  const now = Date.now();
+  const waitMs = Math.max(0, nextAllowedRequestAt - now);
+  nextAllowedRequestAt = Math.max(now, nextAllowedRequestAt) + MIN_REQUEST_INTERVAL_MS;
+  if (waitMs > 0) await sleep(waitMs);
+}
+
+const RATE_LIMIT_BASE_BACKOFF_MS = 15000;
+const RATE_LIMIT_MAX_BACKOFF_MS = 60000;
+
+function isRateLimited(err: unknown): boolean {
+  const cause = (err as { cause?: unknown } | null)?.cause;
+  const message = (cause as { message?: string } | null)?.message ?? (err as { message?: string } | null)?.message ?? '';
+  return message.includes('429');
+}
 
 // Confirmed live: a 62-minute transcript needed ~586 chunks across hundreds
 // of windows and took 39 minutes run strictly one-at-a-time -- a 3+ hour
@@ -189,10 +226,14 @@ export class LocalTranscriptFormatService {
   ): Promise<Record<string, unknown>> {
     for (let attempt = 1; ; attempt++) {
       try {
+        await paceRequest();
         return await this.llm.askJson(prompt);
       } catch (err) {
         if (attempt >= attempts) throw err;
-        await sleep(delayMs);
+        const delay = isRateLimited(err)
+          ? Math.min(RATE_LIMIT_BASE_BACKOFF_MS * 2 ** (attempt - 1), RATE_LIMIT_MAX_BACKOFF_MS)
+          : delayMs;
+        await sleep(delay);
       }
     }
   }
