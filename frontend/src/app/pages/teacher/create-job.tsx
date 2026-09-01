@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { ChevronDown, Loader2, Wand2, Sparkles, CheckCircle2 } from "lucide-react";
 import { createGenAIJob, convertTranscript, type Transcript } from "@/lib/genai-api";
 import { useVideoUpload } from "@/hooks/media-hooks";
+import { useCreateCourse } from "@/hooks/hooks";
 
 const REQUIRED_TRANSCRIPT_FORMAT_HINT =
     "Paste text with a timestamp on its own line before each spoken block -- mm:ss or h:mm:ss " +
@@ -41,12 +42,62 @@ export default function GenerateSectionPage() {
     const [convertedTranscript, setConvertedTranscript] = useState<Transcript | null>(null);
     const [isConverting, setIsConverting] = useState(false);
 
-    const canUseUploadMode = !!courseId && !!versionId;
+    // Uploading a video needs a real, already-existing course+version to attach
+    // to (no deferred auto-create like the URL flow gets) -- see VideoAssetService
+    // .createUploadUrl's assertCanManage check. "new" synthesizes that course
+    // right when a file is picked, via the same useCreateCourse the Create
+    // Course page uses, instead of requiring the teacher to pre-create one by
+    // hand and paste its id.
+    const [courseSourceMode, setCourseSourceMode] = useState<"existing" | "new">("existing");
+    const [newCourseName, setNewCourseName] = useState("");
+    const [newCourseDescription, setNewCourseDescription] = useState("");
+    const createCourseMutation = useCreateCourse();
+
+    const canUseUploadMode = courseSourceMode === "existing"
+        ? (!!courseId && !!versionId)
+        : !!newCourseName.trim();
+
+    const resetCourseSelection = () => {
+        setCourseId("");
+        setVersionId("");
+        videoUpload.reset();
+    };
 
     const handleVideoFileChange = async (file: File | null) => {
         if (!file || !canUseUploadMode) return;
         videoUpload.reset();
-        await videoUpload.upload(file, { courseId, courseVersionId: versionId });
+
+        let effectiveCourseId = courseId;
+        let effectiveVersionId = versionId;
+        if (courseSourceMode === "new" && !effectiveCourseId) {
+            try {
+                const res = await createCourseMutation.mutateAsync({
+                    body: {
+                        name: newCourseName.trim(),
+                        description: newCourseDescription.trim() || "Created automatically for an uploaded video.",
+                        versionName: "v1",
+                        versionDescription: "",
+                        cohorts: [],
+                        hpSystem: false,
+                        baseHp: undefined,
+                    },
+                });
+                effectiveCourseId = res._id;
+                effectiveVersionId = res.versions?.[0] ?? "";
+                if (!effectiveCourseId || !effectiveVersionId) {
+                    throw new Error("Course creation did not return a version id");
+                }
+                setCourseId(effectiveCourseId);
+                setVersionId(effectiveVersionId);
+            } catch (error) {
+                toast.error("Failed to create course", {
+                    description: error instanceof Error ? error.message : "An unexpected error occurred.",
+                });
+                return;
+            }
+        }
+
+        await videoUpload.upload(file, { courseId: effectiveCourseId, courseVersionId: effectiveVersionId });
     };
 
     const handleConvertTranscript = async () => {
@@ -177,16 +228,72 @@ export default function GenerateSectionPage() {
                             </button>
                             {showAdvanced && (
                                 <div className="space-y-4 mt-3 pl-1">
-                                    <Input
-                                        placeholder="Course ID (leave blank to auto-create a new course)"
-                                        value={courseId}
-                                        onChange={(e) => setCourseId(e.target.value)}
-                                    />
-                                    <Input
-                                        placeholder="Version ID (leave blank to auto-create a new version)"
-                                        value={versionId}
-                                        onChange={(e) => setVersionId(e.target.value)}
-                                    />
+                                    {inputMode === "upload" && (
+                                        <div>
+                                            <div className="flex gap-2">
+                                                <Button
+                                                    type="button"
+                                                    variant={courseSourceMode === "existing" ? "default" : "outline"}
+                                                    size="sm"
+                                                    onClick={() => { setCourseSourceMode("existing"); resetCourseSelection(); }}
+                                                >
+                                                    Use existing course
+                                                </Button>
+                                                <Button
+                                                    type="button"
+                                                    variant={courseSourceMode === "new" ? "default" : "outline"}
+                                                    size="sm"
+                                                    onClick={() => { setCourseSourceMode("new"); resetCourseSelection(); }}
+                                                >
+                                                    Create new course
+                                                </Button>
+                                            </div>
+                                            {courseSourceMode === "new" && (
+                                                <p className="text-xs text-muted-foreground mt-1">
+                                                    The course is created as soon as you pick a video file below --
+                                                    unlike the YouTube-URL flow, upload can't defer course creation
+                                                    until review since the file needs somewhere real to attach to.
+                                                </p>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    {(inputMode === "url" || courseSourceMode === "existing") ? (
+                                        <>
+                                            <Input
+                                                placeholder="Course ID (leave blank to auto-create a new course)"
+                                                value={courseId}
+                                                onChange={(e) => setCourseId(e.target.value)}
+                                            />
+                                            <Input
+                                                placeholder="Version ID (leave blank to auto-create a new version)"
+                                                value={versionId}
+                                                onChange={(e) => setVersionId(e.target.value)}
+                                            />
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Input
+                                                placeholder="New course name"
+                                                value={newCourseName}
+                                                onChange={(e) => setNewCourseName(e.target.value)}
+                                                disabled={!!courseId || createCourseMutation.isPending}
+                                            />
+                                            <Textarea
+                                                placeholder="New course description (optional)"
+                                                value={newCourseDescription}
+                                                onChange={(e) => setNewCourseDescription(e.target.value)}
+                                                disabled={!!courseId || createCourseMutation.isPending}
+                                                rows={2}
+                                            />
+                                            {courseId && (
+                                                <p className="text-xs text-emerald-600 dark:text-emerald-500 flex items-center gap-1">
+                                                    <CheckCircle2 className="h-3 w-3" />
+                                                    Course created: {courseId}
+                                                </p>
+                                            )}
+                                        </>
+                                    )}
                                     <Input
                                         placeholder="Module ID (leave blank to auto-create a new module)"
                                         value={moduleId}
@@ -204,8 +311,9 @@ export default function GenerateSectionPage() {
                             />
                         ) : !canUseUploadMode ? (
                             <p className="text-sm text-amber-600 dark:text-amber-500">
-                                Uploading a video attaches it to a course's video library, so a Course ID and Version ID
-                                are required above -- unlike the YouTube-URL flow, this can't auto-create a new course.
+                                {courseSourceMode === "existing"
+                                    ? "Uploading a video attaches it to a course's video library, so a Course ID and Version ID are required above."
+                                    : "Enter a name for the new course above before uploading a video."}
                             </p>
                         ) : (
                             <div className="space-y-4">
