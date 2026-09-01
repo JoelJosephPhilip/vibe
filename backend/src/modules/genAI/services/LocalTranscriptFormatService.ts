@@ -8,10 +8,6 @@ export interface FormattedChunk {
 
 export interface ConvertToChunksResult {
   chunks: FormattedChunk[];
-  // Count of windows that still failed after every retry and were left out
-  // of chunks rather than failing the whole conversion -- see the note above
-  // convertToChunks for why. 0 on a fully clean run.
-  skippedWindows: number;
 }
 
 // Confirmed live: a window this size regularly took MiniMax past the 9s
@@ -121,6 +117,18 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const OUTER_ATTEMPTS = 3;
 const OUTER_RETRY_DELAY_MS = 5000;
 
+// Second-chance pass for windows that are still failed after the main pass's
+// own retries. Deliberately more patient (more attempts, longer spacing)
+// than the main pass, and run at low concurrency afterward rather than
+// competing with WINDOW_CONCURRENCY other in-flight calls for the same
+// window's own retry slots -- a window that failed once, in a burst of
+// hundreds of other simultaneous requests, gets dedicated attention here
+// instead of the same crowded conditions that likely contributed to the
+// first failure.
+const RECOVERY_ATTEMPTS = 4;
+const RECOVERY_RETRY_DELAY_MS = 8000;
+const RECOVERY_CONCURRENCY = 3;
+
 // Confirmed live: a 62-minute transcript needed ~586 chunks across hundreds
 // of windows and took 39 minutes run strictly one-at-a-time -- a 3+ hour
 // course transcript would scale past that linearly. Windows are independent
@@ -160,73 +168,91 @@ async function mapWithConcurrency<T, R>(
 export class LocalTranscriptFormatService {
   private readonly llm = new MinimaxScreeningLlm();
 
-  private async askJsonWithRetry(prompt: string): Promise<Record<string, unknown>> {
+  private async askJsonWithRetry(
+    prompt: string,
+    attempts: number = OUTER_ATTEMPTS,
+    delayMs: number = OUTER_RETRY_DELAY_MS,
+  ): Promise<Record<string, unknown>> {
     for (let attempt = 1; ; attempt++) {
       try {
         return await this.llm.askJson(prompt);
       } catch (err) {
-        if (attempt >= OUTER_ATTEMPTS) throw err;
-        await sleep(OUTER_RETRY_DELAY_MS);
+        if (attempt >= attempts) throw err;
+        await sleep(delayMs);
       }
     }
   }
 
+  private async convertWindow(
+    windowText: string,
+    windowNumber: number,
+    totalWindows: number,
+    attempts: number,
+    delayMs: number,
+  ): Promise<FormattedChunk[]> {
+    const verdict = await this.askJsonWithRetry(CONVERT_PROMPT(windowText), attempts, delayMs);
+    const rawChunks = verdict.chunks;
+    if (!Array.isArray(rawChunks)) {
+      throw new Error(`MiniMax did not return a chunks array for transcript window ${windowNumber}/${totalWindows}`);
+    }
+    const chunks: FormattedChunk[] = [];
+    for (const c of rawChunks) {
+      const timestamp = (c as any)?.timestamp;
+      const text = (c as any)?.text;
+      if (
+        !Array.isArray(timestamp) ||
+        typeof timestamp[0] !== 'number' ||
+        typeof text !== 'string' ||
+        !text.trim()
+      ) {
+        throw new Error(`MiniMax returned a malformed chunk in transcript window ${windowNumber}/${totalWindows}`);
+      }
+      chunks.push({ timestamp, text: text.trim() });
+    }
+    return chunks;
+  }
+
   async convertToChunks(rawText: string): Promise<ConvertToChunksResult> {
     const windows = splitIntoWindows(rawText, WINDOW_CHARS);
-    let skippedWindows = 0;
 
-    // A real transcript with tightly-spaced timestamps can need hundreds of
-    // windows. Confirmed live: even with every window properly bounded (see
-    // splitOversizedBlock above), a conversion that size still eventually
-    // failed outright run sequentially -- after 890s -- because across
-    // enough calls, the odds that *some* window exhausts every retry
-    // approach certainty, no matter how generous the retry budget is.
-    // Aborting the whole conversion for one bad window is the wrong
-    // tradeoff at that scale: it guarantees total failure on any
-    // sufficiently long transcript. Skipping just that window's content and
-    // continuing gives a near-complete result instead -- skippedWindows
-    // tells the caller how much was lost so it isn't silent.
-    const perWindowChunks = await mapWithConcurrency(windows, WINDOW_CONCURRENCY, async (windowText, i) => {
+    // Main pass: every window gets its own retry budget, WINDOW_CONCURRENCY
+    // at a time. A window that's still failed after this either recovers in
+    // the dedicated second pass below, or the whole conversion fails loudly
+    // -- no content is ever silently dropped.
+    const firstPass = await mapWithConcurrency(windows, WINDOW_CONCURRENCY, async (windowText, i) => {
       try {
-        const verdict = await this.askJsonWithRetry(CONVERT_PROMPT(windowText));
-        const rawChunks = verdict.chunks;
-        if (!Array.isArray(rawChunks)) {
-          throw new Error(
-            `MiniMax did not return a chunks array for transcript window ${i + 1}/${windows.length}`,
-          );
-        }
-        const chunks: FormattedChunk[] = [];
-        for (const c of rawChunks) {
-          const timestamp = (c as any)?.timestamp;
-          const text = (c as any)?.text;
-          if (
-            !Array.isArray(timestamp) ||
-            typeof timestamp[0] !== 'number' ||
-            typeof text !== 'string' ||
-            !text.trim()
-          ) {
-            throw new Error(
-              `MiniMax returned a malformed chunk in transcript window ${i + 1}/${windows.length}`,
-            );
-          }
-          chunks.push({ timestamp, text: text.trim() });
-        }
-        return chunks;
+        return { chunks: await this.convertWindow(windowText, i + 1, windows.length, OUTER_ATTEMPTS, OUTER_RETRY_DELAY_MS) };
       } catch (err) {
-        skippedWindows++;
         console.error(
-          `[LocalTranscriptFormatService] window ${i + 1}/${windows.length} failed, skipping:`,
+          `[LocalTranscriptFormatService] window ${i + 1}/${windows.length} failed on the main pass, will retry:`,
           err,
         );
-        return [] as FormattedChunk[];
+        return { failed: true as const };
       }
     });
 
-    const allChunks = perWindowChunks.flat();
+    const failedIndices = firstPass
+      .map((outcome, i) => ('failed' in outcome ? i : -1))
+      .filter(i => i !== -1);
 
-    if (allChunks.length === 0) {
-      throw new Error('MiniMax failed to convert every window of this transcript');
+    const recovered = new Map<number, FormattedChunk[]>();
+    if (failedIndices.length > 0) {
+      const recoveryResults = await mapWithConcurrency(failedIndices, RECOVERY_CONCURRENCY, async i => {
+        try {
+          return await this.convertWindow(windows[i], i + 1, windows.length, RECOVERY_ATTEMPTS, RECOVERY_RETRY_DELAY_MS);
+        } catch (err) {
+          const timestampLine = windows[i].split('\n')[0]?.trim();
+          throw new Error(
+            `Could not convert the transcript portion starting at ${timestampLine || `window ${i + 1}/${windows.length}`} ` +
+              `after extensive retries. Try converting again, or check that part of the transcript for unusual formatting: ` +
+              `${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      });
+      failedIndices.forEach((i, idx) => recovered.set(i, recoveryResults[idx]));
     }
+
+    const allChunks = firstPass.flatMap((outcome, i) => ('failed' in outcome ? recovered.get(i)! : outcome.chunks));
 
     allChunks.sort((a, b) => a.timestamp[0] - b.timestamp[0]);
 
@@ -238,7 +264,6 @@ export class LocalTranscriptFormatService {
     // next chunk's start, the same "runs until the next one begins"
     // inference a human would make.
     return {
-      skippedWindows,
       chunks: allChunks.map((c, i) => {
         const isLast = i === allChunks.length - 1;
         const hasEnd = typeof c.timestamp[1] === 'number' && c.timestamp[1] > c.timestamp[0];

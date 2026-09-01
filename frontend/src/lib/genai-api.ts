@@ -133,10 +133,6 @@ export interface Chunk {
 
 export interface Transcript {
   chunks: Chunk[];
-  // Only set by convertTranscript -- count of transcript portions MiniMax
-  // couldn't convert even after retries, left out rather than failing the
-  // whole conversion. Absent (or 0) means nothing was lost.
-  skippedWindows?: number;
 }
 
 // 1. Create GenAI Job
