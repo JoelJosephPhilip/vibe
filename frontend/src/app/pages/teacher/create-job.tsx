@@ -101,7 +101,8 @@ export default function GenerateSectionPage() {
                     body: {
                         name: newCourseName.trim(),
                         description: newCourseDescription.trim() || "Created automatically for an uploaded video.",
-                        versionName: "v1",
+                        // CourseBody.versionName has @MinLength(3) -- "v1" alone fails that.
+                        versionName: "Version 1",
                         versionDescription: "",
                         cohorts: [],
                         hpSystem: false,
@@ -116,8 +117,12 @@ export default function GenerateSectionPage() {
                 setCourseId(effectiveCourseId);
                 setVersionId(effectiveVersionId);
             } catch (error) {
+                // The API client's mutation errors aren't always `instanceof Error`
+                // (openapi-fetch surfaces the parsed error body directly), so check
+                // for a `.message` property rather than requiring the Error type.
+                const message = (error as { message?: unknown } | null)?.message;
                 toast.error("Failed to create course", {
-                    description: error instanceof Error ? error.message : "An unexpected error occurred.",
+                    description: typeof message === "string" && message ? message : "An unexpected error occurred.",
                 });
                 return;
             }
