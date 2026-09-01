@@ -10,11 +10,11 @@ export interface ConvertToChunksResult {
   chunks: FormattedChunk[];
 }
 
-// Confirmed live: a window this size regularly took MiniMax past the 9s
-// screening timeout on every one of its 3 attempts (~30s total before the
-// whole conversion failed). Response time is governed by output size, not
-// input size, and a dense window can need to echo back a lot of chunks --
-// smaller windows means less to generate per call, not just less to read.
+// Response time is governed by output size, not input size -- a dense
+// window can need to echo back a lot of chunks, so smaller windows means
+// less to generate per call, not just less to read. Still worth bounding
+// even with this service's own longer timeout (WINDOW_TIMEOUT_MS below):
+// a smaller, faster call is also a call with less surface area to fail on.
 const WINDOW_CHARS = 1200;
 
 const CONVERT_PROMPT = (windowText: string) => `The text below is one portion of a longer transcript. Each spoken block is preceded by its own timestamp line, in mm:ss or h:mm:ss format (e.g. "12:34" or "1:02:15"). Convert it into chunks, one per timestamped block, giving each chunk's start and end time in seconds as a two-element array. If a block's end time isn't clear from the next timestamp, estimate it reasonably. Reply ONLY with one JSON object, no prose, no markdown fences.
@@ -104,16 +104,24 @@ function splitIntoWindows(rawText: string, windowChars: number): string[] {
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-// A long real transcript needs many sequential windows, and each window
-// already gets 3 attempts of its own inside MinimaxScreeningLlm (~30s worth
-// of internal retries). Confirmed live: even with small windows, a run of
-// 20+ windows occasionally has ONE window exhaust all 3 of those internal
-// attempts anyway (transient provider slowness, not a sizing problem) --
-// which used to abort the entire conversion and throw away every window
-// that had already succeeded. A few more outer attempts, spaced further
-// apart than the internal backoff ever gets, absorbs that without touching
-// MinimaxScreeningLlm's shared retry/timeout config (used by other features
-// too).
+// Confirmed live: MinimaxScreeningLlm's shared per-call timeout (9s,
+// screeningConfig.timeoutMs) is fine for every OTHER caller of that class --
+// LocalQuestionGenerationService, LocalCoursePlanService, and the screening
+// filter itself all ask for one small, fixed-shape JSON object. This service
+// asks for a JSON ARRAY that grows with how much content is in the window,
+// so 9s is a systematic near-miss here, not a rare transient one -- proven
+// by ruling out concurrency as the cause (lowering WINDOW_CONCURRENCY from
+// 8 to 3 didn't reduce the failure rate at all, only made failures slower to
+// surface). MinimaxScreeningLlm takes an optional per-instance override
+// specifically so this service can have its own longer deadline without
+// loosening the shared 9s timeout the other three callers still rely on.
+const WINDOW_TIMEOUT_MS = 30000;
+
+// The outer retry loop below is this service's OWN retrying, layered above
+// a single real attempt per call (maxRetries: 0 on the llm instance) rather
+// than compounding with MinimaxScreeningLlm's own internal retries at the
+// same too-short timeout, which is what happened before WINDOW_TIMEOUT_MS
+// existed.
 const OUTER_ATTEMPTS = 3;
 const OUTER_RETRY_DELAY_MS = 5000;
 
@@ -137,14 +145,14 @@ const RECOVERY_CONCURRENCY = 2;
 // concurrent calls on the same instance are safe), so there's no correctness
 // reason to serialize them.
 //
-// Confirmed live at 8: a run that failed only 3/67 windows the first time
-// failed 13+/67 the next, scattered essentially at random across the whole
-// transcript rather than clustered in one bad spot -- the signature of
-// self-inflicted throttling, not a content problem. Since a persistently
-// stuck window now aborts the whole conversion (see convertToChunks) rather
-// than being silently skipped, a higher failure rate is no longer just a
-// quality tradeoff, it's a reliability one. Dropped to 3: still faster than
-// fully sequential, far less likely to overwhelm the provider than 8 was.
+// Concurrency was the first suspect for the failure-rate problem (dropped
+// from 8 to 3 on that theory), but confirmed live: the failure rate at
+// concurrency 3 was just as high as at 8 (13-15/67 windows either way) --
+// only slower to fail. That rules concurrency out; the actual cause was
+// WINDOW_TIMEOUT_MS above being too short (fixed now). Left at 3
+// deliberately rather than restored to 8 in the same change, so the
+// timeout fix's effect can be observed in isolation before touching this
+// again.
 const WINDOW_CONCURRENCY = 3;
 
 async function mapWithConcurrency<T, R>(
@@ -172,7 +180,7 @@ async function mapWithConcurrency<T, R>(
  */
 @injectable()
 export class LocalTranscriptFormatService {
-  private readonly llm = new MinimaxScreeningLlm();
+  private readonly llm = new MinimaxScreeningLlm({timeoutMs: WINDOW_TIMEOUT_MS, maxRetries: 0});
 
   private async askJsonWithRetry(
     prompt: string,

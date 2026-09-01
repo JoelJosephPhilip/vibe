@@ -14,9 +14,19 @@ export class MinimaxScreeningLlm implements ScreeningLlm {
   readonly provider = 'minimax';
   readonly model = screeningConfig.minimax.model;
 
+  // Per-instance overrides for callers whose workload doesn't fit the shared
+  // screening defaults -- e.g. a call whose expected output is a JSON array
+  // that grows with input size, rather than the small fixed-shape object
+  // every other caller of this class asks for. Defaults to the shared
+  // screeningConfig values (below) so every existing zero-arg call site is
+  // unaffected.
+  constructor(private readonly overrides?: {timeoutMs?: number; maxRetries?: number}) {}
+
   async askJson(prompt: string): Promise<Record<string, unknown>> {
     const {apiKey, url, model} = screeningConfig.minimax;
     if (!apiKey) throw new ScreeningLlmError('MINIMAX_API_KEY not set');
+    const timeoutMs = this.overrides?.timeoutMs ?? screeningConfig.timeoutMs;
+    const maxRetries = this.overrides?.maxRetries ?? screeningConfig.maxRetries;
 
     const body = JSON.stringify({
       model,
@@ -26,9 +36,9 @@ export class MinimaxScreeningLlm implements ScreeningLlm {
 
     let lastErr: unknown;
     let backoff = 800;
-    for (let attempt = 0; attempt <= screeningConfig.maxRetries; attempt++) {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), screeningConfig.timeoutMs);
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
         const res = await fetch(url, {
           method: 'POST',
@@ -51,13 +61,13 @@ export class MinimaxScreeningLlm implements ScreeningLlm {
         lastErr = err;
         const isAbort = (err as Error)?.name === 'AbortError';
         const retriable = isAbort || err instanceof ScreeningLlmError;
-        if (attempt === screeningConfig.maxRetries || !retriable) break;
+        if (attempt === maxRetries || !retriable) break;
         await new Promise(r => setTimeout(r, backoff));
         backoff = Math.min(backoff + 800, 4000);
       } finally {
         clearTimeout(timer);
       }
     }
-    throw new ScreeningLlmError('minimax call failed after retries', lastErr);
+    throw new ScreeningLlmError(`minimax call failed after ${maxRetries + 1} attempt(s)`, lastErr);
   }
 }
