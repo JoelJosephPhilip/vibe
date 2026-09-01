@@ -49,6 +49,58 @@ function tryParseAlreadyFormattedTranscript(rawText: string): Transcript | null 
     return { chunks: chunks as Transcript["chunks"] };
 }
 
+// Shared between YouTube-URL mode (optional -- skips yt-dlp/whisper auto-
+// transcription, useful when that's blocked, e.g. by YouTube's cookie/bot-
+// detection requirements) and upload mode (required -- an uploaded file has
+// no auto-transcription path at all).
+function TranscriptInputSection({
+    rawTranscript,
+    onRawTranscriptChange,
+    convertedTranscript,
+    isConverting,
+    onConvert,
+}: {
+    rawTranscript: string;
+    onRawTranscriptChange: (value: string) => void;
+    convertedTranscript: Transcript | null;
+    isConverting: boolean;
+    onConvert: () => void;
+}) {
+    return (
+        <div>
+            <Label className="mb-2">Transcript</Label>
+            <Textarea
+                placeholder="0:00&#10;Hello and welcome...&#10;0:45&#10;Today we are covering..."
+                value={rawTranscript}
+                onChange={(e) => onRawTranscriptChange(e.target.value)}
+                rows={6}
+            />
+            <p className="text-xs text-muted-foreground mt-1">{REQUIRED_TRANSCRIPT_FORMAT_HINT}</p>
+            <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-2"
+                onClick={onConvert}
+                disabled={isConverting || !rawTranscript.trim()}
+            >
+                {isConverting ? (
+                    <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Converting with MiniMax...</>
+                ) : (
+                    <><Sparkles className="h-4 w-4 mr-2" />Convert with MiniMax</>
+                )}
+            </Button>
+            {convertedTranscript && (
+                <p className="text-xs text-emerald-600 dark:text-emerald-500 mt-1 flex items-center gap-1">
+                    <CheckCircle2 className="h-3 w-3" />
+                    {convertedTranscript.chunks.length} chunk{convertedTranscript.chunks.length === 1 ? "" : "s"} extracted,
+                    covering 0:00–{formatDuration(convertedTranscript.chunks.at(-1)?.timestamp[1] ?? convertedTranscript.chunks.at(-1)?.timestamp[0] ?? 0)}.
+                </p>
+            )}
+        </div>
+    );
+}
+
 export default function GenerateSectionPage() {
     const navigate = useNavigate();
     const [courseId, setCourseId] = useState("");
@@ -186,7 +238,7 @@ export default function GenerateSectionPage() {
             const { jobId } = await createGenAIJob({
                 videoUrl: inputMode === "url" ? videoUrl : undefined,
                 videoAssetId: inputMode === "upload" ? videoUpload.asset?.assetId : undefined,
-                transcript: inputMode === "upload" ? convertedTranscript ?? undefined : undefined,
+                transcript: convertedTranscript ?? undefined,
                 courseId: courseId || undefined,
                 versionId: versionId || undefined,
                 moduleId: moduleId || undefined,
@@ -337,11 +389,27 @@ export default function GenerateSectionPage() {
                         </div>
 
                         {inputMode === "url" ? (
-                            <Input
-                                placeholder="YouTube Video URL"
-                                value={videoUrl}
-                                onChange={(e) => setVideoUrl(e.target.value)}
-                            />
+                            <div className="space-y-4">
+                                <Input
+                                    placeholder="YouTube Video URL"
+                                    value={videoUrl}
+                                    onChange={(e) => setVideoUrl(e.target.value)}
+                                />
+                                <div>
+                                    <p className="text-xs text-muted-foreground mb-1">
+                                        Optional: paste a transcript to skip YouTube's automatic transcription --
+                                        useful if automatic transcription is failing (e.g. YouTube requiring
+                                        cookies or bot-detection workarounds).
+                                    </p>
+                                    <TranscriptInputSection
+                                        rawTranscript={rawTranscript}
+                                        onRawTranscriptChange={(value) => { setRawTranscript(value); setConvertedTranscript(null); }}
+                                        convertedTranscript={convertedTranscript}
+                                        isConverting={isConverting}
+                                        onConvert={handleConvertTranscript}
+                                    />
+                                </div>
+                            </div>
                         ) : !canUseUploadMode ? (
                             <p className="text-sm text-amber-600 dark:text-amber-500">
                                 {courseSourceMode === "existing"
@@ -377,37 +445,13 @@ export default function GenerateSectionPage() {
                                     )}
                                 </div>
 
-                                <div>
-                                    <Label className="mb-2">Transcript</Label>
-                                    <Textarea
-                                        placeholder="0:00&#10;Hello and welcome...&#10;0:45&#10;Today we are covering..."
-                                        value={rawTranscript}
-                                        onChange={(e) => { setRawTranscript(e.target.value); setConvertedTranscript(null); }}
-                                        rows={6}
-                                    />
-                                    <p className="text-xs text-muted-foreground mt-1">{REQUIRED_TRANSCRIPT_FORMAT_HINT}</p>
-                                    <Button
-                                        type="button"
-                                        variant="outline"
-                                        size="sm"
-                                        className="mt-2"
-                                        onClick={handleConvertTranscript}
-                                        disabled={isConverting || !rawTranscript.trim()}
-                                    >
-                                        {isConverting ? (
-                                            <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Converting with MiniMax...</>
-                                        ) : (
-                                            <><Sparkles className="h-4 w-4 mr-2" />Convert with MiniMax</>
-                                        )}
-                                    </Button>
-                                    {convertedTranscript && (
-                                        <p className="text-xs text-emerald-600 dark:text-emerald-500 mt-1 flex items-center gap-1">
-                                            <CheckCircle2 className="h-3 w-3" />
-                                            {convertedTranscript.chunks.length} chunk{convertedTranscript.chunks.length === 1 ? "" : "s"} extracted,
-                                            covering 0:00–{formatDuration(convertedTranscript.chunks.at(-1)?.timestamp[1] ?? convertedTranscript.chunks.at(-1)?.timestamp[0] ?? 0)}.
-                                        </p>
-                                    )}
-                                </div>
+                                <TranscriptInputSection
+                                    rawTranscript={rawTranscript}
+                                    onRawTranscriptChange={(value) => { setRawTranscript(value); setConvertedTranscript(null); }}
+                                    convertedTranscript={convertedTranscript}
+                                    isConverting={isConverting}
+                                    onConvert={handleConvertTranscript}
+                                />
                             </div>
                         )}
 
