@@ -84,13 +84,24 @@ const Article = forwardRef<ArticleRef, ArticleProps>(({ content, estimatedReadTi
     const itemStartedRef = useRef(false);
     const startRequestSentRef = useRef(false);
     const stopInFlightRef = useRef(false);
+    // Mirrors video.tsx's watchItemIdRef: currentCourse.watchItemId comes from
+    // the store and is only visible to this closure after a re-render, so a
+    // stop call made synchronously after start resolves (see startPromiseRef
+    // below) could still read a stale, unset value from it. A ref updated in
+    // the same tick as itemStartedRef avoids that gap.
+    const watchItemIdRef = useRef<string | null>(null);
+    // Resolves once the in-flight start request settles (success or failure).
+    // handleNextClick awaits this before checking itemStartedRef so a fast
+    // click can't race ahead of the start confirmation and silently skip the
+    // stop call -- see handleNextClick below for what that race used to do.
+    const startPromiseRef = useRef<Promise<void> | null>(null);
 
     function handleSendStartItem() {
         if (!currentCourse?.itemId || startRequestSentRef.current) return;
         // Mark that we've sent the start request to prevent multiple calls
         startRequestSentRef.current = true;
         if(!isAlreadyWatched && (currentCourse!.itemId && !completedItemIdsRef.current.has(currentCourse!.itemId))){
-            startItem.mutate({
+            startPromiseRef.current = startItem.mutateAsync({
                 params: {
                     path: {
                         courseId: currentCourse.courseId,
@@ -103,12 +114,21 @@ const Article = forwardRef<ArticleRef, ArticleProps>(({ content, estimatedReadTi
                     sectionId: currentCourse.sectionId ?? '',
                     cohortId: currentCourse.cohortId || undefined,
                 }
+            }).then((data) => {
+                if (data?.watchItemId) {
+                    watchItemIdRef.current = data.watchItemId;
+                    setWatchItemId(data.watchItemId);
+                    itemStartedRef.current = true;
+                }
+            }).catch((error) => {
+                console.error('❌ handleSendStartItem error:', error);
             });
         }
     }
 
    async function handleStopItem() {
-        if (!currentCourse?.itemId || !currentCourse.watchItemId || !itemStartedRef.current) return;
+        const watchItemId = watchItemIdRef.current || currentCourse?.watchItemId;
+        if (!currentCourse?.itemId || !watchItemId || !itemStartedRef.current) return;
         if (stopInFlightRef.current) return;
 
         stopInFlightRef.current = true;
@@ -122,7 +142,7 @@ const Article = forwardRef<ArticleRef, ArticleProps>(({ content, estimatedReadTi
                         },
                     },
                     body: {
-                        watchItemId: currentCourse.watchItemId,
+                        watchItemId,
                         itemId: currentCourse.itemId,
                         moduleId: currentCourse.moduleId ?? '',
                         sectionId: currentCourse.sectionId ?? '',
@@ -170,9 +190,17 @@ const Article = forwardRef<ArticleRef, ArticleProps>(({ content, estimatedReadTi
 
     const handleNextClick = async () => {
         if (isStopping || isProgressUpdating) return;
-        
+
         try {
             setIsStopping(true);
+            // A click landing before the start request's response arrives used
+            // to read itemStartedRef.current as "never started" and skip the
+            // stop call entirely -- the item then never got marked complete,
+            // permanently locking the next one. Wait for the in-flight start to
+            // settle first so itemStartedRef reflects reality before deciding.
+            if (startRequestSentRef.current && !itemStartedRef.current && startPromiseRef.current) {
+                await startPromiseRef.current;
+            }
             if (itemStartedRef.current) {
             await handleStopItem(); //  wait until stop finishes
             }
@@ -196,14 +224,6 @@ const Article = forwardRef<ArticleRef, ArticleProps>(({ content, estimatedReadTi
     // without closing over a stale `currentCourse`.
     const handleStopItemRef = useRef(handleStopItem);
     handleStopItemRef.current = handleStopItem;
-
-    // ✅ Watch for start request completion and update watchItemId
-    useEffect(() => {
-        if (startItem.data?.watchItemId && startRequestSentRef.current && !itemStartedRef.current) {
-            setWatchItemId(startItem.data.watchItemId);
-            itemStartedRef.current = true;
-        }
-    }, [startItem.data?.watchItemId, setWatchItemId]);
 
     // ✅ Call upsert watch time API every 10 seconds while article is being read
     useEffect(() => {
@@ -265,6 +285,7 @@ const Article = forwardRef<ArticleRef, ArticleProps>(({ content, estimatedReadTi
             }
             itemStartedRef.current = false;
             startRequestSentRef.current = false;
+            watchItemIdRef.current = null;
         };
     }, []);
 
@@ -289,12 +310,13 @@ const Article = forwardRef<ArticleRef, ArticleProps>(({ content, estimatedReadTi
      */
     const handlePageHide = useCallback(() => {
         const { currentCourse, isAlreadyWatched } = pageHideContextRef.current;
+        const watchItemId = watchItemIdRef.current || currentCourse?.watchItemId;
         if (
             !itemStartedRef.current ||
             stopInFlightRef.current ||
             isAlreadyWatched ||
             !currentCourse?.itemId ||
-            !currentCourse.watchItemId ||
+            !watchItemId ||
             completedItemIdsRef.current.has(currentCourse.itemId)
         ) {
             return;
@@ -316,7 +338,7 @@ const Article = forwardRef<ArticleRef, ArticleProps>(({ content, estimatedReadTi
                     Authorization: `Bearer ${token}`,
                 },
                 body: JSON.stringify({
-                    watchItemId: currentCourse.watchItemId,
+                    watchItemId,
                     itemId: currentCourse.itemId,
                     moduleId: currentCourse.moduleId ?? '',
                     sectionId: currentCourse.sectionId ?? '',
