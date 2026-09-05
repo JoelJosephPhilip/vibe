@@ -1654,6 +1654,8 @@ function CourseEnrollments() {
                   version={version}
                   cohort={cohort}
                   setCohort={setCohort}
+                  cohortFilterSearch={cohortFilterSearch}
+                  setCohortFilterSearch={setCohortFilterSearch}
                   courseId= {courseId}
                 />
               )}
@@ -1713,6 +1715,8 @@ function CourseEnrollments() {
                   version={version}
                   cohort={cohort}
                   setCohort={setCohort}
+                  cohortFilterSearch={cohortFilterSearch}
+                  setCohortFilterSearch={setCohortFilterSearch}
                 />
               )}
             </div>
@@ -3047,6 +3051,8 @@ interface EnrollmentsTableProps {
   version: any;
   cohort: string | null;
   setCohort: (cohort: string | null) => void;
+  cohortFilterSearch: string;
+  setCohortFilterSearch: (search: string) => void;
   courseId: string | undefined
 }
 
@@ -3093,6 +3099,8 @@ function EnrollmentsTable({
   version,
   cohort,
   setCohort,
+  cohortFilterSearch,
+  setCohortFilterSearch,
   courseId
 }: EnrollmentsTableProps) {
   const isInactiveTab = enrollmentTab === "INACTIVE"
