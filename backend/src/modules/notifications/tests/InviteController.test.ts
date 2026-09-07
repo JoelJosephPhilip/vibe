@@ -27,6 +27,8 @@ import { projectsContainerModule } from '#root/modules/projects/container.js';
 import { reportsContainerModule } from '#root/modules/reports/container.js';
 import { GLOBAL_TYPES } from '#root/types.js';
 import { MongoDatabase } from '#root/shared/database/providers/mongo/MongoDatabase.js';
+import { UserRepository } from '#root/shared/database/providers/mongo/repositories/UserRepository.js';
+import { ObjectId } from 'mongodb';
 import { hpSystemContainerModule } from '#root/modules/hpSystem/container.js';
 import { ejectionPolicyContainerModule } from '#root/modules/ejectionPolicy/container.js';
 import { emotionsContainerModule } from '#root/modules/emotions/container.js';
@@ -60,6 +62,8 @@ describe('InviteController', () => {
   let app: any;
   let courseId: string;
   let version: any;
+  let db: MongoDatabase;
+  let userRepo: UserRepository;
 
   beforeAll(async () => {
     process.env.NODE_ENV = 'test';
@@ -71,7 +75,8 @@ describe('InviteController', () => {
     // against the global container via getContainer() — register this
     // locally-built one as the global so those lookups don't throw.
     setContainer(container);
-    const db = container.get<MongoDatabase>(GLOBAL_TYPES.Database);
+    db = container.get<MongoDatabase>(GLOBAL_TYPES.Database);
+    userRepo = container.get<UserRepository>(GLOBAL_TYPES.UserRepo);
     await db.connect();
     app = Express();
     const options: RoutingControllersOptions = {
@@ -367,5 +372,56 @@ describe('InviteController', () => {
     // send on inviteId2 — same invite, already accepted above
     const resendRes = await request(app).get(`/notifications/invite/${inviteId2}`).set('Authorization', 'Bearer test-token');
     expect(resendRes.text).toContain('<h2>You have already accepted this invite.</h2>');
+  });
+
+  it('rolls back the invite to PENDING (not stuck ACCEPTED) when enrollment fails mid-acceptance, and succeeds on retry', async () => {
+    // A second, unrelated course+version exists only to produce a
+    // courseVersionId that does not belong to `courseId`. Corrupting the
+    // invite with it forces EnrollmentService.enrollUser's course/version
+    // mismatch check to throw partway through acceptance, after the status
+    // write to ACCEPTED has already been attempted — reproducing the
+    // non-atomicity from issue #1349.
+    const otherCourse = await createCourse(app);
+    const otherVersion = await createVersion(app, otherCourse._id.toString());
+
+    // Created straight through the repository (not /auth/signup, which hits
+    // real Firebase Admin and isn't available in this test environment) so
+    // the invite acceptance below is exercised on an existing, already
+    // registered user — the path that goes through enrollUser.
+    // Invite creation normalizes the target email to lowercase before doing
+    // its findByEmail lookup — match that here or the user looks "new".
+    const email = faker.internet.email().toLowerCase();
+    await userRepo.create({
+      firebaseUID: faker.string.uuid(),
+      email,
+      firstName: faker.person.firstName().replace(/[^a-zA-Z]/g, ''),
+      lastName: faker.person.lastName().replace(/[^a-zA-Z]/g, ''),
+      roles: 'student',
+    } as any);
+
+    const inviteResponse = await createInvite(email, 'STUDENT');
+    const inviteId = inviteResponse.body.invites[0].inviteId;
+
+    const invitesCollection = await db.getCollection('invites');
+    await invitesCollection.updateOne(
+      { _id: new ObjectId(inviteId) },
+      { $set: { courseVersionId: new ObjectId(otherVersion._id.toString()) } },
+    );
+
+    const failedRes = await request(app).get(`/notifications/invite/${inviteId}`).set('Authorization', 'Bearer test-token');
+    expect(failedRes.status).toBe(200);
+    expect(failedRes.text).not.toContain('successfully enrolled');
+    expect(failedRes.text).not.toContain('already accepted');
+
+    const stuckInvite = await invitesCollection.findOne({ _id: new ObjectId(inviteId) });
+    expect(stuckInvite?.inviteStatus).toBe('PENDING');
+
+    // Repair and retry: proves the invite wasn't permanently stuck ACCEPTED.
+    await invitesCollection.updateOne(
+      { _id: new ObjectId(inviteId) },
+      { $set: { courseVersionId: new ObjectId(version._id.toString()) } },
+    );
+    const retryRes = await request(app).get(`/notifications/invite/${inviteId}`).set('Authorization', 'Bearer test-token');
+    expect(retryRes.text).toContain('<h2>You have been successfully enrolled in the course as STUDENT.</h2>');
   });
 });
