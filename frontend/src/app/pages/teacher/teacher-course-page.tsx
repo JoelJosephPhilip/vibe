@@ -2929,6 +2929,17 @@ function TeacherCourseContent() {
                         </div>
                       )}
 
+                      {selectedEntity.type === "item" && (
+                        <div className="flex gap-6 text-xs text-muted-foreground">
+                          <div>
+                            <span className="font-semibold">Created:</span>{" "}
+                            {selectedItemData?.item?.createdAt
+                              ? new Date(selectedItemData.item.createdAt).toLocaleString()
+                              : "N/A"}
+                          </div>
+                        </div>
+                      )}
+
                       {(selectedEntity.type !== "item") && (
                         <>
                           <div className="space-y-2">
