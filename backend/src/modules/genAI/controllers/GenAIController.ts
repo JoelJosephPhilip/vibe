@@ -628,5 +628,14 @@ export class GenAIController {
       res as unknown as ExpressResponse,
       id
     );
+    // Returning the response object itself tells routing-controllers this
+    // action handles the response manually and to leave it alone. Without
+    // this, an implicit `undefined` return makes it try to auto-respond
+    // (since this action has no @OnUndefined) on a connection sseService
+    // already flushed SSE headers on -- crashing every single connection
+    // with ERR_HTTP_HEADERS_SENT (confirmed live via Sentry logs, one entry
+    // per SSE connect). Harmless to the stream itself since sseService never
+    // calls res.end() on success, but pure noise otherwise.
+    return res;
   }
 } 
