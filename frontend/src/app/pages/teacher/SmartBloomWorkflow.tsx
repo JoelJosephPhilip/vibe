@@ -1015,12 +1015,22 @@ const SmartBloomWorkflow = ({ onUploadComplete }: SmartBloomWorkflowProps = {}) 
       return normalizedMap;
     }
 
-    const transcriptRes = await fetch(transcriptFileUrl);
-    if (!transcriptRes.ok) {
+    // This coverage check is a best-effort refinement, not required for the
+    // pipeline to proceed -- any failure (including a rejected fetch, e.g.
+    // from the storage bucket not allowing this origin via CORS, which
+    // throws rather than returning a bad-status response) should fall back
+    // to the segmentation map as-is, the same way a non-OK response already
+    // does, instead of crashing the whole job start.
+    let transcriptPayload: unknown;
+    try {
+      const transcriptRes = await fetch(transcriptFileUrl);
+      if (!transcriptRes.ok) {
+        return normalizedMap;
+      }
+      transcriptPayload = await transcriptRes.json();
+    } catch {
       return normalizedMap;
     }
-
-    const transcriptPayload = await transcriptRes.json();
     const transcriptEndTime = extractTranscriptEndTime(transcriptPayload);
     if (!Number.isFinite(transcriptEndTime) || transcriptEndTime <= 0) {
       return normalizedMap;
@@ -1053,9 +1063,15 @@ const SmartBloomWorkflow = ({ onUploadComplete }: SmartBloomWorkflowProps = {}) 
       fileUrl = latest.fileUrl;
     }
 
-    const fileRes = await fetch(fileUrl!);
-    if (!fileRes.ok) throw new Error("Failed to fetch question file");
-    const fileJson = await fileRes.json();
+    let fileJson: unknown;
+    try {
+      const fileRes = await fetch(fileUrl!);
+      if (!fileRes.ok) throw new Error("Failed to fetch question file");
+      fileJson = await fileRes.json();
+    } catch (err) {
+      if (err instanceof Error && err.message === "Failed to fetch question file") throw err;
+      throw new Error("Failed to fetch question file");
+    }
     return normalizeQuestionPayload(fileJson, context);
   };
 
