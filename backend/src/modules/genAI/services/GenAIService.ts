@@ -315,6 +315,21 @@ export class GenAIService extends BaseService {
           jobState.parameters = resolvedUploadParameters;
           return {jobState, isUploadContentRun: true};
         }
+        if (jobState.currentTask === TaskType.QUESTION_GENERATION && parameters) {
+          // Persist caller-supplied generation parameters (in particular
+          // Smart Bloom's `smartBloom: {enabled, distribution}`) back onto
+          // the job now, not just into this call's in-memory jobState.
+          // Confirmed live: without this, uploadContent() -- which runs
+          // much later, after a whole separate QUESTION_GENERATION request
+          // has come and gone -- reads job.questionGenerationParameters
+          // fresh from the DB and finds it still null, so `isSmartBloom`
+          // is always false and every Smart Bloom job silently collapses
+          // to a single generic question bank instead of one per Bloom
+          // level, with no error anywhere in the pipeline.
+          await this.genAIRepository.update(jobId, {
+            questionGenerationParameters: jobState.parameters as QuestionGenerationParameters,
+          }, session);
+        }
         return {jobState, isUploadContentRun: false};
       },
     );
@@ -425,6 +440,14 @@ export class GenAIService extends BaseService {
 
           jobState.parameters = resolvedUploadParameters;
           return {jobState, isUploadContentRerun: true};
+        }
+        if (jobState.currentTask === TaskType.QUESTION_GENERATION && parameters) {
+          // Same gap as approveTaskToStart, same fix -- see that block's
+          // comment. A rerun with new Smart Bloom parameters needs them to
+          // survive to uploadContent too, not just this one call.
+          await this.genAIRepository.update(jobId, {
+            questionGenerationParameters: jobState.parameters as QuestionGenerationParameters,
+          }, session);
         }
         return {jobState, isUploadContentRerun: false};
       },
