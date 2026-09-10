@@ -45,6 +45,16 @@ export class UserRepository implements IUserRepository {
     if (!this.usersCollection) {
       this.usersCollection = await this.db.getCollection<IUser>('users');
       this.usersCollection.createIndex({email: 1, firebaseUID: 1});
+      // create()'s upsert (findOneAndUpdate + $setOnInsert, keyed on
+      // firebaseUID) only prevents concurrent duplicate inserts if the
+      // database actually enforces uniqueness -- without this index, MongoDB
+      // has no reason to serialize concurrent upserts matching the same
+      // filter, and each one just inserts its own document. Confirmed live:
+      // 10 concurrent first-logins for one brand-new Google SSO user (a real
+      // SPA's normal burst of parallel authenticated requests on first load)
+      // created 3 separate user documents sharing one firebaseUID before this
+      // index existed.
+      this.usersCollection.createIndex({firebaseUID: 1}, {unique: true});
     }
   }
 
