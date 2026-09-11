@@ -55,7 +55,7 @@ export interface VideoProps {
  * the parent can await a stop before navigating away from an in-progress video.
  */
 export interface VideoRef {
-  stopItem: () => void; // TEMP D-01 revert for red/green live verification
+  stopItem: () => Promise<void>;
 }
 
 
