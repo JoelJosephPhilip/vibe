@@ -1782,16 +1782,13 @@ const handleGoToNextItem = async () => {
   // even for already-completed items. Unknown position must not imply locked.
   if (currentItemIndex === -1) return false;
 
-  // Unlock the paired quiz only once the video is actually completed. The
-  // backend serves it on the same condition, so unlocking earlier hands the
-  // student a link that 403s mid-video.
+  // TEMP D-03 revert for red/green live verification
   if (itemIndex === currentItemIndex + 1) {
     const currentItemInList = sectionItemsList[currentItemIndex] as any;
     const thisItem = sectionItemsList[itemIndex] as any;
     if (
       currentItemInList?.type === 'VIDEO' &&
-      thisItem?.type === 'QUIZ' &&
-      currentItemInList?.isCompleted
+      thisItem?.type === 'QUIZ'
     ) {
       return false; // unlock paired quiz
     }
