@@ -860,17 +860,8 @@ export default function CoursePage() {
       setPendingStudentQuestionContext(null);
 
       try {
-        // Record completion for the current item before leaving. Awaited for
-        // every item type: the stop must reach the server before the next
-        // item's GET, or the backend still sees this item as incomplete and
-        // 403s the next one -- this was previously scoped to BLOG only, which
-        // left videos left via the sidebar (instead of the "Next Lesson"
-        // button) relying on an unmount fallback that raced the next lesson's
-        // request. A half-watched video is rejected server-side inside the
-        // stop transaction, so the row rolls back and stays open and
-        // recoverable -- this can never record a completion that wasn't
-        // earned. Wrapped so a stop failure can never block navigation.
-        if (itemContainerRef.current) {
+        // TEMP D-02 revert for red/green live verification
+        if (itemContainerRef.current && currentItem?.type === 'BLOG') {
           try {
             await itemContainerRef.current.stopCurrentItem();
           } catch (e) {
