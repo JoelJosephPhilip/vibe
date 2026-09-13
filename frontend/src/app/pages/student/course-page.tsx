@@ -451,6 +451,20 @@ export default function CoursePage() {
 
     if (itemError && selectedItemId && itemErrorName === "ForbiddenError") {
 
+      // Three different 403s reach here: out-of-order progression, an
+      // archived course version, and the time-slot/study-window gate. Only
+      // the first is actually a locked lesson -- the other two were both
+      // rendering as "ViBe lessons unlock in order" regardless, which told
+      // a student outside their booked window (or looking at an archived
+      // version) the wrong thing entirely. The amber time-slot banner below
+      // already existed for this; it just never had this branch routing
+      // into it, so it was unreachable dead code.
+      if (/time slot|study window|book a slot|choose a slot/i.test(itemError)) {
+        setTimeSlotBlock(itemError);
+        setIsNavigatingToNext(false);
+        return;
+      }
+
       // toast.error(itemError);
       // Clear loading state on error
       setIsNavigatingToNext(false);
