@@ -95,11 +95,18 @@ const Article = forwardRef<ArticleRef, ArticleProps>(({ content, estimatedReadTi
     // click can't race ahead of the start confirmation and silently skip the
     // stop call -- see handleNextClick below for what that race used to do.
     const startPromiseRef = useRef<Promise<void> | null>(null);
+    // Distinguishes "never attempted a start" (item already watched, nothing
+    // to record) from "attempted and failed" -- itemStartedRef.current is
+    // false in both cases, but only the second should block navigation. A
+    // request that errors, or resolves with no watchItemId, sets this so
+    // handleNextClick can tell the difference after awaiting startPromiseRef.
+    const startFailedRef = useRef(false);
 
     function handleSendStartItem() {
         if (!currentCourse?.itemId || startRequestSentRef.current) return;
         // Mark that we've sent the start request to prevent multiple calls
         startRequestSentRef.current = true;
+        startFailedRef.current = false;
         if(!isAlreadyWatched && (currentCourse!.itemId && !completedItemIdsRef.current.has(currentCourse!.itemId))){
             startPromiseRef.current = startItem.mutateAsync({
                 params: {
@@ -119,9 +126,14 @@ const Article = forwardRef<ArticleRef, ArticleProps>(({ content, estimatedReadTi
                     watchItemIdRef.current = data.watchItemId;
                     setWatchItemId(data.watchItemId);
                     itemStartedRef.current = true;
+                } else {
+                    // No error thrown, but nothing to track either -- treat
+                    // the same as a failure rather than silently proceeding.
+                    startFailedRef.current = true;
                 }
             }).catch((error) => {
                 console.error('❌ handleSendStartItem error:', error);
+                startFailedRef.current = true;
             });
         }
     }
@@ -201,6 +213,23 @@ const Article = forwardRef<ArticleRef, ArticleProps>(({ content, estimatedReadTi
             if (startRequestSentRef.current && !itemStartedRef.current && startPromiseRef.current) {
                 await startPromiseRef.current;
             }
+            // A failed (or empty-response) start left itemStartedRef false with
+            // nothing to stop -- previously that looked identical to "already
+            // watched, nothing to record" and navigated on anyway, silently
+            // losing the attempt. Retry once before giving up: handleSendStartItem
+            // guards on startRequestSentRef, so without clearing it here a failed
+            // attempt could never be retried by clicking Next again -- the error
+            // below would tell the student to "try again" with no way to.
+            if (startFailedRef.current) {
+                startRequestSentRef.current = false;
+                handleSendStartItem();
+                if (startPromiseRef.current) {
+                    await startPromiseRef.current;
+                }
+            }
+            if (startFailedRef.current) {
+                throw new Error('We could not save your progress. Please try again.');
+            }
             if (itemStartedRef.current) {
             await handleStopItem(); //  wait until stop finishes
             }
@@ -208,7 +237,7 @@ const Article = forwardRef<ArticleRef, ArticleProps>(({ content, estimatedReadTi
             onNext?.(); //  only after stop succeeds
         } catch (err: any) {
             // toast.error('Unable to save progress. Please try again.');
-            toast.warning(err.response?.data?.message || 'You must spend more time reading this article to proceed.');
+            toast.warning(err.response?.data?.message || err.message || 'You must spend more time reading this article to proceed.');
             console.error('Stop item failed:', err);
         } finally {
             setIsStopping(false);
