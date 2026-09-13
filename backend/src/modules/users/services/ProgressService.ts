@@ -738,14 +738,37 @@ class ProgressService extends BaseService {
       return;
     }
 
-    if (
-      progress.currentModule.toString() !== moduleId ||
-      progress.currentSection.toString() !== sectionId ||
-      progress.currentItem.toString() !== itemId
-    ) {
-      throw new BadRequestError(
-        'ModuleId, sectionId and itemId do not match current progress',
+    // Accept the same conditions readItem accepts. readItem returns early on
+    // isItemAlreadyAttempted (ItemService.readItem) WITHOUT advancing the
+    // pointer, so any item carrying an unfinished watchTime row leaves
+    // currentItem behind. A strict triple-match here then rejected startItem
+    // forever: the student could open the lesson but tracking never started,
+    // so it could never be completed and no recovery sweep could rescue them
+    // -- only a manual pointer edit. Falling back to "is the previous item
+    // completed" mirrors readItem's own step 5 exactly, so this opens no new
+    // bypass beyond what already governs access to the item.
+    if (progress.currentItem.toString() !== itemId) {
+      const courseVersion = await this.courseRepo.readVersion(courseVersionId);
+      const previousItem = await this.getPreviousItemInSequence(
+        courseVersion,
+        moduleId,
+        sectionId,
+        itemId,
       );
+      const previousCompleted = previousItem
+        ? await this.progressRepository.isItemCompleted(
+            userId,
+            courseId,
+            courseVersionId,
+            previousItem.itemId,
+            cohort,
+          )
+        : true; // first item in sequence
+      if (!previousCompleted) {
+        throw new BadRequestError(
+          'ModuleId, sectionId and itemId do not match current progress',
+        );
+      }
     }
   }
 
