@@ -102,3 +102,58 @@ describe('ProgressService item traversal order (D-06b)', () => {
     expect(ids).toEqual(['item-A1-1']);
   });
 });
+
+/**
+ * Defensive filtering: getAllItemIds/getItemIdsUntilItem now filter out
+ * isHidden/isDeleted items before sorting, matching the same filter
+ * getPreviousItemInSequence already applies. Not fixing a currently-reached
+ * bug (every real caller re-derives hidden/deleted items downstream via
+ * getHiddenOrDeletedItems before acting), but a hidden/deleted item riding
+ * along in the returned list is still wrong data for a future caller that
+ * doesn't know to filter it itself.
+ */
+function makeServiceWithHiddenItem() {
+  const service: any = Object.create(ProgressService.prototype);
+
+  service.courseRepo = {
+    readVersion: async () => ({
+      _id: VERSION_ID,
+      modules: [
+        {
+          moduleId: 'module-A',
+          order: '0',
+          sections: [
+            {sectionId: 'section-A1', order: '0', itemsGroupId: 'group-A1'},
+          ],
+        },
+      ],
+    }),
+  };
+
+  service.itemRepo = {
+    readItemsGroup: async () => ({
+      items: [
+        {_id: 'item-1', order: '0'},
+        {_id: 'item-2-hidden', order: '1', isHidden: true},
+        {_id: 'item-3-deleted', order: '2', isDeleted: true},
+        {_id: 'item-4', order: '3'},
+      ],
+    }),
+  };
+
+  return service as ProgressService;
+}
+
+describe('ProgressService item traversal hidden/deleted filtering', () => {
+  it('getAllItemIds excludes hidden and deleted items', async () => {
+    const service = makeServiceWithHiddenItem();
+    const ids = await service.getAllItemIds(VERSION_ID);
+    expect(ids).toEqual(['item-1', 'item-4']);
+  });
+
+  it('getItemIdsUntilItem excludes hidden and deleted items on the way to the target', async () => {
+    const service = makeServiceWithHiddenItem();
+    const ids = await service.getItemIdsUntilItem(VERSION_ID, 'item-4');
+    expect(ids).toEqual(['item-1', 'item-4']);
+  });
+});
