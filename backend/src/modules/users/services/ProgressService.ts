@@ -2707,13 +2707,28 @@ class ProgressService extends BaseService {
         // missing the very item completion that triggered it, and its own
         // write then silently overwrites the correct percentCompleted step
         // 10 just computed with a stale, too-low value.
-        await this.recalculateStudentProgress(
-          userId,
-          courseId,
-          courseVersionId,
-          cohortId,
-          session,
-        );
+        //
+        // This is a best-effort consistency pass on top of the authoritative
+        // update step 10 already committed to the transaction -- it must
+        // never be the reason the student's actual completion gets rolled
+        // back. recalculateStudentProgress throws NotFoundError/BadRequestError
+        // for edge cases (e.g. a course with no non-hidden items), which
+        // would otherwise abort this entire transaction over a step whose
+        // job is only to double-check, not to record, the completion.
+        try {
+          await this.recalculateStudentProgress(
+            userId,
+            courseId,
+            courseVersionId,
+            cohortId,
+            session,
+          );
+        } catch (err) {
+          console.error(
+            `recalculateStudentProgress failed as a post-completion consistency check for user ${userId}, course ${courseId}/${courseVersionId}:`,
+            err,
+          );
+        }
       }
 
       // ----------------------------------------------------
@@ -4805,8 +4820,21 @@ class ProgressService extends BaseService {
     const collectedItemIds: string[] = [];
     let isItemFound = false;
 
-    for (const module of courseVersion.modules) {
-      for (const section of module.sections) {
+    // Modules/sections/items are stored in insertion order, not display
+    // order -- every other traversal in this codebase re-sorts by `order`
+    // before walking the tree (see CourseVersionService.sortItemsByOrder
+    // and its call sites). This one didn't, so after a drag-drop reorder
+    // "items up to the current one" could silently include items that are
+    // actually later in the course and exclude ones that are earlier,
+    // corrupting the missed-item backfill below.
+    const sortedModules = [...courseVersion.modules].sort((a, b) =>
+      a.order.localeCompare(b.order),
+    );
+    for (const module of sortedModules) {
+      const sortedSections = [...module.sections].sort((a, b) =>
+        a.order.localeCompare(b.order),
+      );
+      for (const section of sortedSections) {
         const itemGroupId = section.itemsGroupId;
         if (!itemGroupId) continue;
 
@@ -4815,7 +4843,10 @@ class ProgressService extends BaseService {
         );
         if (!itemGroup || !itemGroup.items) continue;
 
-        for (const item of itemGroup.items) {
+        const sortedItems = [...itemGroup.items].sort((a, b) =>
+          a.order.localeCompare(b.order),
+        );
+        for (const item of sortedItems) {
           if (!item._id) continue;
 
           const currentItemId = item._id.toString();
@@ -4852,8 +4883,17 @@ class ProgressService extends BaseService {
 
     const allItemIds: string[] = [];
 
-    for (const module of courseVersion.modules) {
-      for (const section of module.sections) {
+    // Same insertion-order-vs-display-order issue as getItemIdsUntilItem --
+    // sort before walking so a drag-drop-reordered course still produces
+    // its items in the order the student actually sees them.
+    const sortedModules = [...courseVersion.modules].sort((a, b) =>
+      a.order.localeCompare(b.order),
+    );
+    for (const module of sortedModules) {
+      const sortedSections = [...module.sections].sort((a, b) =>
+        a.order.localeCompare(b.order),
+      );
+      for (const section of sortedSections) {
         const itemGroupId = section.itemsGroupId;
         if (!itemGroupId) continue;
 
@@ -4862,7 +4902,10 @@ class ProgressService extends BaseService {
         );
         if (!itemGroup || !itemGroup.items) continue;
 
-        for (const item of itemGroup.items) {
+        const sortedItems = [...itemGroup.items].sort((a, b) =>
+          a.order.localeCompare(b.order),
+        );
+        for (const item of sortedItems) {
           if (item._id) {
             allItemIds.push(item._id.toString());
           }
