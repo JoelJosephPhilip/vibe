@@ -104,13 +104,18 @@ describe('ProgressService item traversal order (D-06b)', () => {
 });
 
 /**
- * Defensive filtering: getAllItemIds/getItemIdsUntilItem now filter out
- * isHidden/isDeleted items before sorting, matching the same filter
- * getPreviousItemInSequence already applies. Not fixing a currently-reached
- * bug (every real caller re-derives hidden/deleted items downstream via
- * getHiddenOrDeletedItems before acting), but a hidden/deleted item riding
- * along in the returned list is still wrong data for a future caller that
- * doesn't know to filter it itself.
+ * Regression guard: getAllItemIds/getItemIdsUntilItem must NOT filter out
+ * isHidden/isDeleted items, even though every other traversal in this file
+ * (getPreviousItemInSequence, etc.) does. This looks inconsistent, but it
+ * isn't -- these two functions' only real callers (stopItem's step-3
+ * totalCourseItems, and advanceProgressAfterItemCompletion) pass their
+ * .length straight into computeCourseProgressPercent as `totalCourseItems`,
+ * which does its own `totalCourseItems - hiddenSet.size` subtraction and
+ * expects the UNFILTERED total. Filtering here too double-subtracts the
+ * hidden count and silently deflates the percentage denominator for any
+ * course with hidden/deleted items -- this shipped once and was caught
+ * before merging upstream. If a future change filters here, this test
+ * catches it immediately.
  */
 function makeServiceWithHiddenItem() {
   const service: any = Object.create(ProgressService.prototype);
@@ -144,16 +149,16 @@ function makeServiceWithHiddenItem() {
   return service as ProgressService;
 }
 
-describe('ProgressService item traversal hidden/deleted filtering', () => {
-  it('getAllItemIds excludes hidden and deleted items', async () => {
+describe('ProgressService item traversal must include hidden/deleted items (denominator contract)', () => {
+  it('getAllItemIds includes hidden and deleted items -- callers subtract them exactly once, downstream', async () => {
     const service = makeServiceWithHiddenItem();
     const ids = await service.getAllItemIds(VERSION_ID);
-    expect(ids).toEqual(['item-1', 'item-4']);
+    expect(ids).toEqual(['item-1', 'item-2-hidden', 'item-3-deleted', 'item-4']);
   });
 
-  it('getItemIdsUntilItem excludes hidden and deleted items on the way to the target', async () => {
+  it('getItemIdsUntilItem includes hidden and deleted items on the way to the target', async () => {
     const service = makeServiceWithHiddenItem();
     const ids = await service.getItemIdsUntilItem(VERSION_ID, 'item-4');
-    expect(ids).toEqual(['item-1', 'item-4']);
+    expect(ids).toEqual(['item-1', 'item-2-hidden', 'item-3-deleted', 'item-4']);
   });
 });

@@ -4843,15 +4843,22 @@ class ProgressService extends BaseService {
         );
         if (!itemGroup || !itemGroup.items) continue;
 
-        // Defensive, matching getPreviousItemInSequence's own filter above --
-        // every current caller already re-derives hidden/deleted items
-        // downstream via getHiddenOrDeletedItems before acting on the result,
-        // so this isn't fixing a live bug, but a hidden/deleted item riding
-        // along here is still wrong data for this function to hand back to
-        // a caller that doesn't yet know to filter it itself.
-        const sortedItems = itemGroup.items
-          .filter((i: any) => !i.isHidden && !i.isDeleted)
-          .sort((a, b) => a.order.localeCompare(b.order));
+        // NOT filtered by isHidden/isDeleted here, unlike
+        // getPreviousItemInSequence's own filter above: this function's two
+        // real callers (stopItem's step-3 totalCourseItems, and
+        // advanceProgressAfterItemCompletion) both feed its .length straight
+        // into computeCourseProgressPercent, which does its OWN
+        // `totalCourseItems - hiddenSet.size` subtraction expecting the
+        // UNFILTERED total. Filtering here too would double-subtract the
+        // hidden count and silently corrupt the percentage denominator for
+        // any course with hidden/deleted items (confirmed live: this exact
+        // regression shipped and was caught before merging upstream). If a
+        // future caller needs hidden/deleted excluded, filter at that call
+        // site against getHiddenOrDeletedItems, the way every current
+        // consumer of this function's total already does.
+        const sortedItems = [...itemGroup.items].sort((a, b) =>
+          a.order.localeCompare(b.order),
+        );
         for (const item of sortedItems) {
           if (!item._id) continue;
 
@@ -4908,11 +4915,12 @@ class ProgressService extends BaseService {
         );
         if (!itemGroup || !itemGroup.items) continue;
 
-        // Defensive, matching getPreviousItemInSequence's own filter -- see
-        // the comment in getItemIdsUntilItem above.
-        const sortedItems = itemGroup.items
-          .filter((i: any) => !i.isHidden && !i.isDeleted)
-          .sort((a, b) => a.order.localeCompare(b.order));
+        // NOT filtered by isHidden/isDeleted -- see the comment in
+        // getItemIdsUntilItem above; this function has the same
+        // double-subtraction hazard through computeCourseProgressPercent.
+        const sortedItems = [...itemGroup.items].sort((a, b) =>
+          a.order.localeCompare(b.order),
+        );
         for (const item of sortedItems) {
           if (item._id) {
             allItemIds.push(item._id.toString());
