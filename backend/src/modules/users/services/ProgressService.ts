@@ -4843,9 +4843,15 @@ class ProgressService extends BaseService {
         );
         if (!itemGroup || !itemGroup.items) continue;
 
-        const sortedItems = [...itemGroup.items].sort((a, b) =>
-          a.order.localeCompare(b.order),
-        );
+        // Defensive, matching getPreviousItemInSequence's own filter above --
+        // every current caller already re-derives hidden/deleted items
+        // downstream via getHiddenOrDeletedItems before acting on the result,
+        // so this isn't fixing a live bug, but a hidden/deleted item riding
+        // along here is still wrong data for this function to hand back to
+        // a caller that doesn't yet know to filter it itself.
+        const sortedItems = itemGroup.items
+          .filter((i: any) => !i.isHidden && !i.isDeleted)
+          .sort((a, b) => a.order.localeCompare(b.order));
         for (const item of sortedItems) {
           if (!item._id) continue;
 
@@ -4902,9 +4908,11 @@ class ProgressService extends BaseService {
         );
         if (!itemGroup || !itemGroup.items) continue;
 
-        const sortedItems = [...itemGroup.items].sort((a, b) =>
-          a.order.localeCompare(b.order),
-        );
+        // Defensive, matching getPreviousItemInSequence's own filter -- see
+        // the comment in getItemIdsUntilItem above.
+        const sortedItems = itemGroup.items
+          .filter((i: any) => !i.isHidden && !i.isDeleted)
+          .sort((a, b) => a.order.localeCompare(b.order));
         for (const item of sortedItems) {
           if (item._id) {
             allItemIds.push(item._id.toString());
