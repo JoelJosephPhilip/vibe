@@ -6,7 +6,9 @@ import path from 'path';
 import axios from 'axios';
 import { nodewhisper } from 'nodejs-whisper';
 import { ANOMALIES_TYPES } from '#root/modules/anomalies/types.js';
-import { CloudStorageService } from '#root/modules/anomalies/index.js';
+// Direct file import, not the anomalies/index.js barrel -- see GenAIService.ts's
+// import of the same service for why the barrel causes a circular-import crash.
+import { CloudStorageService } from '#root/modules/anomalies/services/CloudStorageService.js';
 import { aiConfig } from '#root/config/ai.js';
 import { storageConfig } from '#root/config/storage.js';
 import { TaskStatus, trascriptGenerationData } from '../classes/transformers/GenAI.js';

@@ -61,7 +61,15 @@ import { SocksProxyAgent } from 'socks-proxy-agent';
 import { aiConfig } from '#root/config/ai.js';
 import { appConfig } from '#root/config/app.js';
 import { ANOMALIES_TYPES } from '#root/modules/anomalies/types.js';
-import { CloudStorageService } from '#root/modules/anomalies/index.js';
+// Import directly from the concrete file, not the anomalies/index.js barrel:
+// that barrel's first line imports AnomalyController, whose chain reaches
+// CourseRepository.ts, which imports ANOMALIES_TYPES back from this same
+// barrel -- a circular re-entry that finds the barrel still mid-evaluation
+// (stuck before its own `export * from './types.js'` line) and gets
+// `undefined`. Confirmed live: this crashed every test whose module graph
+// starts by importing GenAIService before the anomalies barrel has already
+// been fully evaluated via some other path (e.g. callAiServerOrFallback.test.ts).
+import { CloudStorageService } from '#root/modules/anomalies/services/CloudStorageService.js';
 import { storageConfig } from '#root/config/storage.js';
 import { extractVideoKey } from '../utils/videoKey.js';
 import { ObjectId } from 'mongodb';

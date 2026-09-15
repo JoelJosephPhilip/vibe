@@ -5,7 +5,9 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { ANOMALIES_TYPES } from '#root/modules/anomalies/types.js';
-import { CloudStorageService } from '#root/modules/anomalies/index.js';
+// Direct file import, not the anomalies/index.js barrel -- see GenAIService.ts's
+// import of the same service for why the barrel causes a circular-import crash.
+import { CloudStorageService } from '#root/modules/anomalies/services/CloudStorageService.js';
 import { storageConfig } from '#root/config/storage.js';
 import { aiConfig } from '#root/config/ai.js';
 import { TaskStatus, audioData } from '../classes/transformers/GenAI.js';
