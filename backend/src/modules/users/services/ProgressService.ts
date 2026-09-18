@@ -3137,7 +3137,18 @@ class ProgressService extends BaseService {
             `(user ${userId}, item ${itemId}):`,
           err,
         );
-        summary.skipped++;
+        // A NotFoundError here means itemRepo.readItemById could not find
+        // this item (permanently deleted, or an id that never existed) --
+        // that is not transient, so leaving it unmarked (like every other
+        // throw) means findOrphanedWatchTimes returns this exact record
+        // again next sweep, hits the identical NotFoundError, forever.
+        // Reject it like any other permanently-unrecoverable record instead.
+        if (err instanceof NotFoundError) {
+          rejectedIds.push(orphan._id);
+          summary.rejected++;
+        } else {
+          summary.skipped++;
+        }
       }
     }
 
