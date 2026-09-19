@@ -1008,8 +1008,16 @@ class ProgressService extends BaseService {
     let isFirstSection = false;
     let isFirstModule = false;
 
+    // order is missing on some legacy/partially-migrated documents (#1402
+    // hit the same thing for a different sort in this file) -- `|| ''`
+    // matches CourseVersionService.sortItemsByOrder's canonical guard, so an
+    // undefined order sorts first instead of crashing
+    // ("Cannot read properties of undefined (reading 'localeCompare')").
+    // getPreviousItemInSequence is now reachable from startItem's hot path
+    // (#1393's whole point is unsticking deadlocked students), so a legacy
+    // course crashing here would 500 the exact students this fix exists for.
     const sortedModules = [...courseVersion.modules].sort((a, b) =>
-      a.order.localeCompare(b.order),
+      (a.order || '').localeCompare(b.order || ''),
     );
     const firstModule = sortedModules[0].moduleId;
     if (firstModule?.toString() === moduleId) {
@@ -1018,7 +1026,7 @@ class ProgressService extends BaseService {
 
     const sortedSections = courseVersion.modules
       .find(module => module.moduleId?.toString() === moduleId)
-      ?.sections.sort((a, b) => a.order.localeCompare(b.order));
+      ?.sections.sort((a, b) => (a.order || '').localeCompare(b.order || ''));
     const firstSection = sortedSections?.[0].sectionId;
     if (firstSection?.toString() === sectionId) {
       isFirstSection = true;
@@ -1038,7 +1046,7 @@ class ProgressService extends BaseService {
     // Same empty-section guard as getNextItemInSequence: nothing visible means
     // treat the item as first here, so we look to the previous section.
     const sortedItems = (itemsGroup?.items ?? []).sort((a, b) =>
-      a.order.localeCompare(b.order),
+      (a.order || '').localeCompare(b.order || ''),
     );
     const firstItem = sortedItems.length ? sortedItems[0]._id : undefined;
     if (!sortedItems.length || firstItem?.toString() === itemId) {
@@ -1055,7 +1063,7 @@ class ProgressService extends BaseService {
       );
       const prevModule = sortedModules[currentModuleIndex - 1];
       const lastSection = prevModule?.sections.sort((a, b) =>
-        a.order.localeCompare(b.order),
+        (a.order || '').localeCompare(b.order || ''),
       )[prevModule.sections.length - 1];
       const itemsGroup = await this.itemRepo.readItemsGroup(
         lastSection?.itemsGroupId.toString(),
@@ -1064,7 +1072,7 @@ class ProgressService extends BaseService {
         itemsGroup.items = itemsGroup.items.filter((i: any) => !i.isHidden && !i.isDeleted);
       }
       const lastItem = itemsGroup.items.sort((a, b) =>
-        a.order.localeCompare(b.order),
+        (a.order || '').localeCompare(b.order || ''),
       )[itemsGroup.items.length - 1];
 
       return {
@@ -1086,7 +1094,7 @@ class ProgressService extends BaseService {
         itemsGroup.items = itemsGroup.items.filter((i: any) => !i.isHidden && !i.isDeleted);
       }
       const lastItem = itemsGroup?.items?.sort((a, b) =>
-        a.order.localeCompare(b.order),
+        (a.order || '').localeCompare(b.order || ''),
       )[itemsGroup.items.length - 1];
 
       return {
