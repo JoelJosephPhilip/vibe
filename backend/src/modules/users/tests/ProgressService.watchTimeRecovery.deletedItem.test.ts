@@ -62,7 +62,11 @@ function makeService(opts: {orphans: any[]}) {
     findProgress: async () => null,
     getHiddenOrDeletedItems: async () => [],
     getCompletedItems: async () => [],
-    updateProgress: async () => undefined,
+    // Must resolve truthy -- advanceProgressAfterItemCompletion's return value
+    // is `Boolean(updatedProgress)`, so an undefined stub silently makes every
+    // successful advance look like it failed.
+    updateProgress: async (_u: string, _c: string, _v: string, newProgress: any) =>
+      newProgress,
   };
 
   // Mirrors ItemRepository.readItemById's real behavior for a permanently
@@ -163,5 +167,118 @@ describe('ProgressService.recoverOrphanedWatchTimes -- permanently deleted item'
     expect(summary.rejected).toBe(1);
     expect(summary.skipped).toBe(0);
     expect(calls.markedAttempted).toEqual([record._id.toString()]);
+  });
+
+  it('a hidden BLOG item with no heartbeat is skipped, not closed -- the hidden-item check is now reachable for a population that used to be rejected before ever getting there', async () => {
+    // Before #1383, a no-heartbeat orphan was rejected at the very first
+    // check and never reached getHiddenOrDeletedItems at all. Now a BLOG
+    // orphan with no heartbeat sails past that check, so this is the first
+    // time this exact combination (BLOG + no heartbeat + hidden) exercises
+    // the hidden-item branch.
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const record = orphan();
+    const {service, calls} = makeService({orphans: [record]});
+    (service as any).itemRepo = {
+      readItemById: async () => ({_id: ITEM_ID, type: 'BLOG', details: {}}),
+    };
+    (service as any).progressRepository.getHiddenOrDeletedItems = async () => [
+      {itemId: ITEM_ID},
+    ];
+
+    const summary = await service.recoverOrphanedWatchTimes();
+
+    expect(summary.skipped).toBe(1);
+    expect(summary.rejected).toBe(0);
+    expect(calls.closed).toHaveLength(0);
+    expect(calls.markedAttempted).toEqual([record._id.toString()]);
+  });
+
+  it('a mixed batch keeps every outcome independent -- a deleted item and a deleted course version do not affect a genuinely recoverable BLOG row in the same sweep', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const deletedItemOrphan = orphan({itemId: new ObjectId(ITEM_ID)});
+
+    const deletedVersionId = new ObjectId().toString();
+    const deletedVersionItemId = new ObjectId().toString();
+    const deletedVersionOrphan = orphan({
+      _id: new ObjectId(),
+      itemId: new ObjectId(deletedVersionItemId),
+      courseVersionId: new ObjectId(deletedVersionId),
+      lastSeenAt: new Date(START.getTime() + 120_000),
+    });
+
+    const goodItemId = new ObjectId().toString();
+    const goodBlogOrphan = orphan({
+      _id: new ObjectId(),
+      itemId: new ObjectId(goodItemId),
+    });
+
+    const {service, calls} = makeService({
+      orphans: [deletedItemOrphan, deletedVersionOrphan, goodBlogOrphan],
+    });
+
+    (service as any).itemRepo = {
+      readItemById: async (id: string) => {
+        if (id === ITEM_ID) throw new NotFoundError(`Item ${ITEM_ID} not found`);
+        if (id === deletedVersionItemId)
+          return {
+            _id: deletedVersionItemId,
+            type: 'VIDEO',
+            details: {startTime: '00:00:00', endTime: '00:10:00'},
+          };
+        return {_id: goodItemId, type: 'BLOG', details: {}};
+      },
+    };
+    (service as any).courseRepo = {
+      readVersion: async (versionId: string) => {
+        if (versionId === deletedVersionId) {
+          throw new NotFoundError('Course Version not found');
+        }
+        return {_id: versionId, modules: []};
+      },
+    };
+    (service as any).progressRepository.findProgress = async (
+      _u: string,
+      _c: string,
+      courseVersionId: string,
+    ) =>
+      courseVersionId === deletedVersionId
+        ? {
+            currentModule: new ObjectId().toString(),
+            currentSection: new ObjectId().toString(),
+            currentItem: deletedVersionItemId,
+          }
+        : {
+            currentModule: new ObjectId().toString(),
+            currentSection: new ObjectId().toString(),
+            currentItem: goodItemId,
+          };
+    (service as any).getNextItemInSequence = async () => null;
+
+    const summary = await service.recoverOrphanedWatchTimes();
+
+    // deletedItemOrphan: NotFoundError from readItemById -> rejected, no close.
+    // deletedVersionOrphan: closes, then NotFoundError from readVersion inside
+    //   the transaction -> whole transaction (including the close) rolls
+    //   back -> rejected, not counted as closed.
+    // goodBlogOrphan: genuinely recoverable -- must close and advance despite
+    //   the other two rows in the same batch failing.
+    expect(summary.scanned).toBe(3);
+    expect(summary.rejected).toBe(2);
+    expect(summary.skipped).toBe(0);
+    // The counters, not the raw closeOrphanedWatchTime call log, are what the
+    // caller actually observes -- the mock here has no real transaction
+    // rollback, so closeOrphanedWatchTime's mock still records a call for
+    // deletedVersionOrphan even though a real MongoDB transaction would have
+    // rolled that write back when readVersion threw afterwards. summary.closed
+    // is what recoverOrphanedWatchTimes reports, and it must not count that.
+    expect(summary.closed).toBe(1);
+    expect(summary.advanced).toBe(1);
+    expect(
+      calls.closed.some(c => c.id === goodBlogOrphan._id.toString()),
+    ).toBe(true);
+    expect(calls.markedAttempted.sort()).toEqual(
+      [deletedItemOrphan._id.toString(), deletedVersionOrphan._id.toString()].sort(),
+    );
   });
 });
