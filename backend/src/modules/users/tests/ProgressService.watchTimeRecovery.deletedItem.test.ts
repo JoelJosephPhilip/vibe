@@ -122,4 +122,46 @@ describe('ProgressService.recoverOrphanedWatchTimes -- permanently deleted item'
     expect(summary.rejected).toBe(0);
     expect(calls.markedAttempted).toEqual([]);
   });
+
+  it('a permanently deleted course version is also rejected once, not retried forever', async () => {
+    // courseRepo.readVersion throws NotFoundError (not a null return) for a
+    // missing version -- CourseRepository.ts: `if (courseVersion === null)
+    // throw new NotFoundError(...)`. Same bug class as the deleted-item case
+    // above, reached later in the same try block (after the item is found
+    // and the orphan is closed, once the sweep goes looking for where to
+    // advance the student's pointer to).
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const record = orphan({lastSeenAt: new Date(START.getTime() + 120_000)});
+    const {service, calls} = makeService({orphans: [record]});
+    (service as any).courseRepo = {
+      readVersion: async () => {
+        throw new NotFoundError('Course Version not found');
+      },
+    };
+    (service as any).itemRepo = {
+      readItemById: async () => ({
+        _id: ITEM_ID,
+        type: 'VIDEO',
+        details: {startTime: '00:00:00', endTime: '00:10:00'},
+      }),
+    };
+    // Must actually be the student's current item, or the code returns early
+    // (closed-but-not-stuck) before ever reaching readVersion.
+    (service as any).progressRepository.findProgress = async () => ({
+      currentModule: new ObjectId().toString(),
+      currentSection: new ObjectId().toString(),
+      currentItem: ITEM_ID,
+    });
+
+    const summary = await service.recoverOrphanedWatchTimes();
+
+    // The throw happens inside _withTransaction, before it returns an
+    // outcome -- so neither closed nor advanced increments here, matching
+    // what a real MongoDB transaction abort would also leave uncounted.
+    expect(summary.closed).toBe(0);
+    expect(summary.advanced).toBe(0);
+    expect(summary.rejected).toBe(1);
+    expect(summary.skipped).toBe(0);
+    expect(calls.markedAttempted).toEqual([record._id.toString()]);
+  });
 });
