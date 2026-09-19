@@ -1027,7 +1027,13 @@ class ProgressService extends BaseService {
     const sortedSections = courseVersion.modules
       .find(module => module.moduleId?.toString() === moduleId)
       ?.sections.sort((a, b) => (a.order || '').localeCompare(b.order || ''));
-    const firstSection = sortedSections?.[0].sectionId;
+    // A module can genuinely have zero sections (right after creation, before
+    // its first section is added -- ModuleService.createModule's own "previous
+    // module has no sections" guard confirms this is a real authoring-time
+    // state). sortedSections?.[0] is then undefined (a valid array index, not
+    // a nullish base), so the `?.` on sortedSections alone doesn't protect the
+    // .sectionId access after it -- needs its own `?.` too.
+    const firstSection = sortedSections?.[0]?.sectionId;
     if (firstSection?.toString() === sectionId) {
       isFirstSection = true;
     }
@@ -1071,6 +1077,11 @@ class ProgressService extends BaseService {
       if (itemsGroup && itemsGroup.items) {
         itemsGroup.items = itemsGroup.items.filter((i: any) => !i.isHidden && !i.isDeleted);
       }
+      // Same as above: the previous module's last section can genuinely have
+      // zero items in its items group (a section created but not yet
+      // populated), leaving lastItem undefined -- matches the `?.`/`|| ''`
+      // guard the isFirstItem && !isFirstSection branch below already uses
+      // for the identical situation.
       const lastItem = itemsGroup.items.sort((a, b) =>
         (a.order || '').localeCompare(b.order || ''),
       )[itemsGroup.items.length - 1];
@@ -1078,7 +1089,7 @@ class ProgressService extends BaseService {
       return {
         moduleId: prevModule?.moduleId.toString(),
         sectionId: lastSection?.sectionId.toString(),
-        itemId: lastItem._id.toString(),
+        itemId: lastItem?._id?.toString() || '',
       };
     }
 
