@@ -37,7 +37,13 @@ export default defineConfig({
     },
   },
   build: {
-    sourcemap: true,
+    // Off by default: generating sourcemaps for this bundle (onnxruntime-web's
+    // multi-MB minified ort-web.min.js, plus mediapipe) spikes Rollup's
+    // chunk-rendering memory well past 4GB and OOM-kills memory-constrained
+    // build environments (observed on Render's static-site build machine).
+    // Opt in locally with `VITE_SOURCEMAP=true pnpm build` when debugging a
+    // production bundle.
+    sourcemap: process.env.VITE_SOURCEMAP === 'true',
     rollupOptions: {
       output: {
         manualChunks: {

@@ -6,7 +6,7 @@ import { Calculator } from '@/components/exam/Calculator'
 import ExamProctoring from '@/components/exam/ExamProctoring'
 import { DEMO_EXAM, computeNegativeMarks } from '@/lib/examStore'
 import { useExamSecurity } from '@/lib/useExamSecurity'
-import { useExam, useSubmitAttempt, useRedeemTimeGrant } from '@/hooks/exam-hooks'
+import { useExam, useSubmitAttempt, useRedeemTimeGrant, useMyAttempts } from '@/hooks/exam-hooks'
 import { useAuthStore } from '@/store/auth-store'
 
 const LETTERS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
@@ -93,6 +93,12 @@ export default function ExamPage() {
   const { examId } = useParams()
   const isDemo = examId === 'demo'
   const { data: fetchedExam, isLoading } = useExam(isDemo ? undefined : examId)
+  // Only actually needed for the retake-limit check below, but fetched
+  // unconditionally (isDemo included) rather than gated behind examData
+  // being loaded first, so it's ready by the time that check runs instead
+  // of showing the exam UI for a beat then yanking it away once attempts
+  // resolve.
+  const { data: myAttempts } = useMyAttempts()
   const examData = isDemo ? DEMO_EXAM : fetchedExam
 
   if (!isDemo && isLoading) {
@@ -163,6 +169,39 @@ export default function ExamPage() {
             >
               Back to home
             </button>
+          </div>
+        </div>
+      )
+    }
+
+    // Retake limit is enforced server-side too (see AttemptService.submitAttempt's
+    // SUBMIT_BLOCK_MESSAGES), but that only fires at the very end, after a
+    // student has already sat through the whole timed attempt — this stops
+    // the exam page from loading at all when there's nothing it could
+    // legitimately submit to.
+    const priorAttempt = (myAttempts ?? []).find((a) => a.examId === examId)
+    if (examData.allowRetakes === false && priorAttempt) {
+      return (
+        <div className="flex min-h-screen items-center justify-center bg-background px-4 text-center">
+          <div className="max-w-md space-y-3">
+            <h1 className="text-2xl font-bold">Already attempted</h1>
+            <p className="text-sm text-muted-foreground">
+              This test only allows one attempt, and you've already submitted one.
+            </p>
+            <div className="flex justify-center gap-3">
+              <button
+                onClick={() => navigate('/')}
+                className="rounded-md border border-input bg-background px-4 py-2 text-sm font-medium hover:bg-accent"
+              >
+                Back to home
+              </button>
+              <button
+                onClick={() => navigate(`/result/${priorAttempt.id}`)}
+                className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+              >
+                View Result
+              </button>
+            </div>
           </div>
         </div>
       )
@@ -289,6 +328,31 @@ function ExamPageInner({ examId, isDemo, examData, navigate }) {
 
   const [currentIndex, setCurrentIndex] = useState(savedSession?.currentIndex ?? 0)
   const [showCalc, setShowCalc] = useState(false)
+  // Offset from the calculator's default docked position (sm:left-8
+  // sm:top-24), dragged via its title bar. Reset per exam mount rather than
+  // persisted — it's a scratch tool, not exam state worth saving/restoring.
+  const [calcOffset, setCalcOffset] = useState({ x: 0, y: 0 })
+  const calcDragRef = useRef(null)
+  const handleCalcDragStart = (e) => {
+    const point = e.touches ? e.touches[0] : e
+    calcDragRef.current = { startX: point.clientX, startY: point.clientY, origin: calcOffset }
+    const handleMove = (moveEvent) => {
+      const movePoint = moveEvent.touches ? moveEvent.touches[0] : moveEvent
+      const { startX, startY, origin } = calcDragRef.current
+      setCalcOffset({ x: origin.x + (movePoint.clientX - startX), y: origin.y + (movePoint.clientY - startY) })
+    }
+    const handleEnd = () => {
+      calcDragRef.current = null
+      window.removeEventListener('mousemove', handleMove)
+      window.removeEventListener('mouseup', handleEnd)
+      window.removeEventListener('touchmove', handleMove)
+      window.removeEventListener('touchend', handleEnd)
+    }
+    window.addEventListener('mousemove', handleMove)
+    window.addEventListener('mouseup', handleEnd)
+    window.addEventListener('touchmove', handleMove)
+    window.addEventListener('touchend', handleEnd)
+  }
   // Below the `lg` breakpoint the question palette collapses into a
   // toggleable panel under the question (see the "Question Palette" button
   // in the main grid below) instead of sitting beside it — at `lg` and up
@@ -466,13 +530,25 @@ function ExamPageInner({ examId, isDemo, examData, navigate }) {
   const goNext = () => setCurrentIndex((i) => Math.min(questions.length - 1, i + 1))
   const goPrev = () => setCurrentIndex((i) => Math.max(0, i - 1))
 
-  const handleSaveAndNext = () => goNext()
+  // On the last question there's nowhere for "Next" to go, so it opens the
+  // review-and-submit popup (counts of answered/marked/not-visited, with a
+  // "Keep Reviewing" escape hatch) instead of doing nothing.
+  const isLastQuestion = currentIndex === questions.length - 1
+  const handleSaveAndNext = () => {
+    if (isLastQuestion) setShowSubmitConfirm(true)
+    else goNext()
+  }
   const handleMarkReviewNext = () => {
-    updateResponse({ isMarkedForReview: true })
+    // Toggles rather than always setting true — previously there was no way
+    // to unmark a question once flagged short of clearing its whole answer.
+    updateResponse({ isMarkedForReview: !responses[currentIndex]?.isMarkedForReview })
     goNext()
   }
   const handleClearResponse = () => {
-    updateResponse({ selectedOptions: [], natAnswer: '', isAnswered: false })
+    // Also resets isMarkedForReview — previously a question that had been
+    // marked stayed showing the "marked" color after clearing, even though
+    // clearing is meant to reset the question to a clean, unanswered state.
+    updateResponse({ selectedOptions: [], natAnswer: '', isAnswered: false, isMarkedForReview: false })
   }
 
   const handleSubmit = () => {
@@ -914,7 +990,7 @@ function ExamPageInner({ examId, isDemo, examData, navigate }) {
           <div className="flex flex-wrap justify-between gap-2 lg:col-span-3 lg:flex-nowrap lg:border-r lg:border-gray-300 lg:pr-4">
             <div className="flex flex-wrap gap-2">
               <button onClick={handleMarkReviewNext} className="min-h-[44px] rounded-sm border border-gray-300 bg-white px-3 py-2 text-[13px] font-bold text-gray-700 hover:bg-gray-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 sm:px-4">
-                Mark for Review &amp; Next
+                {responses[currentIndex]?.isMarkedForReview ? 'Unmark & Next' : 'Mark for Review & Next'}
               </button>
               <button onClick={handleClearResponse} className="min-h-[44px] rounded-sm border border-gray-300 bg-white px-3 py-2 text-[13px] font-bold text-gray-700 hover:bg-gray-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 sm:px-4">
                 Clear Response
@@ -929,7 +1005,7 @@ function ExamPageInner({ examId, isDemo, examData, navigate }) {
                 className="min-h-[44px] rounded-sm border px-3 py-2 text-[13px] font-bold text-white hover:brightness-125 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 sm:px-4"
                 style={{ borderColor: INK, backgroundColor: INK }}
               >
-                Save &amp; Next
+                {isLastQuestion ? 'Save & Review' : 'Save & Next'}
               </button>
             </div>
           </div>
@@ -950,14 +1026,20 @@ function ExamPageInner({ examId, isDemo, examData, navigate }) {
           to run off the right edge of any phone-width viewport. From `sm`
           up it's back to the original floating box in its original spot. */}
       {showCalc && (
-        <div className="fixed inset-x-0 bottom-0 z-50 max-h-[85vh] w-full overflow-y-auto rounded-t-xl border border-gray-400 bg-[#dadada] shadow-2xl sm:inset-x-auto sm:bottom-auto sm:left-8 sm:top-24 sm:max-h-none sm:w-[380px] sm:rounded-md">
+        <div
+          className="fixed inset-x-0 bottom-0 z-50 max-h-[85vh] w-full overflow-y-auto rounded-t-xl border border-gray-400 bg-[#dadada] shadow-2xl sm:inset-x-auto sm:bottom-auto sm:left-8 sm:top-24 sm:max-h-none sm:w-[380px] sm:rounded-md"
+          style={{ transform: `translate(${calcOffset.x}px, ${calcOffset.y}px)` }}
+        >
           <div
-            className="flex items-center justify-between px-3 py-2 text-white sm:py-1.5"
+            className="flex cursor-move items-center justify-between px-3 py-2 text-white select-none sm:py-1.5"
             style={{ backgroundColor: INK }}
+            onMouseDown={handleCalcDragStart}
+            onTouchStart={handleCalcDragStart}
           >
             <span className="text-sm font-semibold">Scientific Calculator</span>
             <button
               onClick={() => setShowCalc(false)}
+              onMouseDown={(e) => e.stopPropagation()}
               aria-label="Close calculator"
               className="min-h-[44px] min-w-[44px] rounded text-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white sm:min-h-0 sm:min-w-0"
             >

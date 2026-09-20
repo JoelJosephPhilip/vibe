@@ -23,6 +23,19 @@ const PROCTORING_EVENT_LABELS = {
   cameraIntegrity: "Camera integrity issue",
 };
 
+// `option.label` is rarely actually stored — every other option-letter
+// lookup in this file (see the `opt.label || String.fromCharCode(65 + idx)`
+// call sites below) falls back to the array-index letter for that reason.
+// These two used the raw option id instead, which only ever showed up as a
+// bug once a real attempt with unlabeled options (e.g. AI-generated
+// questions) got rendered here.
+function optionLetter(options, id) {
+  const opt = (options || []).find((o) => o.id === id);
+  if (opt?.label) return opt.label;
+  const idx = (options || []).findIndex((o) => o.id === id);
+  return idx >= 0 ? String.fromCharCode(65 + idx) : id;
+}
+
 function formatUserAnswer(q, r) {
   if (!r) return "Not Answered";
   if (q.type === "NAT") return (r.natAnswer || "").trim() || "Not Answered";
@@ -31,8 +44,7 @@ function formatUserAnswer(q, r) {
   return sel
     .map((id) => {
       const opt = (q.options || []).find((o) => o.id === id);
-      const label = opt?.label || id;
-      return `${label}. ${opt?.text ?? ""}`;
+      return `${optionLetter(q.options, id)}. ${opt?.text ?? ""}`;
     })
     .join(" | ");
 }
@@ -44,8 +56,7 @@ function formatCorrectAnswer(q, key) {
   return arr
     .map((id) => {
       const opt = (q.options || []).find((o) => o.id === id);
-      const label = opt?.label || id;
-      return `${label}. ${opt?.text ?? ""}`;
+      return `${optionLetter(q.options, id)}. ${opt?.text ?? ""}`;
     })
     .join(" | ");
 }
@@ -237,14 +248,32 @@ const PDF_UNSAFE_CHAR_MAP = {
   "”": '"', // right double quote
   "•": "-", // bullet
   "…": "...", // ellipsis
+  // U+2212 MINUS SIGN — distinct from the ASCII hyphen-minus, and already
+  // inside the arrows/math-operators block matched below, but with no map
+  // entry it fell through to the generic "?" fallback (seen as "2n ? 1"
+  // instead of "2n − 1" for floor/ceiling-derived comparison-count formulas).
+  "−": "-",
+  // Ceiling/floor brackets: unlike the single-character symbols above, these
+  // are a delimiter *pair* wrapping an expression, so the 1:1 char map
+  // spells the function name out instead of trying to approximate a bracket
+  // glyph WinAnsi doesn't have (which — like the minus sign above — didn't
+  // even fall through to "?"; being outside every range in the regex below
+  // meant it reached jsPDF completely unmapped, corrupting that line's
+  // kerning, e.g. "⌈3n/2⌉" -> "# 3 n / 2# " with the rest of the line
+  // stretched out letter by letter).
+  "⌈": " ceil(",
+  "⌉": ")",
+  "⌊": " floor(",
+  "⌋": ")",
 };
-// Greek block (0370-03FF) + arrows/math-operators block (2190-22FF) + the
-// General Punctuation dash/quote/ellipsis/bullet codepoints mapped above
-// (deliberately NOT the 2000-200B space-family range, which
-// PDF_WHITESPACE_RUN_RE below already collapses to a plain space): map
-// known symbols, fall back to "?" for anything unmapped rather than letting
-// jsPDF silently draw a wrong-but-plausible-looking glyph.
-const PDF_UNSAFE_CHAR_RE = /[Ͱ-Ͽ←-⋿‐-―‘-‚“”•…]/g;
+// Greek block (0370-03FF) + arrows/math-operators block (2190-22FF) +
+// ceiling/floor brackets (2308-230B) + the General Punctuation dash/quote/
+// ellipsis/bullet codepoints mapped above (deliberately NOT the 2000-200B
+// space-family range, which PDF_WHITESPACE_RUN_RE below already collapses
+// to a plain space): map known symbols, fall back to "?" for anything
+// unmapped rather than letting jsPDF silently draw a wrong-but-plausible-
+// looking glyph.
+const PDF_UNSAFE_CHAR_RE = /[Ͱ-Ͽ←-⋿⌈-⌋‐-―‘-‚“”•…]/g;
 // Every Unicode whitespace variant a model might emit (regular space, tab,
 // no-break space, the U+2000-U+200A "general punctuation" space family,
 // narrow no-break space, ideographic space) — collapsed to one plain space.
@@ -1200,7 +1229,7 @@ export default function ResultPage() {
                     key={i}
                     type="button"
                     onClick={() => setLightboxEvent(e)}
-                    className="flex w-24 flex-col items-center gap-1 rounded-md border border-amber-300 bg-white p-1.5 text-left hover:border-amber-500"
+                    className="flex w-24 flex-col items-center gap-1 rounded-md border border-amber-300 bg-card p-1.5 text-left hover:border-amber-500"
                   >
                     <img
                       src={e.imageDataUrl}
@@ -1227,7 +1256,7 @@ export default function ResultPage() {
             onClick={() => setLightboxEvent(null)}
           >
             <div
-              className="max-w-lg rounded-lg bg-white p-3 shadow-2xl"
+              className="max-w-lg rounded-lg bg-card p-3 shadow-2xl"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="mb-2 flex items-center justify-between gap-4">
@@ -1375,12 +1404,18 @@ export default function ResultPage() {
             Close Window
           </button>
         ) : (
-          <Link
-            to="/"
+          // A real <a>, not react-router's <Link>: this page renders inside
+          // ExamAppShell's own MemoryRouter, so a <Link to="/"> would only
+          // navigate within that isolated router (back to the exam module's
+          // own HomePage) rather than actually leaving the exam app. A plain
+          // anchor forces a real browser navigation that the outer app's
+          // router picks up instead.
+          <a
+            href="/"
             className="inline-block px-4 py-2 rounded-md border border-border hover:bg-muted"
           >
             Back to home
-          </Link>
+          </a>
         )}
       </div>
     </div>
