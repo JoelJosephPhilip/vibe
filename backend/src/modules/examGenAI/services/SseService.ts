@@ -26,23 +26,51 @@ export class SseService {
             Connection: 'keep-alive',
         });
         res.flushHeaders?.();
-        res.write(': connected\n\n');
+        this.safeWrite(res, ': connected\n\n');
 
         const heartbeat = setInterval(() => {
-            res.write(': ping\n\n');
+            this.safeWrite(res, ': ping\n\n');
         }, SSE_HEARTBEAT_MS);
 
         this.clients.push({ jobId, res, heartbeat });
 
         req.once('close', () => this.cleanup(res));
+        // A broken connection (client vanished mid-write, e.g. ECONNRESET)
+        // more often surfaces as an async 'error' event on the stream than a
+        // synchronous throw from `write()` — an EventEmitter 'error' with no
+        // listener is itself an uncaught exception, so this is just as
+        // load-bearing as `safeWrite`'s try/catch above.
+        res.once('error', () => this.cleanup(res));
+        req.once('error', () => this.cleanup(res));
     }
 
     send(jobId: string, event: string, payload: unknown) {
         const clients = this.clients.filter(c => c.jobId === jobId);
         const data = JSON.stringify(payload);
         for (const c of clients) {
-            c.res.write(`event: ${event}\n`);
-            c.res.write(`data: ${data}\n\n`);
+            this.safeWrite(c.res, `event: ${event}\ndata: ${data}\n\n`);
+        }
+    }
+
+    /**
+     * `res.write` on a connection that closed between our last check and
+     * this call (a real race — the client can disconnect at any point, and
+     * `req`'s `close` event/`cleanup` aren't guaranteed to have run yet, e.g.
+     * from the heartbeat's own `setInterval` callback) throws
+     * synchronously (ERR_STREAM_WRITE_AFTER_END) or emits an `error` on the
+     * stream. Either one, unhandled, previously crashed the whole backend
+     * process — not just this SSE connection. Any failure here just means
+     * this one client is gone; treat it the same as an explicit disconnect.
+     */
+    private safeWrite(res: Response, chunk: string): void {
+        if (res.writableEnded || res.destroyed) {
+            this.cleanup(res);
+            return;
+        }
+        try {
+            res.write(chunk);
+        } catch {
+            this.cleanup(res);
         }
     }
 

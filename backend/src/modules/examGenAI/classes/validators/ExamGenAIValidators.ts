@@ -7,6 +7,7 @@ import {
     IsIn,
     IsArray,
     IsMongoId,
+    MaxLength,
 } from 'class-validator';
 
 const SUBJECTS = [
@@ -25,25 +26,33 @@ export class GenerateQuestionsBody {
     @JSONSchema({ description: 'Course name', type: 'string' })
     @IsString()
     @IsNotEmpty()
+    @MaxLength(200)
     course_name: string;
 
     @JSONSchema({ description: 'Subject area — steers the few-shot seed examples', enum: [...SUBJECTS] })
     @IsIn(SUBJECTS)
     subject: (typeof SUBJECTS)[number];
 
+    // These three fields are embedded directly into every generator/judge/
+    // final-judge prompt (see PromptBuilder) for every iteration of a job —
+    // with no cap, an arbitrarily large body directly multiplies token cost
+    // across the whole run, not just one request.
     @JSONSchema({ description: 'Course description', type: 'string' })
     @IsString()
     @IsNotEmpty()
+    @MaxLength(5000)
     course_description: string;
 
     @JSONSchema({ description: 'Syllabus text/outline', type: 'string' })
     @IsString()
     @IsNotEmpty()
+    @MaxLength(20000)
     syllabus: string;
 
     @JSONSchema({ description: 'Past exam / homework content, for style and topic grounding', type: 'string' })
     @IsOptional()
     @IsString()
+    @MaxLength(20000)
     past_exam_content?: string;
 
     @JSONSchema({ description: 'How many of the approved questions to return as the final set', enum: [5, 10, 15] })

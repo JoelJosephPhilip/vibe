@@ -104,6 +104,14 @@ export interface IExamGenJob {
     error?: string;
     createdAt: number;
     updatedAt: number;
+    /**
+     * Hash of this job's request (creator + course materials + settings) —
+     * see `QuestionGenerationService.startJob`'s dedup check, which reuses
+     * an already-`running` job with a matching fingerprint instead of
+     * starting a brand-new (paid) generation run for what's really a
+     * retried/duplicated request (network retry, accidental double-click).
+     */
+    requestFingerprint: string;
 }
 
 export type SaveTarget = 'draft' | 'exam' | 'bank';

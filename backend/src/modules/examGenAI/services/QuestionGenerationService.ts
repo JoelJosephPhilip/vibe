@@ -1,5 +1,5 @@
 import { injectable, inject } from 'inversify';
-import { randomUUID } from 'crypto';
+import { randomUUID, createHash } from 'crypto';
 import { NotFoundError, ForbiddenError } from 'routing-controllers';
 import { examGenAIConfig, ExamGenAIProvider } from '#root/config/examGenAI.js';
 import { EXAM_GENAI_TYPES } from '../types.js';
@@ -71,6 +71,27 @@ function normalizeGeneratedQuestionWhitespace(v: unknown): unknown {
     };
 }
 
+/** How long a `running` job stays eligible to absorb a duplicate `/generate`
+ *  request with the same fingerprint — long enough to cover a client-side
+ *  retry or an accidental double-submit, short enough that a genuine
+ *  identical re-request after the first job's TTL swept it (or long after it
+ *  finished) still starts fresh. */
+const DEDUP_WINDOW_MS = 5 * 60 * 1000;
+
+function fingerprintRequest(body: GenerateQuestionsBody, createdBy: string): string {
+    const key = JSON.stringify({
+        createdBy,
+        course_name: body.course_name,
+        subject: body.subject,
+        course_description: body.course_description,
+        syllabus: body.syllabus,
+        past_exam_content: body.past_exam_content ?? '',
+        num_questions: body.num_questions ?? 10,
+        difficulty_level: body.difficulty_level ?? 'mixed',
+    });
+    return createHash('sha256').update(key).digest('hex');
+}
+
 function isGeneratedQuestion(v: unknown): v is IGeneratedQuestion {
     const q = v as Partial<IGeneratedQuestion> | null;
     return (
@@ -129,6 +150,23 @@ export class QuestionGenerationService {
      *  fire-and-forget (see `run`) and reports progress over SSE. */
     startJob(body: GenerateQuestionsBody, createdBy: string): string {
         this.sweepExpiredJobs();
+
+        const requestFingerprint = fingerprintRequest(body, createdBy);
+        const dedupCutoff = Date.now() - DEDUP_WINDOW_MS;
+        for (const existing of this.jobs.values()) {
+            if (
+                existing.requestFingerprint === requestFingerprint &&
+                existing.status === 'running' &&
+                existing.createdAt >= dedupCutoff
+            ) {
+                // Same user, same course materials/settings, already running
+                // (a retried request or accidental double-click) — hand back
+                // the in-flight job instead of paying for a second full
+                // generate→judge→refine run.
+                return existing.jobId;
+            }
+        }
+
         const jobId = randomUUID();
         const job: IExamGenJob = {
             jobId,
@@ -144,6 +182,7 @@ export class QuestionGenerationService {
             iteration: 0,
             createdAt: Date.now(),
             updatedAt: Date.now(),
+            requestFingerprint,
         };
         this.jobs.set(jobId, job);
 
@@ -213,15 +252,25 @@ export class QuestionGenerationService {
         badExamples: IGeneratedQuestion[],
         difficultyLevel: ExamGenDifficultyLevel,
         coveredConcepts: string[],
+        isCancelled: () => boolean,
     ): Promise<
         | { kind: 'failure'; error: LlmClientError }
         | { kind: 'no-candidate'; provider: ExamGenAIProvider; model: string }
         | { kind: 'judged'; candidate: IGeneratedQuestion; verdict: JudgeVerdict; provider: ExamGenAIProvider; model: string }
     > {
         try {
-            const gen = await this.generateOne(materials, goodExamples, badExamples, difficultyLevel, coveredConcepts);
+            const gen = await this.generateOne(materials, goodExamples, badExamples, difficultyLevel, coveredConcepts, isCancelled);
             if (!gen.candidate) return { kind: 'no-candidate', provider: gen.provider, model: gen.model };
-            const judged = await this.judgeOne(materials, gen.candidate, goodExamples, coveredConcepts);
+            // Re-checked here (not just inside each LlmClient call): a
+            // sibling worker's circuit breaker can trip in the gap between
+            // this worker's generate call finishing and its judge call
+            // starting — without this, that judge call (a second paid
+            // request) still fires even though the job was already reported
+            // failed to the client.
+            if (isCancelled()) {
+                throw new LlmClientError('generation cancelled after generate, before judge');
+            }
+            const judged = await this.judgeOne(materials, gen.candidate, goodExamples, coveredConcepts, isCancelled);
             return { kind: 'judged', candidate: gen.candidate, verdict: judged.verdict, provider: judged.provider, model: judged.model };
         } catch (err) {
             if (!(err instanceof LlmClientError)) throw err;
@@ -256,12 +305,24 @@ export class QuestionGenerationService {
             const badExamples = job.badQuestions.slice(-feedbackExampleCount);
             const coveredConcepts = job.goodQuestions.flatMap(q => q.key_concepts);
 
-            const result = await this.generateAndJudgeOne(materials, goodExamples, badExamples, job.difficultyLevel, coveredConcepts);
+            const result = await this.generateAndJudgeOne(
+                materials,
+                goodExamples,
+                badExamples,
+                job.difficultyLevel,
+                coveredConcepts,
+                () => job.status !== 'running',
+            );
 
             if (result.kind === 'failure') {
                 job.consecutiveFailures = (job.consecutiveFailures ?? 0) + 1;
                 console.warn(`[QuestionGenerationService] provider call failed (${job.consecutiveFailures}/${consecutiveFailureLimit} consecutive):`, result.error);
-                if (job.consecutiveFailures >= consecutiveFailureLimit) {
+                // `job.status === 'running'` guard: a sibling worker may have
+                // already ended the job (circuit breaker tripped, or a
+                // cancellation from the isCancelled check above) — don't
+                // re-flip status or re-send an 'error' event with a less
+                // meaningful message over top of the real one.
+                if (job.consecutiveFailures >= consecutiveFailureLimit && job.status === 'running') {
                     job.status = 'error';
                     job.error = `Every configured LLM provider failed ${job.consecutiveFailures} times in a row: ${result.error.message}`;
                     job.updatedAt = Date.now();
@@ -314,9 +375,10 @@ export class QuestionGenerationService {
         badExamples: IGeneratedQuestion[],
         difficultyLevel: ExamGenDifficultyLevel,
         coveredConcepts: string[],
+        isCancelled: () => boolean,
     ): Promise<{ candidate: IGeneratedQuestion | null; provider: ExamGenAIProvider; model: string }> {
         const { system, prompt } = buildGeneratorPrompt(materials, goodExamples, badExamples, difficultyLevel, coveredConcepts);
-        const { data: raw, provider, model } = await this.llm.completeJson('generator', system, prompt);
+        const { data: raw, provider, model } = await this.llm.completeJson('generator', system, prompt, isCancelled);
         const data = normalizeGeneratedQuestionWhitespace(raw);
         if (!isGeneratedQuestion(data)) {
             console.warn('[QuestionGenerationService] generator returned malformed question, skipping:', data);
@@ -330,6 +392,7 @@ export class QuestionGenerationService {
         candidate: IGeneratedQuestion,
         goodExamples: IGeneratedQuestion[],
         coveredConcepts: string[],
+        isCancelled: () => boolean,
     ): Promise<{ verdict: JudgeVerdict; provider: ExamGenAIProvider; model: string }> {
         const prompt = buildJudgePrompt(materials, candidate, goodExamples, coveredConcepts);
         const { text, provider, model } = await this.llm.completeText(
@@ -338,6 +401,7 @@ export class QuestionGenerationService {
             'If your reasoning process is visible (e.g. a <think> block), keep it to one or two sentences, ' +
             'then immediately give your one-word verdict — never spend your full response budget on reasoning alone.',
             prompt,
+            isCancelled,
         );
         // An empty verdict (e.g. the model spent its whole budget on <think>
         // reasoning and never wrote Keep/Remove — see LlmClient.stripThinking)
@@ -373,7 +437,11 @@ export class QuestionGenerationService {
                 const candidate = job.goodQuestions[index];
 
                 try {
-                    const { verdict, provider, model } = await this.finalJudgeOne(materials, candidate);
+                    const { verdict, provider, model } = await this.finalJudgeOne(
+                        materials,
+                        candidate,
+                        () => job.status !== 'running',
+                    );
                     job.consecutiveFailures = 0;
                     job.lastProvider = provider;
                     job.lastModel = model;
@@ -384,7 +452,7 @@ export class QuestionGenerationService {
                     if (!(err instanceof LlmClientError)) throw err;
                     job.consecutiveFailures = (job.consecutiveFailures ?? 0) + 1;
                     console.warn(`[QuestionGenerationService] final-judge call failed (${job.consecutiveFailures}/${examGenAIConfig.consecutiveFailureLimit} consecutive):`, err);
-                    if (job.consecutiveFailures >= examGenAIConfig.consecutiveFailureLimit) {
+                    if (job.consecutiveFailures >= examGenAIConfig.consecutiveFailureLimit && job.status === 'running') {
                         job.status = 'error';
                         job.error = `Every configured LLM provider failed ${job.consecutiveFailures} times in a row: ${err.message}`;
                         job.updatedAt = Date.now();
@@ -417,6 +485,7 @@ export class QuestionGenerationService {
     private async finalJudgeOne(
         materials: CourseMaterials,
         candidate: IGeneratedQuestion,
+        isCancelled: () => boolean,
     ): Promise<{ verdict: IFinalJudgeVerdict | null; provider: ExamGenAIProvider; model: string }> {
         const prompt = buildFinalJudgePrompt(materials, candidate);
         const { data, provider, model } = await this.llm.completeJson(
@@ -426,6 +495,7 @@ export class QuestionGenerationService {
             'most — then immediately write the final JSON object. Never spend your full response budget on ' +
             'reasoning alone.',
             prompt,
+            isCancelled,
         );
         if (
             typeof data.difficulty !== 'number' ||
