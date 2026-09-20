@@ -1320,13 +1320,18 @@ const [options, setOptions] = useState(
     } else {
       const cleanOptions = options.filter((o) => o.text.trim() || o.image)
       if (cleanOptions.length < 2) return alert('At least 2 options required (text or image)')
-      if (correct.length === 0) return alert('Select at least one correct option')
+      // Validate against the filtered ids actually being submitted below, not
+      // the raw `correct` state — a correct option whose text/image was
+      // cleared (and so got dropped from cleanOptions) would otherwise pass
+      // this check while submitting an empty correctOptions array.
+      const cleanCorrectOptions = correct.filter((c) => cleanOptions.some((o) => o.id === c))
+      if (cleanCorrectOptions.length === 0) return alert('Select at least one correct option')
       payload = {
         type,
         questionText: questionText.trim(),
         questionImage,
         options: cleanOptions,
-        correctOptions: correct.filter((c) => cleanOptions.some((o) => o.id === c)),
+        correctOptions: cleanCorrectOptions,
         marks,
         negativeMarks: appliedNegativeMarks,
         useCustomNegative: appliedCustomFlag,

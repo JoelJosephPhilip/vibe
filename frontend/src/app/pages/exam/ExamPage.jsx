@@ -40,7 +40,23 @@ function shuffle(arr) {
 }
 
 function CountdownDisplay({ initialSeconds, onExpire }) {
-  const [s, setS] = useState(initialSeconds)
+  // Deadline is a fixed wall-clock timestamp, computed once from
+  // initialSeconds - every tick recomputes `s` as *how much real time is
+  // left until it*, rather than decrementing a counter by 1 per tick.
+  // Decrementing by tick count drifted badly whenever the browser throttled
+  // (or fully paused) this interval for a backgrounded tab - a student could
+  // background the tab for a few minutes and come back to a timer that had
+  // barely moved, showing (and, before the tab regains focus and the next
+  // tick corrects it, effectively granting) extra time that was never really
+  // left. Recomputing from a fixed deadline self-corrects on the very next
+  // tick regardless of how long ticks were throttled/skipped in between.
+  const deadlineRef = useRef(Date.now() + initialSeconds * 1000)
+  useEffect(() => {
+    deadlineRef.current = Date.now() + initialSeconds * 1000
+  }, [initialSeconds])
+
+  const computeRemaining = () => Math.max(0, Math.round((deadlineRef.current - Date.now()) / 1000))
+  const [s, setS] = useState(computeRemaining)
 
   // Keep the latest onExpire without making it an effect dependency (it's a
   // new arrow function on every parent render, which would otherwise force
@@ -55,8 +71,15 @@ function CountdownDisplay({ initialSeconds, onExpire }) {
   // than once (e.g. under StrictMode double-invoke checks).
   useEffect(() => {
     if (s <= 0) return
-    const id = setInterval(() => setS((prev) => Math.max(0, prev - 1)), 1000)
-    return () => clearInterval(id)
+    const id = setInterval(() => setS(computeRemaining()), 1000)
+    // Also recompute the instant the tab regains visibility, rather than
+    // waiting for the next throttled tick to catch up.
+    const onVisible = () => { if (document.visibilityState === 'visible') setS(computeRemaining()) }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      clearInterval(id)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
   }, [s <= 0])
 
   // Fire onExpire exactly once, as a real effect, when the countdown
