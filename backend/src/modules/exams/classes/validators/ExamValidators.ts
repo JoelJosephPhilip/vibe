@@ -120,6 +120,35 @@ export class ExamEligibilityBody {
     allowedEmails?: string[];
 }
 
+export class NegativeMarkingRatioBody {
+    @JSONSchema({ description: 'Fraction numerator', type: 'number' })
+    @IsNumber()
+    @Min(0)
+    num: number;
+
+    @JSONSchema({ description: 'Fraction denominator', type: 'number' })
+    @IsNumber()
+    @Min(1)
+    den: number;
+}
+
+export class NegativeMarkingRatiosBody {
+    @JSONSchema({ description: 'MCQ negative-marking fraction, e.g. { num: 1, den: 3 }' })
+    @ValidateNested()
+    @Type(() => NegativeMarkingRatioBody)
+    MCQ: NegativeMarkingRatioBody;
+
+    @JSONSchema({ description: 'MSQ negative-marking fraction' })
+    @ValidateNested()
+    @Type(() => NegativeMarkingRatioBody)
+    MSQ: NegativeMarkingRatioBody;
+
+    @JSONSchema({ description: 'NAT negative-marking fraction' })
+    @ValidateNested()
+    @Type(() => NegativeMarkingRatioBody)
+    NAT: NegativeMarkingRatioBody;
+}
+
 export class TimeGrantSeedBody {
     @JSONSchema({ description: 'Extra minutes granted', type: 'number' })
     @IsNumber()
@@ -143,6 +172,7 @@ export class CreateExamBody {
     @IsOptional()
     @IsNumber()
     @Min(1)
+    @Max(1440)
     duration?: number;
 
     @JSONSchema({ description: 'Minimum marks required to pass', type: 'number' })
@@ -161,6 +191,31 @@ export class CreateExamBody {
     @ValidateNested()
     @Type(() => NegativeMarkingSchemeBody)
     negativeMarkingScheme?: NegativeMarkingSchemeBody;
+
+    @JSONSchema({
+        description:
+            'Per-question-type negative-marking fraction used to auto-suggest a ' +
+            "new question's negativeMarks in the exam editor. Cosmetic only — " +
+            'does not affect scoring (see negativeMarkingScheme for that).',
+    })
+    @IsOptional()
+    @ValidateNested()
+    @Type(() => NegativeMarkingRatiosBody)
+    negativeMarkingRatios?: NegativeMarkingRatiosBody;
+
+    @JSONSchema({ description: 'Custom title shown in the exam-taking UI header', type: 'string' })
+    @IsOptional()
+    @IsString()
+    headerTitle?: string;
+
+    @JSONSchema({
+        description: 'Minimum seconds a student must spend before Submit is allowed',
+        type: 'number',
+    })
+    @IsOptional()
+    @IsNumber()
+    @Min(0)
+    minSubmitTime?: number;
 
     @JSONSchema({ description: 'Instructions shown before starting the exam', type: 'string' })
     @IsOptional()
@@ -230,6 +285,7 @@ export class UpdateExamBody {
     @IsOptional()
     @IsNumber()
     @Min(1)
+    @Max(1440)
     duration?: number;
 
     @JSONSchema({ description: 'Minimum marks required to pass', type: 'number' })
@@ -248,6 +304,31 @@ export class UpdateExamBody {
     @ValidateNested()
     @Type(() => NegativeMarkingSchemeBody)
     negativeMarkingScheme?: NegativeMarkingSchemeBody;
+
+    @JSONSchema({
+        description:
+            'Per-question-type negative-marking fraction used to auto-suggest a ' +
+            "new question's negativeMarks in the exam editor. Cosmetic only — " +
+            'does not affect scoring (see negativeMarkingScheme for that).',
+    })
+    @IsOptional()
+    @ValidateNested()
+    @Type(() => NegativeMarkingRatiosBody)
+    negativeMarkingRatios?: NegativeMarkingRatiosBody;
+
+    @JSONSchema({ description: 'Custom title shown in the exam-taking UI header', type: 'string' })
+    @IsOptional()
+    @IsString()
+    headerTitle?: string;
+
+    @JSONSchema({
+        description: 'Minimum seconds a student must spend before Submit is allowed',
+        type: 'number',
+    })
+    @IsOptional()
+    @IsNumber()
+    @Min(0)
+    minSubmitTime?: number;
 
     @JSONSchema({ description: 'Instructions shown before starting the exam', type: 'string' })
     @IsOptional()
@@ -366,12 +447,14 @@ export class AddQuestionBody {
     @JSONSchema({ description: 'Marks awarded for a correct answer', type: 'number' })
     @IsNumber()
     @Min(0)
+    @Max(1000)
     marks: number;
 
     @JSONSchema({ description: 'Marks deducted for a wrong answer', type: 'number' })
     @IsOptional()
     @IsNumber()
     @Min(0)
+    @Max(1000)
     negativeMarks?: number;
 
     @JSONSchema({
@@ -424,6 +507,7 @@ export class UpdateQuestionBody {
     @JSONSchema({ description: 'Correct answer(s)' })
     @IsOptional()
     @IsArray()
+    @ArrayMinSize(1)
     @IsString({ each: true })
     correctOptions?: string[];
 
@@ -431,12 +515,14 @@ export class UpdateQuestionBody {
     @IsOptional()
     @IsNumber()
     @Min(0)
+    @Max(1000)
     marks?: number;
 
     @JSONSchema({ description: 'Marks deducted for a wrong answer', type: 'number' })
     @IsOptional()
     @IsNumber()
     @Min(0)
+    @Max(1000)
     negativeMarks?: number;
 
     @JSONSchema({

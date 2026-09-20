@@ -10,11 +10,13 @@ import {
     Body,
     Authorized,
     CurrentUser,
+    UseBefore,
 } from 'routing-controllers';
 import { injectable, inject } from 'inversify';
 import { OpenAPI } from 'routing-controllers-openapi';
 import { EXAMS_TYPES } from '../types.js';
 import { ExamService } from '../services/ExamService.js';
+import { createRateLimiter } from '#root/shared/index.js';
 import {
     ExamIdParams,
     QuestionIdParams,
@@ -35,6 +37,29 @@ import { IUser } from '#root/shared/interfaces/models.js';
 // literal sibling routes. See `authz.ts` for the full explanation.
 import { assertOwnerOrAdmin } from './authz.js';
 export { assertOwnerOrAdmin };
+
+/**
+ * Extra-time grant codes are 6 alphanumeric characters (see
+ * `generateGrantCode` in ExamService) — a large space, but this endpoint is
+ * the one place an attacker could automate guessing them for free exam time,
+ * and the app-wide limiter in `index.ts` is sized for general API traffic,
+ * not tuned against this specific endpoint. Well above any legitimate
+ * student's realistic typo/retry rate.
+ *
+ * Keyed by the caller's bearer token, not IP: this route requires
+ * `@Authorized()`, so every request already carries one, and keying by IP
+ * would let students sharing one address (campus/school NAT — exactly the
+ * "many students, one exam" scenario this app targets) collectively lock
+ * each other out of code entry during a live, time-limited exam the moment
+ * any one of them fat-fingers a code a few times. Falls back to IP only for
+ * the (should-be-impossible past @Authorized()) case of a missing header.
+ */
+const redeemGrantRateLimiter = createRateLimiter({
+    windowMs: 60_000,
+    max: 10,
+    message: { status: 429, error: 'Too many code attempts, please wait a minute and try again.' },
+    keyGenerator: (req) => req.headers.authorization ?? req.ip ?? 'unknown',
+});
 
 @OpenAPI({
     tags: ['Exams'],
@@ -253,6 +278,7 @@ export class ExamController {
     // Redeem an extra-time grant code (any authenticated user)
     @Authorized()
     @Post('/:examId/redeem-grant')
+    @UseBefore(redeemGrantRateLimiter)
     @HttpCode(200)
     @OpenAPI({
         summary: 'Redeem an extra-time grant code',

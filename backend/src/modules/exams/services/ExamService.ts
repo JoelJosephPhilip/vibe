@@ -1,7 +1,7 @@
 import 'reflect-metadata';
 import { randomUUID } from 'crypto';
 import { injectable, inject } from 'inversify';
-import { NotFoundError, ForbiddenError } from 'routing-controllers';
+import { NotFoundError, ForbiddenError, BadRequestError } from 'routing-controllers';
 import { ObjectId } from 'mongodb';
 import { EXAMS_TYPES } from '../types.js';
 import { GLOBAL_TYPES } from '#root/types.js';
@@ -14,6 +14,7 @@ import {
     IExamEligibility,
     IExamQuestion,
     IExamQuestionOption,
+    INegativeMarkingRatios,
     INegativeMarkingScheme,
     ITimeGrant,
 } from '../classes/transformers/Exam.js';
@@ -42,6 +43,18 @@ function generateGrantCode(): string {
     return s;
 }
 
+/**
+ * `opensAt`/`closesAt` validity can't be checked on the DTO alone — a PATCH
+ * may send just one of the two, relying on the other's already-stored value
+ * — so this runs in the service against the fully-resolved (existing +
+ * patch) pair instead of as a class-validator decorator.
+ */
+function assertValidSchedulingWindow(opensAt?: number, closesAt?: number): void {
+    if (opensAt != null && closesAt != null && closesAt <= opensAt) {
+        throw new BadRequestError('closesAt must be after opensAt');
+    }
+}
+
 @injectable()
 export class ExamService {
     constructor(
@@ -54,6 +67,7 @@ export class ExamService {
     ) {}
 
     async createExam(body: CreateExamBody, createdBy: string): Promise<IExam> {
+        assertValidSchedulingWindow(body.opensAt, body.closesAt);
         const now = Date.now();
         const timeGrants: ITimeGrant[] = (body.timeGrants ?? []).map(seed => ({
             id: `grant-${randomUUID()}`,
@@ -86,6 +100,9 @@ export class ExamService {
             updatedAt: now,
             questions: [],
             timeGrants,
+            headerTitle: body.headerTitle,
+            minSubmitTime: body.minSubmitTime,
+            negativeMarkingRatios: body.negativeMarkingRatios as INegativeMarkingRatios | undefined,
         };
 
         // Exams start with no questions (added afterwards via addQuestion), so
@@ -118,6 +135,28 @@ export class ExamService {
         }
         if (!(await this.isEligibleForStudent(exam, user))) {
             throw new ForbiddenError('You are not eligible to view this exam');
+        }
+        return exam;
+    }
+
+    /**
+     * Same owner/admin bypass and `isEligibleForStudent` gate as
+     * `getExamForUser`, plus an explicit `published` check — used by
+     * `AttemptService.submitAttempt` so a student can't score a real attempt
+     * against an exam they were never eligible for (or that isn't published
+     * yet) just by knowing/guessing its id. `getExamForUser` intentionally
+     * skips the `published` check (a teacher previewing their own unpublished
+     * exam still needs `getExamById`-style access, already covered by the
+     * owner/admin bypass above); submission is the one path that must not
+     * let an eligible-but-not-yet-published exam produce a scored attempt.
+     */
+    async getExamForAttempt(examId: string, user: IUser): Promise<IExam> {
+        const exam = await this.getExamById(examId);
+        if (exam.createdBy === user._id?.toString() || user.roles === 'admin') {
+            return exam;
+        }
+        if (!exam.published || !(await this.isEligibleForStudent(exam, user))) {
+            throw new ForbiddenError('You are not eligible to attempt this exam');
         }
         return exam;
     }
@@ -191,7 +230,11 @@ export class ExamService {
     }
 
     async updateExam(examId: string, patch: UpdateExamBody): Promise<IExam> {
-        await this.getExamById(examId);
+        const existing = await this.getExamById(examId);
+        assertValidSchedulingWindow(
+            patch.opensAt !== undefined ? patch.opensAt : existing.opensAt,
+            patch.closesAt !== undefined ? patch.closesAt : existing.closesAt,
+        );
         const updated = await this.examRepo.update(examId, patch as Partial<IExam>);
         if (!updated) {
             throw new NotFoundError('Exam not found');
