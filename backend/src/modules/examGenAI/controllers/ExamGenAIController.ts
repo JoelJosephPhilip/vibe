@@ -161,12 +161,37 @@ export class ExamGenAIController {
 
         if (body.target === 'bank') {
             const userId = user._id!.toString();
-            const entries = await Promise.all(
+            // `allSettled`, not `all`: one question failing to save (a
+            // transient DB error, say) must not silently discard the audit
+            // trail for every other question in the same batch that DID
+            // save — `all` rejecting here previously threw a bare 500 with
+            // no record anywhere of which of the N questions actually made
+            // it into the bank.
+            const settled = await Promise.allSettled(
                 selected.map(q => this.questionBankService.addToBank(toAddQuestionBody(q), userId)),
             );
-            const bankEntryIds = entries.map(e => e.id);
-            await this.generationService.persistSaved(job, selected, 'bank', { bankEntryIds });
-            return { saved: true, target: 'bank', count: selected.length, bankEntryIds };
+            const savedQuestions: IGeneratedQuestion[] = [];
+            const bankEntryIds: string[] = [];
+            const failed: { index: number; error: string }[] = [];
+            settled.forEach((result, index) => {
+                if (result.status === 'fulfilled') {
+                    savedQuestions.push(selected[index]);
+                    bankEntryIds.push(result.value.id);
+                } else {
+                    const reason = result.reason;
+                    failed.push({ index, error: reason instanceof Error ? reason.message : String(reason) });
+                }
+            });
+            if (savedQuestions.length > 0) {
+                await this.generationService.persistSaved(job, savedQuestions, 'bank', { bankEntryIds });
+            }
+            return {
+                saved: savedQuestions.length > 0,
+                target: 'bank',
+                count: savedQuestions.length,
+                bankEntryIds,
+                ...(failed.length > 0 ? { failed } : {}),
+            };
         }
 
         const ids = await this.generationService.persistSaved(job, selected, 'draft');

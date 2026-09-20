@@ -18,10 +18,8 @@ export class RateLimiter {
     constructor(private readonly maxConcurrent: number, private readonly maxRps: number) {}
 
     async acquire(): Promise<() => void> {
-        await this.waitForConcurrencySlot();
-        await this.waitForRpsSlot();
-        this.inFlight += 1;
-        this.startTimestamps.push(Date.now());
+        await this.reserveConcurrencySlot();
+        await this.reserveRpsSlot();
         let released = false;
         return () => {
             if (released) return;
@@ -31,9 +29,31 @@ export class RateLimiter {
         };
     }
 
-    private waitForConcurrencySlot(): Promise<void> {
-        if (this.inFlight < this.maxConcurrent) return Promise.resolve();
-        return new Promise(resolve => this.queue.push(resolve));
+    /**
+     * Both this and `reserveRpsSlot` check-then-reserve in the *same*
+     * synchronous step (the `+= 1`/`.push` happens right alongside the
+     * check, with no `await` between them) — that's load-bearing, not
+     * style. The previous version awaited a "slot is free" check, then
+     * incremented `inFlight` afterwards; every concurrently-pending
+     * `acquire()` call observes the same stale `inFlight` before any of
+     * them gets to increment it (JS doesn't context-switch mid-expression,
+     * but it very much does between two separate `await`ed steps), so
+     * `maxConcurrent` (and the analogous `maxRps` window) could be
+     * exceeded under real concurrent load — exactly the scenario multiple
+     * workers/jobs sharing one process-wide limiter (see this class's
+     * top-level doc) produce.
+     */
+    private reserveConcurrencySlot(): Promise<void> {
+        if (this.inFlight < this.maxConcurrent) {
+            this.inFlight += 1;
+            return Promise.resolve();
+        }
+        return new Promise(resolve => {
+            this.queue.push(() => {
+                this.inFlight += 1;
+                resolve();
+            });
+        });
     }
 
     private drainQueue(): void {
@@ -43,11 +63,14 @@ export class RateLimiter {
         }
     }
 
-    private async waitForRpsSlot(): Promise<void> {
+    private async reserveRpsSlot(): Promise<void> {
         for (;;) {
             const now = Date.now();
             this.startTimestamps = this.startTimestamps.filter(t => now - t < 1000);
-            if (this.startTimestamps.length < this.maxRps) return;
+            if (this.startTimestamps.length < this.maxRps) {
+                this.startTimestamps.push(now);
+                return;
+            }
             const oldest = this.startTimestamps[0];
             const waitMs = Math.max(1, 1000 - (now - oldest));
             await new Promise(resolve => setTimeout(resolve, waitMs));

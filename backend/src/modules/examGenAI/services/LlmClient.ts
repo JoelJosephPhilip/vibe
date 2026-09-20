@@ -94,12 +94,30 @@ export class LlmClient {
         private readonly logRepo: AiApiLogRepository,
     ) {}
 
-    /** Free-text completion (used for the Keep/Remove judge, which returns a bare word, not JSON). */
+    /**
+     * Free-text completion (used for the Keep/Remove judge, which returns a
+     * bare word, not JSON).
+     *
+     * `isCancelled` is checked before this call does any work and again
+     * before trying each subsequent provider in the failover chain (and
+     * before a rate-limit backoff-retry) — it does NOT abort an already
+     * in-flight HTTP request (that would need an AbortSignal plumbed into
+     * every provider's fetch call, for one request that's going to finish in
+     * a few seconds regardless). What it does stop is a worker that keeps
+     * burning paid calls against provider #2, #3, ... after the job it's
+     * working for has already been marked failed elsewhere (a concurrent
+     * worker's circuit breaker) — see QuestionGenerationService, which
+     * passes `() => job.status !== 'running'`.
+     */
     async completeText(
         endpoint: 'generator' | 'judge' | 'final_judge',
         system: string,
         prompt: string,
+        isCancelled?: () => boolean,
     ): Promise<LlmTextResult> {
+        if (isCancelled?.()) {
+            throw new LlmClientError(`${endpoint} call cancelled before it started`);
+        }
         const chain = getLlmProviderChain();
         if (chain.length === 0) {
             throw new LlmClientError('No LLM provider is configured — set MINIMAX_API_KEY, GROQ_API_KEY, or ANTHROPIC_CRED');
@@ -108,6 +126,9 @@ export class LlmClient {
 
         let lastErr: unknown;
         for (const provider of chain) {
+            if (isCancelled?.()) {
+                throw new LlmClientError(`${endpoint} call cancelled mid-failover`);
+            }
             const model = modelForRole(provider.name, endpoint);
             try {
                 const result = await provider.complete(model, system, prompt, temperature, endpoint);
@@ -126,6 +147,9 @@ export class LlmClient {
                     const waitMs = Math.min(RATE_LIMIT_WAIT_CAP_MS, err.retryAfterMs);
                     console.warn(`[LlmClient] ${endpoint} rate limited on ${provider.name}, waiting ${waitMs}ms then retrying it once:`, err.message);
                     await new Promise(resolve => setTimeout(resolve, waitMs));
+                    if (isCancelled?.()) {
+                        throw new LlmClientError(`${endpoint} call cancelled during rate-limit backoff`);
+                    }
                     try {
                         const result = await provider.complete(model, system, prompt, temperature, endpoint);
                         void this.logUsage(endpoint, model, result.inputTokens, result.outputTokens);
@@ -152,8 +176,9 @@ export class LlmClient {
         endpoint: 'generator' | 'judge' | 'final_judge',
         system: string,
         prompt: string,
+        isCancelled?: () => boolean,
     ): Promise<LlmJsonResult> {
-        const result = await this.completeText(endpoint, system, prompt);
+        const result = await this.completeText(endpoint, system, prompt, isCancelled);
         try {
             return { data: parseJsonObject(result.text), provider: result.provider, model: result.model };
         } catch (parseErr) {
@@ -162,6 +187,7 @@ export class LlmClient {
                 endpoint,
                 system,
                 `${prompt}\n\nYour previous reply could not be parsed as JSON. Reply again with ONLY the raw JSON object — no markdown fences, no prose before or after it.`,
+                isCancelled,
             );
             return { data: parseJsonObject(retry.text), provider: retry.provider, model: retry.model };
         }
