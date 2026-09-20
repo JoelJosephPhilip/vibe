@@ -69,4 +69,11 @@ export interface IExamAttempt {
     /** Client-reported proctoring violation events, passed through unvalidated/unscored. */
     proctoringEvents?: IAttemptProctoringEvent[];
     submittedAt: number;
+    /**
+     * Set to `true` exactly when `exam.allowRetakes === false` at submit
+     * time. Exists purely so `AttemptRepository`'s partial unique index on
+     * (examId, studentId) only applies to no-retake exams — see that index's
+     * comment for why this closes the retake race condition.
+     */
+    noRetakesLock?: true;
 }

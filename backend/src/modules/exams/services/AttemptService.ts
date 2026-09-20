@@ -3,7 +3,8 @@ import { injectable, inject } from 'inversify';
 import { ForbiddenError, NotFoundError } from 'routing-controllers';
 import { EXAMS_TYPES } from '../types.js';
 import { ExamRepository } from '../repositories/providers/mongodb/ExamRepository.js';
-import { AttemptRepository } from '../repositories/providers/mongodb/AttemptRepository.js';
+import { AttemptRepository, DuplicateAttemptError } from '../repositories/providers/mongodb/AttemptRepository.js';
+import { ExamService } from './ExamService.js';
 import { ExamImageStorageService } from './ExamImageStorageService.js';
 import { IExamQuestion } from '../classes/transformers/Exam.js';
 import {
@@ -31,6 +32,8 @@ export class AttemptService {
         private readonly attemptRepo: AttemptRepository,
         @inject(EXAMS_TYPES.ExamImageStorageService)
         private readonly examImageStorageService: ExamImageStorageService,
+        @inject(EXAMS_TYPES.ExamService)
+        private readonly examService: ExamService,
     ) {}
 
     /**
@@ -56,10 +59,13 @@ export class AttemptService {
             `${student.firstName || ''} ${student.lastName || ''}`.trim() || undefined;
         const studentEmail = student.email;
 
-        const exam = await this.examRepo.findById(examId);
-        if (!exam) {
-            throw new NotFoundError('Exam not found');
-        }
+        // `getExamForAttempt` (not a plain `examRepo.findById`) so a student
+        // who isn't eligible for this exam — or where it isn't published yet
+        // — can't score a real attempt just by knowing/guessing the exam id.
+        // Mirrors the eligibility gate `getExamForUser` already enforces on
+        // the read path (`GET /exams/:examId`), plus an explicit `published`
+        // check on top.
+        const exam = await this.examService.getExamForAttempt(examId, student);
 
         const now = Date.now();
         // `!= null` (loose) on purpose — catches both `undefined` (field
@@ -94,6 +100,13 @@ export class AttemptService {
             throw new ForbiddenError('The time allotted for this exam has expired');
         }
 
+        // This read-then-insert check alone has a race: two concurrent
+        // submissions can both read "no existing attempt" before either
+        // insert lands. It stays as a fast, friendly rejection for the
+        // common case; the `noRetakesLock` unique index set on the attempt
+        // below (see `AttemptRepository`) is what actually closes the race —
+        // `create` throws `DuplicateAttemptError`, caught further down, if a
+        // concurrent request won it instead.
         if (exam.allowRetakes === false) {
             const existingAttempt = await this.attemptRepo.findByExamAndStudent(examId, studentId);
             if (existingAttempt) {
@@ -188,16 +201,34 @@ export class AttemptService {
             // when computing score/correctCount.
             proctoringEvents,
             submittedAt: Date.now(),
+            ...(exam.allowRetakes === false ? { noRetakesLock: true as const } : {}),
         };
 
-        const created = await this.attemptRepo.create(attempt);
-        return this.examImageStorageService.resolveAttemptImages(created);
+        let created: IExamAttempt;
+        try {
+            created = await this.attemptRepo.create(attempt);
+        } catch (error) {
+            if (error instanceof DuplicateAttemptError) {
+                throw new ForbiddenError('You have already attempted this exam');
+            }
+            throw error;
+        }
+        const resolved = await this.examImageStorageService.resolveAttemptImages(created);
+        // The stored/persisted document keeps the real correctOptions (the
+        // exam owner needs them to grade/review) — only the copy handed
+        // straight back to the submitting student here is redacted, same
+        // rule as `getById`/`listByStudent`.
+        return redactAnswersIfHidden(resolved);
     }
 
     async listByStudent(studentId: string): Promise<IExamAttempt[]> {
-        return this.examImageStorageService.resolveAttemptsImages(
+        const attempts = await this.examImageStorageService.resolveAttemptsImages(
             await this.attemptRepo.findByStudent(studentId),
         );
+        // "My attempts" is always a student viewing their own submissions, so
+        // every entry here is subject to its own `revealAnswers` snapshot —
+        // unlike `getById`, there's no owner/admin viewer to special-case.
+        return attempts.map(a => redactAnswersIfHidden(a));
     }
 
     async getById(attemptId: string, user: IUser): Promise<IExamAttempt> {
@@ -218,7 +249,11 @@ export class AttemptService {
             }
         }
 
-        return this.examImageStorageService.resolveAttemptImages(attempt);
+        const resolved = await this.examImageStorageService.resolveAttemptImages(attempt);
+        // The student viewing their own attempt is subject to revealAnswers;
+        // an admin (or the exam's owner, handled by the branch above) needs
+        // the real correct answers to grade/review and is never redacted.
+        return isOwnAttempt && !isAdmin ? redactAnswersIfHidden(resolved) : resolved;
     }
 
     /**
@@ -252,4 +287,35 @@ function buildAnswerEntry(question: IExamQuestion): IAttemptAnswerEntry {
         return { correct: question.correctOptions[0] ?? '' };
     }
     return { correct: question.correctOptions };
+}
+
+/**
+ * Strips correct-answer information from an attempt before it reaches the
+ * student who submitted it, when the exam's `revealAnswers` setting (its
+ * value at submit time, snapshotted onto the attempt) is off. Previously
+ * `revealAnswers` was only consulted by the frontend to decide whether to
+ * *display* the answer key — the full `correctOptions` were always present
+ * in the API response regardless, so any student could read them straight
+ * off `GET /exams/attempts/:attemptId` or `/attempts/mine` once they'd
+ * submitted. `questions[].correctOptions` (a snapshot of the exam's own
+ * question bank at submit time) leaks the same information as
+ * `answers[].correct` and must be redacted too — as must `explanation`:
+ * teachers routinely write it as "Correct answer: X, because..." (see
+ * EditExamPage.jsx's own field label), so leaving it in place would hand
+ * back the answer key through a side door even with correctOptions blanked.
+ */
+function redactAnswersIfHidden(attempt: IExamAttempt): IExamAttempt {
+    if (attempt.revealAnswers) {
+        return attempt;
+    }
+    return {
+        ...attempt,
+        questions: attempt.questions.map(q => ({ ...q, correctOptions: [], explanation: undefined })),
+        answers: Object.fromEntries(
+            Object.entries(attempt.answers).map(([questionId, entry]) => [
+                questionId,
+                { correct: Array.isArray(entry.correct) ? [] : '' },
+            ]),
+        ),
+    };
 }

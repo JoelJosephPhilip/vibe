@@ -59,6 +59,25 @@ export interface INegativeMarkingScheme {
     NAT: NegativeMarkingSchemeValue;
 }
 
+export interface INegativeMarkingRatio {
+    num: number;
+    den: number;
+}
+
+/**
+ * Per-question-type fraction (e.g. MCQ 1/3) `EditExamPage.jsx` uses to
+ * auto-suggest a new question's `negativeMarks` value. Distinct from —
+ * and does not affect — `negativeMarkingScheme`, which is what
+ * `computeNegativeMarks` actually consults for scoring; this only needs to
+ * persist so the teacher's customization survives a reload instead of
+ * silently resetting to the GATE-style default every time.
+ */
+export interface INegativeMarkingRatios {
+    MCQ: INegativeMarkingRatio;
+    MSQ: INegativeMarkingRatio;
+    NAT: INegativeMarkingRatio;
+}
+
 export interface IExamProctoringDetector {
     detectorName: string;
     enabled: boolean;
@@ -161,6 +180,18 @@ export interface IExam {
     updatedAt: number;
     questions: IExamQuestion[];
     timeGrants: ITimeGrant[];
+    /** Custom title shown in the exam-taking UI's header; falls back to "ViBe" on the frontend when absent. */
+    headerTitle?: string;
+    /**
+     * Minimum seconds a student must spend on the exam before Submit is
+     * allowed. Persisted here so `EditExamPage.jsx`'s setting round-trips;
+     * not yet enforced anywhere in the exam-taking flow (no client or
+     * server check consults it today) — that enforcement is a separate,
+     * unimplemented feature, not covered by this field.
+     */
+    minSubmitTime?: number;
+    /** See `INegativeMarkingRatios`. */
+    negativeMarkingRatios?: INegativeMarkingRatios;
 }
 
 @Expose()
