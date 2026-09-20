@@ -261,7 +261,11 @@ export class ExamController {
             'redeem a code. Returns { ok: false, error } rather than an HTTP error ' +
             'for an invalid/used code, since that is an expected outcome.',
     })
-    async redeemGrant(@Params() params: ExamIdParams, @Body() body: RedeemGrantBody) {
-        return this.examService.redeemTimeGrant(params.examId, body.code);
+    async redeemGrant(
+        @Params() params: ExamIdParams,
+        @Body() body: RedeemGrantBody,
+        @CurrentUser() user: IUser,
+    ) {
+        return this.examService.redeemTimeGrant(params.examId, body.code, user._id!.toString());
     }
 }

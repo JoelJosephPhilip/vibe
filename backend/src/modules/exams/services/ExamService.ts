@@ -402,6 +402,7 @@ export class ExamService {
     async redeemTimeGrant(
         examId: string,
         rawCode: string,
+        studentId: string,
     ): Promise<{ ok: boolean; minutes?: number; error?: string }> {
         const exam = await this.getExamById(examId);
         const code = (rawCode || '').trim().toUpperCase();
@@ -417,7 +418,7 @@ export class ExamService {
             return { ok: false, error: 'This code has already been used' };
         }
 
-        const redeemed = await this.examRepo.markTimeGrantUsed(examId, grant.id);
+        const redeemed = await this.examRepo.markTimeGrantUsed(examId, grant.id, studentId);
         if (!redeemed) {
             // Lost a race with another redemption of the same code between the
             // read above and this write.

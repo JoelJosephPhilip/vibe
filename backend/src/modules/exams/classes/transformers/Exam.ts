@@ -44,6 +44,13 @@ export interface ITimeGrant {
     used: boolean;
     usedAt: number | null;
     createdAt: number;
+    /**
+     * `student._id.toString()` of whoever redeemed this grant, set atomically
+     * alongside `used`/`usedAt` in `ExamRepository.markTimeGrantUsed`. Lets
+     * `AttemptService.submitAttempt` know which student a grant's extra
+     * minutes belong to when computing that student's allowed exam duration.
+     */
+    redeemedByStudentId?: string;
 }
 
 export interface INegativeMarkingScheme {

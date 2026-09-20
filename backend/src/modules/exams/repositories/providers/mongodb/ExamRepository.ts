@@ -194,7 +194,7 @@ export class ExamRepository {
      * Atomically flips a grant to used, only succeeding if it was still unused —
      * the redeem-race guard (two tabs submitting the same code at once).
      */
-    async markTimeGrantUsed(examId: string, grantId: string): Promise<boolean> {
+    async markTimeGrantUsed(examId: string, grantId: string, studentId: string): Promise<boolean> {
         await this.init();
         if (!ObjectId.isValid(examId)) return false;
         const result = await this.collection.updateOne(
@@ -206,6 +206,7 @@ export class ExamRepository {
                 $set: {
                     'timeGrants.$.used': true,
                     'timeGrants.$.usedAt': Date.now(),
+                    'timeGrants.$.redeemedByStudentId': studentId,
                     updatedAt: Date.now(),
                 },
             },

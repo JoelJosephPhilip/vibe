@@ -15,6 +15,13 @@ import { ResponseItemBody } from '../classes/validators/AttemptValidators.js';
 import { computeNegativeMarks } from '../utils/computeNegativeMarks.js';
 import { IUser } from '#root/shared/interfaces/models.js';
 
+/**
+ * Slack added on top of `exam.duration` when checking the submission
+ * deadline server-side, to absorb the auto-submit request's own network
+ * latency and client/server clock skew — not meant to give real extra time.
+ */
+const SUBMIT_GRACE_MS = 2 * 60_000;
+
 @injectable()
 export class AttemptService {
     constructor(
@@ -66,6 +73,25 @@ export class AttemptService {
         }
         if (exam.closesAt != null && now > exam.closesAt) {
             throw new ForbiddenError('This exam is now closed');
+        }
+
+        // Duration is enforced against the client-reported `startedAt` (the
+        // best signal available without a server-tracked attempt-start
+        // record) plus this student's own redeemed extra-time grants and a
+        // grace period for the auto-submit request's own network latency.
+        // Without this, disabling the countdown client-side (devtools, or
+        // just letting it drift while backgrounded) let a submission through
+        // no matter how much real time had passed.
+        if (!meta.startedAt) {
+            throw new ForbiddenError('Missing attempt start time');
+        }
+        const grantedMinutes = (exam.timeGrants ?? [])
+            .filter(g => g.used && g.redeemedByStudentId === studentId)
+            .reduce((sum, g) => sum + (Number(g.minutes) || 0), 0);
+        const allowedMs =
+            (Number(exam.duration) || 0) * 60_000 + grantedMinutes * 60_000 + SUBMIT_GRACE_MS;
+        if (now - meta.startedAt > allowedMs) {
+            throw new ForbiddenError('The time allotted for this exam has expired');
         }
 
         if (exam.allowRetakes === false) {
