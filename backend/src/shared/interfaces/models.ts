@@ -322,6 +322,7 @@ export enum ItemType {
   PROJECT = 'PROJECT',
   FEEDBACK = 'FEEDBACK',
   REFLECTION = 'REFLECTION',
+  CASE_STUDY = 'CASE_STUDY',
 }
 
 export interface IBaseItem {
@@ -439,6 +440,17 @@ export interface IReflectionDetails {
   requiredReviewsToUnlock?: number;
   /** Reviews needed before an average is shown at all. Defaults to 3. */
   minReviewsToReveal?: number;
+}
+
+export interface ICaseStudyDetails {
+  /** The case scenario/prompt shown to the learner (markdown). */
+  bodyMarkdown?: string;
+  /** Wins a response needs before it leaves the review pool (1-25). Defaults to 7. */
+  reviewsRequired?: number;
+  /** Comparisons each learner must judge (1-25). Defaults to 7. */
+  picksRequired?: number;
+  /** Consecutive losses before the author is prompted to revise (0-25, 0 disables). Defaults to 3. */
+  weakStreakThreshold?: number;
 }
 
 export interface IFeedBackFormDetails {
@@ -568,6 +580,24 @@ export interface IWatchTime {
   // Set by the orphan recovery job once it has judged an abandoned session, so
   // a record that fails the watch-duration bar is not re-examined every run.
   recoveryAttemptedAt?: Date;
+}
+
+/**
+ * Precomputed slice of a course version's enrollment statistics.
+ *
+ * Only average watch hours is stored. It is the one figure whose cost grows
+ * with recorded watch-session volume rather than with roster size, so leaving
+ * it in the request path made the teacher statistics panel slower as a course
+ * accumulated viewing history. The enrollment counts beside it stay live —
+ * they are served by an index and teachers check them for freshness the
+ * moment someone joins.
+ */
+export interface ICourseVersionStats {
+  _id?: string | ObjectId | null;
+  courseId: string | ObjectId;
+  courseVersionId: string | ObjectId;
+  averageWatchHoursPerUser: number;
+  computedAt: Date;
 }
 
 export interface ICohort {
@@ -802,6 +832,9 @@ export interface ISettings {
   baseHp?: number;
   randomizeItems?: boolean;
   crowdsourcedQuestionSubmissionEnabled?: boolean;
+  caseStudiesEnabled?: boolean;
+  caseStudyStrictUnlockEnabled?: boolean;
+  caseStudyWeakStreakThreshold?: number;
   // registration_settings?: IRegistrationSettings[];
   registration?: {
     jsonSchema?: any;
