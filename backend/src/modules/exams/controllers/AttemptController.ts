@@ -80,8 +80,10 @@ export class AttemptController {
             'Recomputes score/correctCount server-side from the exam\'s stored ' +
             'questions rather than trusting any client-submitted score. Rejected ' +
             '(403) if the exam has a scheduling window (opensAt/closesAt) and the ' +
-            'submission falls outside it, or if the exam has allowRetakes: false ' +
-            'and the student already has an attempt for this exam.',
+            'submission falls outside it, if exam.duration (plus any extra-time ' +
+            'grants this student redeemed) has elapsed since the reported ' +
+            'startedAt, or if the exam has allowRetakes: false and the student ' +
+            'already has an attempt for this exam.',
     })
     async submitAttempt(
         @Params() params: ExamIdParams,
