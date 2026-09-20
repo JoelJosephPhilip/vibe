@@ -106,7 +106,11 @@ function recomputeScore(result, exam) {
       }
     }
   });
-  return { score, correctCount };
+  // Matches ExamPage.jsx's handleSubmit and the backend's AttemptService —
+  // the persisted/live score is floored at 0, so this recompute (used for
+  // the result view/PDF) must be too, or it disagrees with every other
+  // score display for the same attempt.
+  return { score: Math.max(0, Number(score.toFixed(2))), correctCount };
 }
 
 
