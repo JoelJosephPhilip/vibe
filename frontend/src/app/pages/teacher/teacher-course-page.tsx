@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, ChangeEvent, use } from "react";
 import * as Papa from 'papaparse';
-import { useAddQuestionBankToQuiz, useAddQuestionToBank, useCreateQuestion, useCreateQuestionBank, useOverallVideoAnalytics, userParseCSVtoItems, useUpdateItemOptional, useVideoUserAnalytics } from '@/hooks/hooks';
+import { useAddQuestionBankToQuiz, useAddQuestionToBank, useCreateQuestion, useCreateQuestionBank, useOverallVideoAnalytics, userParseCSVtoItems, useUpdateItemOptional, useUpdateItemProctoring, useUpdateModuleProctoring, useVideoUserAnalytics } from '@/hooks/hooks';
 import { BarChart3, Download, LogOut, Upload, UserRoundCheck, Video, Clock, PlayCircle, Users, Search, LockOpen, Lock } from 'lucide-react';
 import { useHideItem } from '@/hooks/hooks';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -66,6 +66,7 @@ import CaseStudyItemEditor from './components/CaseStudyItemEditor';
 import CaseStudyResponsesPanel from './components/CaseStudyResponsesPanel';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/utils/utils";
 import { QuestionUploadDialog } from "@/components/question-upload-dialog";
 import ConfirmationModal from "./components/confirmation-modal";
@@ -323,6 +324,8 @@ function TeacherCourseContent() {
   const [sectionItems, setSectionItems] = useState<Record<string, any[]>>({});
 
   const [togglingItemId, setTogglingItemId] = useState<string | null>(null);
+  const [togglingItemProctoringId, setTogglingItemProctoringId] = useState<string | null>(null);
+  const [togglingModuleProctoringId, setTogglingModuleProctoringId] = useState<string | null>(null);
 
   // Check if a project already exists in any section
   const hasExistingProject = useMemo(() => {
@@ -490,6 +493,8 @@ function TeacherCourseContent() {
 
 
   const updateItemOptional = useUpdateItemOptional();
+  const updateItemProctoring = useUpdateItemProctoring();
+  const updateModuleProctoring = useUpdateModuleProctoring();
 
   // Refetch after any success
   useEffect(() => {
@@ -2893,6 +2898,135 @@ function TeacherCourseContent() {
                                 </Label>
                                 <p className="text-xs text-muted-foreground">Students can skip this item</p>
                               </div>
+                            </div>
+                          )}
+                          {selectedEntity.type === "item" && (
+                            <div className="inline-flex items-center gap-2 px-3 py-2 rounded-md border bg-card">
+                              <div className="flex flex-col gap-0.5">
+                                <Label className="text-sm font-medium leading-none">
+                                  Proctoring
+                                </Label>
+                                <p className="text-xs text-muted-foreground">
+                                  {selectedItemData?.item?.proctoringEnabled === undefined
+                                    ? "Inherits the module/course setting"
+                                    : selectedItemData?.item?.proctoringEnabled
+                                      ? "Always proctored for this item"
+                                      : "Never proctored for this item"}
+                                </p>
+                              </div>
+                              <Select
+                                disabled={updateItemProctoring.isPending && togglingItemProctoringId === selectedItemData?.item?._id}
+                                value={
+                                  selectedItemData?.item?.proctoringEnabled === undefined
+                                    ? "inherit"
+                                    : selectedItemData?.item?.proctoringEnabled
+                                      ? "true"
+                                      : "false"
+                                }
+                                onValueChange={async (value) => {
+                                  if (versionId && selectedItemData?.item?._id) {
+                                    setTogglingItemProctoringId(selectedItemData.item._id);
+                                    const proctoringEnabled = value === "inherit" ? null : value === "true";
+                                    try {
+                                      await updateItemProctoring.mutateAsync({
+                                        params: {
+                                          path: {
+                                            versionId: versionId,
+                                            itemId: selectedEntity?.data?._id
+                                          }
+                                        },
+                                        body: { proctoringEnabled }
+                                      });
+                                      refetchItem();
+                                    } catch (error) {
+                                      toast.error('Failed to update item proctoring status');
+                                    } finally {
+                                      setTogglingItemProctoringId(null);
+                                    }
+                                  }
+                                }}
+                              >
+                                <SelectTrigger className="h-8 w-[160px]" id={`proctoring-${selectedItemData?.item?._id}`}>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="inherit">Inherit</SelectItem>
+                                  <SelectItem value="true">Always proctor</SelectItem>
+                                  <SelectItem value="false">Never proctor</SelectItem>
+                                </SelectContent>
+                              </Select>
+                              {(updateItemProctoring.isPending && togglingItemProctoringId === selectedItemData?.item?._id) && (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              )}
+                            </div>
+                          )}
+                          {selectedEntity.type === "module" && (
+                            <div className="inline-flex items-center gap-2 px-3 py-2 rounded-md border bg-card">
+                              <div className="flex flex-col gap-0.5">
+                                <Label className="text-sm font-medium leading-none">
+                                  Proctoring
+                                </Label>
+                                <p className="text-xs text-muted-foreground">
+                                  {selectedEntity.data?.proctoringEnabled === undefined
+                                    ? "Inherits the course's universal setting"
+                                    : selectedEntity.data?.proctoringEnabled
+                                      ? "Always proctored for items in this module"
+                                      : "Never proctored for items in this module"}
+                                </p>
+                              </div>
+                              <Select
+                                disabled={updateModuleProctoring.isPending && togglingModuleProctoringId === selectedEntity.data?.moduleId}
+                                value={
+                                  selectedEntity.data?.proctoringEnabled === undefined
+                                    ? "inherit"
+                                    : selectedEntity.data?.proctoringEnabled
+                                      ? "true"
+                                      : "false"
+                                }
+                                onValueChange={async (value) => {
+                                  const moduleId = selectedEntity.data?.moduleId;
+                                  if (versionId && moduleId) {
+                                    setTogglingModuleProctoringId(moduleId);
+                                    const proctoringEnabled = value === "inherit" ? null : value === "true";
+                                    try {
+                                      await updateModuleProctoring.mutateAsync({
+                                        params: {
+                                          path: { versionId: versionId, moduleId }
+                                        },
+                                        body: { proctoringEnabled }
+                                      });
+                                      // selectedEntity.data is a plain snapshot taken at
+                                      // selection time, not a live query result like
+                                      // selectedItemData -- refetchVersion() alone updates
+                                      // initialModules (the tree) but not this detail panel,
+                                      // so the Select would keep showing the stale value
+                                      // until the module was re-selected. Update it directly.
+                                      setSelectedEntity((prev: any) =>
+                                        prev?.type === "module" && prev.data?.moduleId === moduleId
+                                          ? { type: "module", data: { ...prev.data, proctoringEnabled: proctoringEnabled ?? undefined } }
+                                          : prev
+                                      );
+                                      refetchVersion();
+                                    } catch (error) {
+                                      toast.error('Failed to update module proctoring status');
+                                    } finally {
+                                      setTogglingModuleProctoringId(null);
+                                    }
+                                  }
+                                }}
+                              >
+                                <SelectTrigger className="h-8 w-[160px]" id={`proctoring-module-${selectedEntity.data?.moduleId}`}>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="inherit">Inherit</SelectItem>
+                                  <SelectItem value="true">Always proctor</SelectItem>
+                                  <SelectItem value="false">Never proctor</SelectItem>
+                                </SelectContent>
+                              </Select>
+                              {(updateModuleProctoring.isPending && togglingModuleProctoringId === selectedEntity.data?.moduleId) && (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              )}
                             </div>
                           )}
                           {/* <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 dark:bg-gray-800 dark:text-gray-300 dark:border-gray-600">

@@ -152,6 +152,54 @@ export class ModuleService extends BaseService {
     });
   }
 
+  /**
+   * Sets or clears this module's proctoring override. `null` clears it back
+   * to "inherit the course's universal setting" -- deleting the key (not
+   * setting it to undefined) so updateVersion's whole-array $set correctly
+   * omits it from the stored subdocument, rather than silently leaving
+   * whatever was there before untouched.
+   *
+   * Deliberately does not cascade the value onto the module's items (unlike
+   * toggleModuleVisibility's isHidden cascade) — an item can still
+   * independently override this module's setting, and readItem's
+   * resolveProctoringEnabled call resolves the effective value at read time,
+   * so nothing needs to be physically propagated onto each item.
+   */
+  public async updateModuleProctoringStatus(
+    versionId: string,
+    moduleId: string,
+    proctoringEnabled: boolean | null,
+  ) {
+    return this._withTransaction(async session => {
+      const versionStatus=await this.courseRepo.getCourseVersionStatus(versionId,session);
+
+      if(versionStatus==="archived"){
+          throw new ForbiddenError("This course version is archived and cannot be updated.");
+        }
+      const version = await this.courseRepo.readVersion(versionId, session);
+      const module = version.modules.find(
+        m => m.moduleId?.toString() === moduleId,
+      );
+      if (!module) throw new NotFoundError(`Module ${moduleId} not found.`);
+
+      if (proctoringEnabled === null) {
+        delete module.proctoringEnabled;
+      } else {
+        module.proctoringEnabled = proctoringEnabled;
+      }
+      module.updatedAt = new Date();
+      version.updatedAt = new Date();
+
+      const updatedVersion = await this.courseRepo.updateVersion(
+        versionId,
+        version,
+        session,
+      );
+
+      return updatedVersion;
+    });
+  }
+
   public async moveModule(
     versionId: string,
     moduleId: string,

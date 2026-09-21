@@ -32,6 +32,14 @@ class QuizItem {
   @Expose()
   isOptional?: boolean = false;
 
+  // Absent (undefined) means "inherit the effective module/course proctoring
+  // setting" — see resolveProctoringEnabled in shared/interfaces/models.ts.
+  // Deliberately no default value here, unlike isOptional: defaulting this to
+  // false would make every existing item explicitly opt out of proctoring
+  // instead of inheriting, which is not the same thing.
+  @Expose()
+  proctoringEnabled?: boolean;
+
   @Expose()
   description: string;
 
@@ -78,6 +86,10 @@ class VideoItem {
   @Expose()
   isOptional?: boolean = false;
 
+  // See QuizItem.proctoringEnabled for why this has no default value.
+  @Expose()
+  proctoringEnabled?: boolean;
+
   @Expose()
   description: string;
 
@@ -123,6 +135,10 @@ class BlogItem {
 
   @Expose()
   isOptional?: boolean = false;
+
+  // See QuizItem.proctoringEnabled for why this has no default value.
+  @Expose()
+  proctoringEnabled?: boolean;
 
   @Expose()
   description: string;
@@ -178,6 +194,10 @@ class ReflectionItem {
   @Expose()
   isOptional: boolean;
 
+  // See QuizItem.proctoringEnabled for why this has no default value.
+  @Expose()
+  proctoringEnabled?: boolean;
+
   @Expose()
   type: ItemType = ItemType.REFLECTION;
 
@@ -221,6 +241,10 @@ class CaseStudyItem {
   @Expose()
   isOptional: boolean;
 
+  // See QuizItem.proctoringEnabled for why this has no default value.
+  @Expose()
+  proctoringEnabled?: boolean;
+
   @Expose()
   type: ItemType = ItemType.CASE_STUDY;
 
@@ -257,6 +281,10 @@ class FeedBackFormItem {
 
   @Expose()
   isOptional: boolean;
+
+  // See QuizItem.proctoringEnabled for why this has no default value.
+  @Expose()
+  proctoringEnabled?: boolean;
 
   @Expose()
   type: ItemType = ItemType.FEEDBACK;
@@ -361,6 +389,10 @@ class ProjectItem {
 
   @Expose()
   isOptional?: boolean = false;
+
+  // See QuizItem.proctoringEnabled for why this has no default value.
+  @Expose()
+  proctoringEnabled?: boolean;
 
   @Expose()
   description: string;
