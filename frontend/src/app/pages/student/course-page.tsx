@@ -514,10 +514,28 @@ export default function CoursePage() {
     async function fetch() {
       const data = await getSettings(COURSE_ID, VERSION_ID);
       setProctoringData(data);
-      const allProctorsDisabled =
+      const universalProctorsDisabled =
         data.settings.proctors.detectors.every(
           (detector: any) => detector.settings.enabled === false
         );
+      // Selective proctoring: readItem now resolves item > module > universal
+      // and returns it as itemData.proctoringEnabled. When this item is
+      // explicitly exempted (item or its module overrides to false), disable
+      // for this item even if the course is otherwise universally proctored.
+      //
+      // Deliberately one-directional, same as the pre-existing universal
+      // check this extends: this only ever turns proctoring OFF, never back
+      // ON once disabled. The opposite case -- an item explicitly overridden
+      // to proctor even though the course/module default is off -- needs the
+      // webcam/media-stream lifecycle below (checkMediaPermissions, the
+      // consent dialog, stream registration) to support re-arming mid-session,
+      // which this effect's current one-shot-disable shape doesn't attempt.
+      // ponytail: known gap, re-enable-on-navigation not implemented; upgrade
+      // by making this effect (and the media lifecycle it feeds) symmetric.
+      const itemExemptFromProctoring =
+        itemData && 'proctoringEnabled' in (itemData as object)
+          ? (itemData as {proctoringEnabled?: boolean}).proctoringEnabled === false
+          : false;
       // A guest who opened a PLAIN share link is watching a video someone sent
       // them, not working through a proctored course — they take the same path
       // as a course with every detector switched off. Enrolled learners never
@@ -525,14 +543,14 @@ export default function CoursePage() {
       const isPlainShareViewer = useShareLinkStore
         .getState()
         .isPlainViewerFor(COURSE_ID, VERSION_ID);
-      if (allProctorsDisabled || isPlainShareViewer) {
+      if (universalProctorsDisabled || itemExemptFromProctoring || isPlainShareViewer) {
         setShowProctorDialog(false);
         setAllProctorsDisabled(true);
         setReadyToDetect(true);
       }
     }
     fetch();
-  }, []);
+  }, [itemData]);
 
   // Update section items when data is loaded
   useEffect(() => {

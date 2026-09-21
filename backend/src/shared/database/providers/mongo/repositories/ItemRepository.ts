@@ -1043,6 +1043,57 @@ export class ItemRepository implements IItemRepository {
     return result as Item;
   }
 
+  async updateItemProctoringOverride(
+    itemId: string,
+    itemType: string,
+    proctoringEnabled: boolean | null,
+    session?: ClientSession,
+  ): Promise<Item> {
+    await this.init();
+    let collection: Collection<any>;
+    switch (itemType) {
+      case ItemType.VIDEO:
+        collection = this.videoCollection;
+        break;
+      case ItemType.QUIZ:
+        collection = this.quizCollection;
+        break;
+      case ItemType.BLOG:
+        collection = this.blogCollection;
+        break;
+      case ItemType.PROJECT:
+        collection = this.projectCollection;
+        break;
+      case ItemType.FEEDBACK:
+        collection = this.feedbackFormCollection;
+        break;
+      case ItemType.REFLECTION:
+        collection = this.reflectionCollection;
+        break;
+      default:
+        throw new InternalServerError(
+          `Unsupported item type: ${itemType}`,
+        );
+    }
+
+    const update =
+      proctoringEnabled === null
+        ? { $unset: { proctoringEnabled: '' } }
+        : { $set: { proctoringEnabled } };
+
+    const result = await collection.findOneAndUpdate(
+      { _id: new ObjectId(itemId) },
+      update,
+      { session, returnDocument: 'after' },
+    );
+
+    if (!result) {
+      throw new NotFoundError(`Item ${itemId} not found.`);
+    }
+
+    return result as Item;
+  }
+
   async getQuizInfo(
     itemGroupIds: string[],
     session?: ClientSession,

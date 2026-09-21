@@ -45,6 +45,22 @@ export interface IItemRepository {
     session?: ClientSession,
   ): Promise<Item>;
 
+  /**
+   * Sets or clears this item's proctoring override. `null` clears it back to
+   * "inherit the module/course setting" (an explicit $unset, not a $set of
+   * undefined -- the Mongo driver silently strips undefined values from
+   * $set, so that would leave whatever was there before untouched).
+   * Deliberately a dedicated method rather than routed through updateItem's
+   * generic field whitelist, so a plain rename never has to worry about
+   * accidentally clearing this via an absent field.
+   */
+  updateItemProctoringOverride(
+    itemId: string,
+    itemType: string,
+    proctoringEnabled: boolean | null,
+    session?: ClientSession,
+  ): Promise<Item>;
+
   findItemsGroupByItemId(
     itemId: string,
     session?: ClientSession,
