@@ -34,6 +34,13 @@ class Module implements IModule {
   @Expose()
   isHidden: boolean = false;
 
+  // Absent (undefined) means "inherit the course's universal proctoring
+  // setting" — see resolveProctoringEnabled in shared/interfaces/models.ts.
+  // No default value, unlike isHidden: defaulting this would make every
+  // existing module explicitly override proctoring instead of inheriting.
+  @Expose()
+  proctoringEnabled?: boolean;
+
   @Expose()
   @Type(() => Section)
   sections: Section[];

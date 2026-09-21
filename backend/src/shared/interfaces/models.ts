@@ -87,6 +87,9 @@ export interface IModule {
   description: string;
   order: string;
   isHidden: boolean;
+  // Absent (undefined) means "inherit the course's universal proctoring
+  // setting" — see resolveProctoringEnabled below.
+  proctoringEnabled?: boolean;
   sections: ISection[];
   isDeleted?: boolean;
   deletedAt?: Date;
@@ -359,6 +362,54 @@ export function resolveVideoSource(details?: {
   source?: VideoSource;
 }): VideoSource {
   return details?.source ?? 'YOUTUBE';
+}
+
+/**
+ * Whether the course's universal proctoring is "on" — derived from the
+ * existing per-detector list rather than a dedicated field, so this is
+ * exactly what the student player already computes today (see
+ * `allProctorsDisabled` in the student course page), just centralized.
+ *
+ * Every course defaults every detector to `enabled: false` on creation, so
+ * an empty/missing detector list correctly resolves to "off" here — the
+ * same as today's behavior, not a new default.
+ */
+export function isUniversalProctoringActive(
+  proctors?: IProctoringSettings,
+): boolean {
+  return (proctors?.detectors ?? []).some(d => d.settings?.enabled);
+}
+
+/**
+ * Resolve whether a specific item should be proctored, given the item's own
+ * override, its module's override, and the course's universal setting.
+ *
+ * Most specific wins: item > module > universal. Absent on the item or
+ * module means "no explicit override here, check the next tier" — every
+ * item/module written before this feature existed has no override at all,
+ * so the fallback-to-universal case is exactly today's (unproctored, by
+ * default) behavior. Read proctoring status through this helper rather than
+ * testing the fields directly, so the precedence lives in one place.
+ *
+ * Checks `== null` (both `undefined` and `null`), not just `!== undefined`:
+ * a field that was genuinely never set reads back from MongoDB as `null`,
+ * not `undefined` (the driver serializes an absent-in-code optional field
+ * that way on insert), so treating only `undefined` as "unset" would read
+ * every untouched item/module as explicitly overridden to `null` -- i.e.
+ * falsy/not-proctored -- rather than falling through to inherit.
+ */
+export function resolveProctoringEnabled(
+  item: {proctoringEnabled?: boolean | null} | undefined,
+  courseModule: {proctoringEnabled?: boolean | null} | undefined,
+  courseSettings: {settings?: {proctors?: IProctoringSettings}} | undefined,
+): boolean {
+  if (item?.proctoringEnabled != null) {
+    return item.proctoringEnabled;
+  }
+  if (courseModule?.proctoringEnabled != null) {
+    return courseModule.proctoringEnabled;
+  }
+  return isUniversalProctoringActive(courseSettings?.settings?.proctors);
 }
 
 export interface IVideoDetails {
