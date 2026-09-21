@@ -2089,6 +2089,53 @@ export function useUpdateItemOptional(): {
   }
 }
 
+// PUT /courses/versions/{versionId}/items/{itemId}/proctoring
+// Overrides this item's proctoring status, taking precedence over its
+// module's and the course's universal proctoring setting.
+export function useUpdateItemProctoring(): {
+  mutate: (variables: { params: { path: { versionId: ObjectId, itemId: ObjectId } } }) => void,
+  mutateAsync: (variables: {
+    params: { path: { versionId: ObjectId, itemId: ObjectId } },
+    body: { proctoringEnabled: boolean }
+  }) => Promise<unknown>,
+  data: unknown | undefined,
+  error: string | null,
+  isPending: boolean,
+  isSuccess: boolean,
+  isError: boolean,
+  isIdle: boolean,
+} {
+  const result = api.useMutation("put", "/courses/versions/{versionId}/items/{itemId}/proctoring");
+  return {
+    ...result,
+    error: result.error ? (result.error.message || 'Failed to update item proctoring') : null
+  }
+}
+
+// PUT /courses/versions/{versionId}/modules/{moduleId}/proctoring
+// Overrides this module's proctoring status, taking precedence over the
+// course's universal setting for every item in the module without its own
+// item-level override.
+export function useUpdateModuleProctoring(): {
+  mutate: (variables: { params: { path: { versionId: ObjectId, moduleId: ObjectId } } }) => void,
+  mutateAsync: (variables: {
+    params: { path: { versionId: ObjectId, moduleId: ObjectId } },
+    body: { proctoringEnabled: boolean }
+  }) => Promise<unknown>,
+  data: unknown | undefined,
+  error: string | null,
+  isPending: boolean,
+  isSuccess: boolean,
+  isError: boolean,
+  isIdle: boolean,
+} {
+  const result = api.useMutation("put", "/courses/versions/{versionId}/modules/{moduleId}/proctoring");
+  return {
+    ...result,
+    error: result.error ? (result.error.message || 'Failed to update module proctoring') : null
+  }
+}
+
 
 // PATCH /users/{userid}/progress/courses/{courseId}/versions/{courseVersionId}/reset
 export function useResetProgress(): {

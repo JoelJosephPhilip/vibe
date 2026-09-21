@@ -423,6 +423,16 @@ class CreateItemBody implements Partial<IBaseItem> {
   isOptional?: boolean;
 
   @JSONSchema({
+    description:
+      'Overrides the module/course proctoring default for this item. Omit to inherit.',
+    example: true,
+    type: 'boolean',
+  })
+  @IsBoolean()
+  @IsOptional()
+  proctoringEnabled?: boolean;
+
+  @JSONSchema({
     description: 'Details specific to video items',
     type: 'object',
   })
@@ -530,6 +540,16 @@ class UpdateItemBody implements Partial<IBaseItem> {
   @IsBoolean()
   @IsOptional()
   isOptional?: boolean;
+
+  @JSONSchema({
+    description:
+      'Overrides the module/course proctoring default for this item. Omit to inherit.',
+    example: true,
+    type: 'boolean',
+  })
+  @IsBoolean()
+  @IsOptional()
+  proctoringEnabled?: boolean;
 
   @JSONSchema({
     description: 'Details specific to video items',
@@ -717,6 +737,32 @@ class VersionItemParams {
   @IsMongoId()
   @IsString()
   courseId: string;
+}
+
+/**
+ * `VersionItemParams` requires `courseId`, but this endpoint's route
+ * (`/versions/:versionId/items/:itemId/proctoring`) has no `:courseId`
+ * segment -- reusing it would make every request fail param validation with
+ * a missing-field 400 before the handler ever runs.
+ */
+class ItemProctoringParams {
+  @JSONSchema({
+    title: 'Version ID',
+    description: 'ID of the course version',
+    type: 'string',
+  })
+  @IsMongoId()
+  @IsString()
+  versionId: string;
+
+  @JSONSchema({
+    title: 'Item ID',
+    description: 'ID of the item',
+    type: 'string',
+  })
+  @IsMongoId()
+  @IsString()
+  itemId: string;
 }
 
 class DeleteItemParams {
@@ -1174,6 +1220,7 @@ export {
   CSVItemBody,
   CSVQuizQuestion,
   VersionItemParams,
+  ItemProctoringParams,
   DeleteItemParams,
   ItemNotFoundErrorResponse,
   ItemDataResponse,
@@ -1197,6 +1244,7 @@ export const ITEM_VALIDATORS = [
   CSVItemBody,
   CSVQuizQuestion,
   VersionItemParams,
+  ItemProctoringParams,
   DeleteItemParams,
   ItemNotFoundErrorResponse,
   ItemDataResponse,

@@ -182,6 +182,20 @@ class HideModuleBody {
   hide: boolean;
 }
 
+class ModuleProctoringBody {
+  @JSONSchema({
+    title: 'Module Proctoring Override',
+    description:
+      'Overrides the course\'s universal proctoring default for every item in this module that does not have its own item-level override. Pass null to clear the override and inherit the universal setting again.',
+    type: 'boolean',
+    nullable: true,
+    example: true,
+  })
+  @ValidateIf(o => o.proctoringEnabled !== null)
+  @IsBoolean()
+  proctoringEnabled: boolean | null;
+}
+
 class ModuleDataResponse {
   @JSONSchema({
     description: 'The updated course version data containing modules',
@@ -246,6 +260,7 @@ export {
   ModuleDeletedResponse,
   HideModuleParams,
   HideModuleBody,
+  ModuleProctoringBody,
 };
 
 export const MODULE_VALIDATORS = [
@@ -259,4 +274,5 @@ export const MODULE_VALIDATORS = [
   ModuleDeletedResponse,
   HideModuleParams,
   HideModuleBody,
+  ModuleProctoringBody,
 ];
