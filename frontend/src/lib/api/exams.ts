@@ -430,6 +430,14 @@ export const examApi = {
 
     // ── Attempts ─────────────────────────────────────────────
 
+    // Stamps (or returns the already-stamped) server-side attempt start
+    // time — must be called before submitAttempt, which enforces the exam
+    // duration against this value rather than anything the client reports.
+    // Idempotent: safe to call again on a refresh mid-attempt.
+    startAttempt: async (examId: string): Promise<{ startedAt: number }> => {
+        return apiFetch(`${BASE_URL}/${examId}/attempts/start`, { method: 'POST' });
+    },
+
     submitAttempt: async (examId: string, input: SubmitAttemptInput): Promise<ExamAttempt> => {
         const data = await apiFetch<ExamAttempt>(`${BASE_URL}/${examId}/attempts`, {
             method: 'POST',
