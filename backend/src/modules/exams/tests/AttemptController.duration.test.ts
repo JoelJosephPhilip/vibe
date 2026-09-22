@@ -52,10 +52,10 @@ describe('Exams module — AttemptController duration enforcement', { timeout: 3
         app = useExpressServer(appInstance, options);
     }, 900000);
 
-    const createExamWithQuestion = async (duration: number) => {
+    const createExamWithQuestion = async (duration: number, extra: Record<string, unknown> = {}) => {
         const examRes = await request(app)
             .post('/exams')
-            .send({ title: 'Duration test exam', duration });
+            .send({ title: 'Duration test exam', duration, ...extra });
         const examId = examRes.body._id;
 
         await request(app)
@@ -116,6 +116,31 @@ describe('Exams module — AttemptController duration enforcement', { timeout: 3
         const first = await request(app).post(`/exams/${examId}/attempts/start`).send({});
         const second = await request(app).post(`/exams/${examId}/attempts/start`).send({});
         expect(first.body.startedAt).toBe(second.body.startedAt);
+    });
+
+    it('clears the server-recorded start time after a successful submit, so a retake gets a fresh one', async () => {
+        // Regression coverage: AttemptStartRepository has a permanent
+        // unique index on (examId, studentId). Without clearing the record
+        // on a successful submit, a retake's `/start` call would keep
+        // returning attempt #1's timestamp forever — so a retake started
+        // long after the first attempt would have its duration measured
+        // from the wrong (already-expired) clock instead of a fresh one.
+        const examId = await createExamWithQuestion(30, { allowRetakes: true });
+
+        const startRes = await request(app).post(`/exams/${examId}/attempts/start`).send({});
+        expect(startRes.body.startedAt).toBeTypeOf('number');
+        const submitRes = await request(app).post(`/exams/${examId}/attempts`).send({ responses: [] });
+        expect(submitRes.status).toBe(201);
+
+        const collection = await db.getCollection('examAttemptStarts');
+        const stored = await collection.findOne({ examId, studentId: userId });
+        expect(stored).toBeNull();
+
+        // The next `/start` call (the retake) must stamp a brand new
+        // timestamp rather than finding nothing has changed.
+        const retakeStartRes = await request(app).post(`/exams/${examId}/attempts/start`).send({});
+        expect(retakeStartRes.body.startedAt).toBeTypeOf('number');
+        expect(retakeStartRes.body.startedAt).toBeGreaterThanOrEqual(startRes.body.startedAt);
     });
 
     it('honors extra minutes from a time grant this student redeemed', async () => {

@@ -245,6 +245,10 @@ export class AttemptService {
             }
             throw error;
         }
+        // Clears the server-recorded start time so a retake (allowRetakes:
+        // true) gets a fresh one on its next `/start` call instead of
+        // inheriting this attempt's — see AttemptStartRepository.delete.
+        await this.attemptStartRepo.delete(examId, studentId);
         const resolved = await this.examImageStorageService.resolveAttemptImages(created);
         // The stored/persisted document keeps the real correctOptions (the
         // exam owner needs them to grade/review) — only the copy handed
