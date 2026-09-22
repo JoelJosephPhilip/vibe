@@ -238,8 +238,15 @@ export function useSubmitAttempt() {
     return useMutation({
         mutationFn: (input: { examId: string; body: SubmitAttemptInput }) =>
             examApi.submitAttempt(input.examId, input.body),
-        onSuccess: () => {
+        onSuccess: (_data, variables) => {
             void queryClient.invalidateQueries({ queryKey: examKeys.myAttempts });
+            // The backend clears the server-recorded start time on a
+            // successful submit (see AttemptStartRepository.delete), so a
+            // retake's next mount must refetch rather than serve this
+            // attempt's now-stale cached startedAt (staleTime: Infinity /
+            // refetchOnMount: false on useStartAttempt would otherwise keep
+            // it forever within this browser session).
+            void queryClient.invalidateQueries({ queryKey: examKeys.attemptStart(variables.examId) });
         },
     });
 }

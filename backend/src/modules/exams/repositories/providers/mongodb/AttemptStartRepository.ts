@@ -77,4 +77,21 @@ export class AttemptStartRepository {
         const existing = await this.collection.findOne({ examId, studentId });
         return existing?.startedAt ?? null;
     }
+
+    /**
+     * Clears the start record once an attempt has been successfully
+     * submitted. Required for `allowRetakes: true` exams: the unique index
+     * on (examId, studentId) means `getOrCreate` would otherwise keep
+     * returning attempt #1's timestamp forever, so a later retake's
+     * duration would be measured from the wrong clock (typically already
+     * "expired" the instant it starts) instead of getting a fresh one.
+     * Called unconditionally from `submitAttempt` after a successful
+     * `attemptRepo.create` — harmless no-op for `allowRetakes: false`
+     * exams, where a second `/start` call is possible but `submitAttempt`'s
+     * own retake check still blocks a second submission regardless.
+     */
+    async delete(examId: string, studentId: string): Promise<void> {
+        await this.init();
+        await this.collection.deleteOne({ examId, studentId });
+    }
 }
