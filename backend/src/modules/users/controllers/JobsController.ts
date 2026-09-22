@@ -1,4 +1,5 @@
 import { ApiKeyAuthMiddleware } from '#root/shared/middleware/ApiKeyAuthMiddleware.js';
+import { createRateLimiter } from '#root/shared/middleware/rateLimiter.js';
 import { ProgressService } from '#users/services/ProgressService.js';
 import { USERS_TYPES } from '#users/types.js';
 import { injectable, inject } from 'inversify';
@@ -7,9 +8,22 @@ import {
   Post,
   HttpCode,
   QueryParam,
+  Req,
   UseBefore,
 } from 'routing-controllers';
 import { OpenAPI } from 'routing-controllers-openapi';
+
+// One sweep every few minutes is the realistic ceiling for a Cloud Scheduler
+// misconfiguration to hit before someone notices; well above normal use,
+// well below "accidental DoS via a bad cron expression".
+const recoverOrphanedWatchTimesLimiter = createRateLimiter({
+  windowMs: 5 * 60 * 1000,
+  max: 20,
+  message: {
+    status: 429,
+    error: 'Too many job trigger requests, please try again later.',
+  },
+});
 
 /**
  * On-demand triggers for jobs that otherwise run on an in-process
@@ -58,7 +72,9 @@ class JobsController {
   })
   @Post('/recover-orphaned-watchtimes')
   @HttpCode(200)
+  @UseBefore(recoverOrphanedWatchTimesLimiter)
   async recoverOrphanedWatchTimes(
+    @Req() request: any,
     @QueryParam('olderThanMinutes') olderThanMinutes = 30,
     @QueryParam('batchSize') batchSize = 500,
   ): Promise<{
@@ -74,10 +90,27 @@ class JobsController {
     // Mongo's .limit(), which throws on a non-integer. Coerce explicitly
     // rather than relying on the framework to infer the type from the
     // default value.
-    return await this.progressService.recoverOrphanedWatchTimes(
-      Number(olderThanMinutes),
-      Number(batchSize),
+    const params = {
+      olderThanMinutes: Number(olderThanMinutes),
+      batchSize: Number(batchSize),
+    };
+    const consumer = request.integrationConsumer ?? 'unknown';
+
+    // Cloud Run captures stdout, making this queryable without any extra
+    // infrastructure -- lets ops confirm Cloud Scheduler is actually firing
+    // and audit what each sweep recovered.
+    console.log(
+      `[jobs] recoverOrphanedWatchTimes triggered by consumer=${consumer} params=${JSON.stringify(params)}`,
     );
+    const summary = await this.progressService.recoverOrphanedWatchTimes(
+      params.olderThanMinutes,
+      params.batchSize,
+    );
+    console.log(
+      `[jobs] recoverOrphanedWatchTimes completed consumer=${consumer} result=${JSON.stringify(summary)}`,
+    );
+
+    return summary;
   }
 }
 
