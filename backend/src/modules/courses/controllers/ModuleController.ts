@@ -241,7 +241,7 @@ Accessible to:
     @Req() req: Request,
   ) {
     const { versionId, moduleId } = params;
-    const { proctoringEnabled } = body;
+    const { detectors } = body;
 
     const courseVersionSubject = subject('CourseVersion', { versionId });
     if (!ability.can(CourseVersionActions.Modify, courseVersionSubject)) {
@@ -261,7 +261,7 @@ Accessible to:
     const updated = await this.service.updateModuleProctoringStatus(
       versionId,
       moduleId,
-      proctoringEnabled,
+      detectors,
     );
 
     setAuditTrail(req, {
@@ -280,10 +280,10 @@ Accessible to:
       },
       changes: {
         before: {
-          proctoringEnabled: existingModule?.proctoringEnabled,
+          detectors: existingModule?.proctoringDetectors,
         },
         after: {
-          proctoringEnabled,
+          detectors,
         },
       },
       outcome: {
