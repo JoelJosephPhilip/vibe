@@ -311,10 +311,11 @@ describe('Selective Proctoring Integration Tests', () => {
     // asserts a single-item itemsGroup, so a second item needs a fresh
     // itemsGroup (i.e. section) rather than reusing sectionId.
     const sectionB = await createSection(app, versionId, moduleId);
-    const sectionBId =
+    const sectionBId = (
       sectionB.version.modules[0].sections.find(
         (s: any) => s.sectionId !== sectionId,
-      ).sectionId;
+      ).sectionId as {toString(): string}
+    ).toString();
     const itemB = await createQuizItem(app, versionId, moduleId, sectionBId);
     const itemBId = (itemB as any).itemsGroup.items[0]._id;
 
