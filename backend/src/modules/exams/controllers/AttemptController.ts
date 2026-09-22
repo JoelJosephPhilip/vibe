@@ -70,6 +70,31 @@ export class AttemptController {
         private readonly attemptService: AttemptService,
     ) {}
 
+    // Server-stamped attempt start time — must be called before submitAttempt
+    // enforces the exam duration against it, since a client-reported
+    // startedAt can't be trusted (see AttemptService.startAttempt's doc).
+    // `/:examId/attempts/start` is a 3-segment path (examId literal-free,
+    // then literal `attempts`, then literal `start`), which cannot collide
+    // with any route in this class-level note: it differs from
+    // `/:examId/attempts` (2 segments) by segment count, and from
+    // `/attempts/mine` / `/attempts/:attemptId` (2 segments, literal
+    // `attempts` at segment 1) both by segment count and by not having a
+    // literal `attempts` at segment 1 itself (examId sits there instead).
+    @Authorized()
+    @Post('/:examId/attempts/start')
+    @HttpCode(200)
+    @OpenAPI({
+        summary: 'Start (or resume) a timed exam attempt',
+        description:
+            'Idempotent: the first call stamps the server-side start time for this ' +
+            'student/exam pair; every later call (e.g. after a page refresh) returns ' +
+            'that same original timestamp rather than resetting it. Required before ' +
+            'submitAttempt, which enforces the exam duration against this value.',
+    })
+    async startAttempt(@Params() params: ExamIdParams, @CurrentUser() user: IUser) {
+        return this.attemptService.startAttempt(params.examId, user);
+    }
+
     // Submit attempt -> authoritative score, persisted
     @Authorized()
     @Post('/:examId/attempts')
@@ -81,8 +106,9 @@ export class AttemptController {
             'questions rather than trusting any client-submitted score. Rejected ' +
             '(403) if the exam has a scheduling window (opensAt/closesAt) and the ' +
             'submission falls outside it, if exam.duration (plus any extra-time ' +
-            'grants this student redeemed) has elapsed since the reported ' +
-            'startedAt, or if the exam has allowRetakes: false and the student ' +
+            'grants this student redeemed) has elapsed since the server-recorded ' +
+            'start time set by POST /:examId/attempts/start (which must be called ' +
+            'first), or if the exam has allowRetakes: false and the student ' +
             'already has an attempt for this exam.',
     })
     async submitAttempt(

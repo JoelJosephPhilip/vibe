@@ -23,6 +23,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 describe('Exams module — AttemptController duration enforcement', { timeout: 30000 }, () => {
     const appInstance = Express();
     let app: any;
+    let db: MongoDatabase;
     const userId = '000000000000000000000003';
 
     beforeAll(async () => {
@@ -31,7 +32,7 @@ describe('Exams module — AttemptController duration enforcement', { timeout: 3
         await container.load(sharedContainerModule, examsContainerModule, usersContainerModule);
         const inversifyAdapter = new InversifyAdapter(container);
         useContainer(inversifyAdapter);
-        const db = container.get<MongoDatabase>(GLOBAL_TYPES.Database);
+        db = container.get<MongoDatabase>(GLOBAL_TYPES.Database);
         await db.connect();
 
         const options: RoutingControllersOptions = {
@@ -73,7 +74,19 @@ describe('Exams module — AttemptController duration enforcement', { timeout: 3
         return examId;
     };
 
-    it('rejects a submission with no startedAt', async () => {
+    // Backdates the server-recorded start time directly in
+    // `examAttemptStarts` (the collection `AttemptStartRepository` owns) to
+    // simulate real elapsed time, since `startAttempt` itself always stamps
+    // `Date.now()` and no longer trusts any client-supplied value.
+    const backdateStart = async (examId: string, startedAt: number) => {
+        const collection = await db.getCollection('examAttemptStarts');
+        await collection.updateOne(
+            { examId, studentId: userId },
+            { $set: { startedAt } },
+        );
+    };
+
+    it('rejects a submission that never called the start endpoint', async () => {
         const examId = await createExamWithQuestion(30);
         const res = await request(app).post(`/exams/${examId}/attempts`).send({ responses: [] });
         expect(res.status).toBe(403);
@@ -81,22 +94,28 @@ describe('Exams module — AttemptController duration enforcement', { timeout: 3
 
     it('rejects a submission arriving long after exam.duration has elapsed', async () => {
         const examId = await createExamWithQuestion(30);
-        // Reported as having started 2 hours ago, well past the 30-minute
-        // duration plus grace — pre-fix, this was accepted unconditionally.
-        const startedAt = Date.now() - 2 * 60 * 60 * 1000;
-        const res = await request(app)
-            .post(`/exams/${examId}/attempts`)
-            .send({ responses: [], startedAt });
+        await request(app).post(`/exams/${examId}/attempts/start`).send({});
+        // Backdated to 2 hours ago, well past the 30-minute duration plus
+        // grace — pre-fix, a client reporting this as its own startedAt was
+        // accepted unconditionally.
+        await backdateStart(examId, Date.now() - 2 * 60 * 60 * 1000);
+        const res = await request(app).post(`/exams/${examId}/attempts`).send({ responses: [] });
         expect(res.status).toBe(403);
     });
 
     it('accepts a submission within exam.duration', async () => {
         const examId = await createExamWithQuestion(30);
-        const startedAt = Date.now() - 5 * 60 * 1000;
-        const res = await request(app)
-            .post(`/exams/${examId}/attempts`)
-            .send({ responses: [], startedAt });
+        await request(app).post(`/exams/${examId}/attempts/start`).send({});
+        await backdateStart(examId, Date.now() - 5 * 60 * 1000);
+        const res = await request(app).post(`/exams/${examId}/attempts`).send({ responses: [] });
         expect(res.status).toBe(201);
+    });
+
+    it('start is idempotent — a later call returns the original timestamp', async () => {
+        const examId = await createExamWithQuestion(30);
+        const first = await request(app).post(`/exams/${examId}/attempts/start`).send({});
+        const second = await request(app).post(`/exams/${examId}/attempts/start`).send({});
+        expect(first.body.startedAt).toBe(second.body.startedAt);
     });
 
     it('honors extra minutes from a time grant this student redeemed', async () => {
@@ -112,12 +131,11 @@ describe('Exams module — AttemptController duration enforcement', { timeout: 3
             .send({ code });
         expect(redeemRes.body.ok).toBe(true);
 
+        await request(app).post(`/exams/${examId}/attempts/start`).send({});
         // 40 minutes elapsed: past the 10-minute base duration, but well
         // within 10 + 60 granted minutes.
-        const startedAt = Date.now() - 40 * 60 * 1000;
-        const res = await request(app)
-            .post(`/exams/${examId}/attempts`)
-            .send({ responses: [], startedAt });
+        await backdateStart(examId, Date.now() - 40 * 60 * 1000);
+        const res = await request(app).post(`/exams/${examId}/attempts`).send({ responses: [] });
         expect(res.status).toBe(201);
     });
 });

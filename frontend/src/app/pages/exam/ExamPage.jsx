@@ -6,7 +6,7 @@ import { Calculator } from '@/components/exam/Calculator'
 import ExamProctoring from '@/components/exam/ExamProctoring'
 import { DEMO_EXAM, computeNegativeMarks } from '@/lib/examStore'
 import { useExamSecurity } from '@/lib/useExamSecurity'
-import { useExam, useSubmitAttempt, useRedeemTimeGrant, useMyAttempts } from '@/hooks/exam-hooks'
+import { useExam, useSubmitAttempt, useRedeemTimeGrant, useMyAttempts, useStartAttempt } from '@/hooks/exam-hooks'
 import { useAuthStore } from '@/store/auth-store'
 
 const LETTERS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
@@ -124,10 +124,40 @@ export default function ExamPage() {
   const { data: myAttempts } = useMyAttempts()
   const examData = isDemo ? DEMO_EXAM : fetchedExam
 
-  if (!isDemo && isLoading) {
+  // Stamps the server-side attempt start time before the timed UI ever
+  // renders, so the countdown (and the duration check submitAttempt
+  // enforces server-side) is anchored to the server's clock rather than
+  // anything client-reported — see AttemptService.startAttempt's doc.
+  const {
+    data: startData,
+    isLoading: startLoading,
+    isError: startIsError,
+    error: startError,
+  } = useStartAttempt(isDemo ? undefined : examId)
+
+  if (!isDemo && (isLoading || startLoading)) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background px-4 text-center">
         <p className="text-sm text-muted-foreground">Loading test…</p>
+      </div>
+    )
+  }
+
+  if (!isDemo && startIsError) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background px-4 text-center">
+        <div className="max-w-md space-y-3">
+          <h1 className="text-2xl font-bold">Can't start this test</h1>
+          <p className="text-sm text-muted-foreground">
+            {startError?.message || 'This test could not be started.'}
+          </p>
+          <button
+            onClick={() => navigate('/')}
+            className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+          >
+            Back to home
+          </button>
+        </div>
       </div>
     )
   }
@@ -234,11 +264,18 @@ export default function ExamPage() {
   // `key` forces a fresh mount (and fresh internal state) if the route ever
   // switches from one exam id straight to another without an unmount.
   return (
-    <ExamPageInner key={examId} examId={examId} isDemo={isDemo} examData={examData} navigate={navigate} />
+    <ExamPageInner
+      key={examId}
+      examId={examId}
+      isDemo={isDemo}
+      examData={examData}
+      navigate={navigate}
+      serverStartedAt={isDemo ? undefined : startData?.startedAt}
+    />
   )
 }
 
-function ExamPageInner({ examId, isDemo, examData, navigate }) {
+function ExamPageInner({ examId, isDemo, examData, navigate, serverStartedAt }) {
   const exam = { ...examData, totalMarks: examData.questions.reduce((sum, q) => sum + (Number(q.marks) || 0), 0) }
   const { user, isAuthenticated } = useAuthStore()
 
@@ -403,11 +440,16 @@ function ExamPageInner({ examId, isDemo, examData, navigate }) {
   // (see the exact strings AttemptService.submitAttempt throws — checked by
   // substring below since the server message may include extra context).
   const [submitBlockedMessage, setSubmitBlockedMessage] = useState(null)
-  // The clock the countdown is measured from. On first load this is "now";
-  // on a refresh mid-attempt it's restored from the saved session so the
-  // remaining time keeps counting down from where it actually was, instead
-  // of resetting to the full duration.
-  const startedAtRef = useRef(savedSession?.startedAt ?? Date.now())
+  // The clock the countdown (and the server's own duration check) is
+  // measured from. For a real exam this is always the server-stamped
+  // `serverStartedAt` (idempotent — the same value on first load and on any
+  // later refresh mid-attempt, see AttemptService.startAttempt), never a
+  // client clock. The demo exam has no backend attempt to anchor to, so it
+  // falls back to the old client-side behavior: "now" on first load, or the
+  // saved session's timestamp on a refresh.
+  const startedAtRef = useRef(
+    isDemo ? savedSession?.startedAt ?? Date.now() : serverStartedAt
+  )
 
   // Camera/mic proctoring: active whenever this exam has a detector enabled
   // (or is the demo, which bakes in a default detector set — see

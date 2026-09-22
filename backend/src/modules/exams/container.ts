@@ -2,6 +2,7 @@ import { ContainerModule } from 'inversify';
 import { EXAMS_TYPES } from './types.js';
 import { ExamRepository } from './repositories/providers/mongodb/ExamRepository.js';
 import { AttemptRepository } from './repositories/providers/mongodb/AttemptRepository.js';
+import { AttemptStartRepository } from './repositories/providers/mongodb/AttemptStartRepository.js';
 import { QuestionBankRepository } from './repositories/providers/mongodb/QuestionBankRepository.js';
 import { ExamService } from './services/ExamService.js';
 import { AttemptService } from './services/AttemptService.js';
@@ -24,6 +25,7 @@ export const examsContainerModule = new ContainerModule(options => {
     // Repositories
     options.bind(EXAMS_TYPES.ExamRepo).to(ExamRepository).inSingletonScope();
     options.bind(EXAMS_TYPES.AttemptRepo).to(AttemptRepository).inSingletonScope();
+    options.bind(EXAMS_TYPES.AttemptStartRepo).to(AttemptStartRepository).inSingletonScope();
     options.bind(EXAMS_TYPES.QuestionBankRepo).to(QuestionBankRepository).inSingletonScope();
 
     // Services

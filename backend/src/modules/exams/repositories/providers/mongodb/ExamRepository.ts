@@ -16,14 +16,19 @@ import { IExam, IExamQuestion, ITimeGrant } from '../../../classes/transformers/
 @injectable()
 export class ExamRepository {
     private collection!: Collection<IExam>;
-    private initialized = false;
+    private initPromise: Promise<void> | null = null;
 
     constructor(@inject(GLOBAL_TYPES.Database) private db: MongoDatabase) {}
 
     private async init(): Promise<void> {
-        if (this.initialized) return;
+        if (!this.initPromise) {
+            this.initPromise = this.doInit();
+        }
+        return this.initPromise;
+    }
+
+    private async doInit(): Promise<void> {
         this.collection = await this.db.getCollection<IExam>('exams');
-        this.initialized = true;
 
         try {
             await this.collection.createIndex({ createdBy: 1, createdAt: -1 });

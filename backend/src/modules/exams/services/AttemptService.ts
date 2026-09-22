@@ -4,6 +4,7 @@ import { ForbiddenError, NotFoundError } from 'routing-controllers';
 import { EXAMS_TYPES } from '../types.js';
 import { ExamRepository } from '../repositories/providers/mongodb/ExamRepository.js';
 import { AttemptRepository, DuplicateAttemptError } from '../repositories/providers/mongodb/AttemptRepository.js';
+import { AttemptStartRepository } from '../repositories/providers/mongodb/AttemptStartRepository.js';
 import { ExamService } from './ExamService.js';
 import { ExamImageStorageService } from './ExamImageStorageService.js';
 import { IExamQuestion } from '../classes/transformers/Exam.js';
@@ -30,11 +31,39 @@ export class AttemptService {
         private readonly examRepo: ExamRepository,
         @inject(EXAMS_TYPES.AttemptRepo)
         private readonly attemptRepo: AttemptRepository,
+        @inject(EXAMS_TYPES.AttemptStartRepo)
+        private readonly attemptStartRepo: AttemptStartRepository,
         @inject(EXAMS_TYPES.ExamImageStorageService)
         private readonly examImageStorageService: ExamImageStorageService,
         @inject(EXAMS_TYPES.ExamService)
         private readonly examService: ExamService,
     ) {}
+
+    /**
+     * Stamps (or returns the already-stamped) server-side start time for
+     * this student's attempt at this exam. Called once by the client right
+     * before the timed attempt begins — `submitAttempt` enforces the
+     * duration deadline against this value instead of any client-reported
+     * timestamp, since a client that can stop its own countdown (devtools)
+     * can just as easily report a fresh `startedAt` at submit time. Safe to
+     * call more than once (e.g. on a page refresh mid-attempt): idempotent,
+     * always returns the original timestamp, never resets it.
+     */
+    async startAttempt(examId: string, student: IUser): Promise<{ startedAt: number }> {
+        const studentId = student._id!.toString();
+        const exam = await this.examService.getExamForAttempt(examId, student);
+
+        const now = Date.now();
+        if (exam.opensAt != null && now < exam.opensAt) {
+            throw new ForbiddenError('This exam is not open yet');
+        }
+        if (exam.closesAt != null && now > exam.closesAt) {
+            throw new ForbiddenError('This exam is now closed');
+        }
+
+        const startedAt = await this.attemptStartRepo.getOrCreate(examId, studentId);
+        return { startedAt };
+    }
 
     /**
      * Loads the exam, independently regrades the submission against the
@@ -81,22 +110,25 @@ export class AttemptService {
             throw new ForbiddenError('This exam is now closed');
         }
 
-        // Duration is enforced against the client-reported `startedAt` (the
-        // best signal available without a server-tracked attempt-start
-        // record) plus this student's own redeemed extra-time grants and a
-        // grace period for the auto-submit request's own network latency.
-        // Without this, disabling the countdown client-side (devtools, or
-        // just letting it drift while backgrounded) let a submission through
-        // no matter how much real time had passed.
-        if (!meta.startedAt) {
-            throw new ForbiddenError('Missing attempt start time');
+        // Duration is enforced against the server-recorded start time
+        // (`AttemptStartRepository`, stamped by `startAttempt` the first
+        // time this student began this exam) rather than the client-reported
+        // `meta.startedAt` — a client that can disable its own countdown
+        // (devtools, or just letting it drift while backgrounded) can just
+        // as easily report a fresh `startedAt` at submit time, which would
+        // defeat a check based on the request body alone. Requires the
+        // client to have called `startAttempt` first; there is no fallback
+        // to the client-supplied value.
+        const startedAt = await this.attemptStartRepo.get(examId, studentId);
+        if (!startedAt) {
+            throw new ForbiddenError('Attempt was never started — call the start endpoint first');
         }
         const grantedMinutes = (exam.timeGrants ?? [])
             .filter(g => g.used && g.redeemedByStudentId === studentId)
             .reduce((sum, g) => sum + (Number(g.minutes) || 0), 0);
         const allowedMs =
             (Number(exam.duration) || 0) * 60_000 + grantedMinutes * 60_000 + SUBMIT_GRACE_MS;
-        if (now - meta.startedAt > allowedMs) {
+        if (now - startedAt > allowedMs) {
             throw new ForbiddenError('The time allotted for this exam has expired');
         }
 
@@ -196,7 +228,7 @@ export class AttemptService {
             total: exam.questions.length,
             revealAnswers: exam.revealAnswers ?? false,
             tabSwitches: meta.tabSwitches,
-            startedAt: meta.startedAt,
+            startedAt,
             // Audit trail only — passed through as-is, never consulted above
             // when computing score/correctCount.
             proctoringEvents,

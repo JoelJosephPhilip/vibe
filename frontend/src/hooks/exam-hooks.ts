@@ -16,6 +16,7 @@ export const examKeys = {
     published: ['exams', 'published'] as const,
     exam: (examId?: string) => ['exam', examId] as const,
     myAttempts: ['exams', 'attempts', 'mine'] as const,
+    attemptStart: (examId?: string) => ['exams', examId, 'attempt-start'] as const,
     attempt: (attemptId?: string) => ['exam-attempt', attemptId] as const,
     examAttempts: (examId?: string) => ['exams', examId, 'attempts'] as const,
     // Params-aware, but the UI only ever calls `useQuestionBank()` with no
@@ -209,6 +210,28 @@ export function useRedeemTimeGrant() {
 }
 
 // ── Attempts ───────────────────────────────────────────────
+
+// Stamps (or fetches the already-stamped) server-side start time for this
+// exam attempt — ExamPage waits on this before rendering the timed UI so
+// the countdown (and the duration check submitAttempt enforces server-side)
+// is anchored to the server's clock, not the client's. `staleTime: Infinity`
+// plus no refetch-on-mount: the value never changes for a given
+// exam/session once fetched, and re-fetching on every remount/refocus would
+// otherwise just replay the same idempotent call for no benefit. `retry:
+// false` so a genuine block (not eligible / not open yet / already
+// attempted) surfaces immediately as `isError` instead of retrying a
+// request that will never succeed.
+export function useStartAttempt(examId?: string) {
+    return useQuery({
+        queryKey: examKeys.attemptStart(examId),
+        queryFn: () => examApi.startAttempt(examId!),
+        enabled: Boolean(examId),
+        staleTime: Infinity,
+        refetchOnMount: false,
+        refetchOnWindowFocus: false,
+        retry: false,
+    });
+}
 
 export function useSubmitAttempt() {
     const queryClient = useQueryClient();

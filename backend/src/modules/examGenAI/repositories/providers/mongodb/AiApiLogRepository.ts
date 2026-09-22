@@ -9,14 +9,19 @@ import { IAiApiLogDoc } from '../../../classes/transformers/ExamGenAI.js';
 @injectable()
 export class AiApiLogRepository {
     private collection!: Collection<IAiApiLogDoc>;
-    private initialized = false;
+    private initPromise: Promise<void> | null = null;
 
     constructor(@inject(GLOBAL_TYPES.Database) private db: MongoDatabase) {}
 
     private async init(): Promise<void> {
-        if (this.initialized) return;
+        if (!this.initPromise) {
+            this.initPromise = this.doInit();
+        }
+        return this.initPromise;
+    }
+
+    private async doInit(): Promise<void> {
         this.collection = await this.db.getCollection<IAiApiLogDoc>('aiApiLogs');
-        this.initialized = true;
         try {
             await this.collection.createIndex({ createdAt: -1 });
         } catch (error) {

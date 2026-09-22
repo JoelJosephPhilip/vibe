@@ -19,6 +19,7 @@ const TYPES = {
     // Repositories
     ExamRepo: Symbol.for('Exams.ExamRepo'),
     AttemptRepo: Symbol.for('Exams.AttemptRepo'),
+    AttemptStartRepo: Symbol.for('Exams.AttemptStartRepo'),
     QuestionBankRepo: Symbol.for('Exams.QuestionBankRepo'),
 };
 

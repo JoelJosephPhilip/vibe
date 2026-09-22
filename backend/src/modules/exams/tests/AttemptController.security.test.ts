@@ -91,9 +91,10 @@ describe('Exams module — AttemptController eligibility, retakes, answer leakag
             await addQuestion(examId);
 
             (app as any).__asStudent();
+            await request(app).post(`/exams/${examId}/attempts/start`).send({});
             const res = await request(app)
                 .post(`/exams/${examId}/attempts`)
-                .send({ responses: [], startedAt: Date.now() - 5 * 60 * 1000 });
+                .send({ responses: [] });
             expect(res.status).toBe(403);
         });
 
@@ -105,9 +106,10 @@ describe('Exams module — AttemptController eligibility, retakes, answer leakag
             await request(app).patch(`/exams/${examId}`).send({ eligibility: { mode: 'none' } });
 
             (app as any).__asStudent();
+            await request(app).post(`/exams/${examId}/attempts/start`).send({});
             const res = await request(app)
                 .post(`/exams/${examId}/attempts`)
-                .send({ responses: [], startedAt: Date.now() - 5 * 60 * 1000 });
+                .send({ responses: [] });
             expect(res.status).toBe(403);
         });
 
@@ -121,9 +123,10 @@ describe('Exams module — AttemptController eligibility, retakes, answer leakag
                 .send({ eligibility: { mode: 'none' }, published: true });
 
             (app as any).__asStudent();
+            await request(app).post(`/exams/${examId}/attempts/start`).send({});
             const res = await request(app)
                 .post(`/exams/${examId}/attempts`)
-                .send({ responses: [], startedAt: Date.now() - 5 * 60 * 1000 });
+                .send({ responses: [] });
             expect(res.status).toBe(201);
         });
     });
@@ -141,10 +144,10 @@ describe('Exams module — AttemptController eligibility, retakes, answer leakag
                 .send({ eligibility: { mode: 'none' }, published: true });
 
             (app as any).__asStudent();
-            const startedAt = Date.now() - 5 * 60 * 1000;
+            await request(app).post(`/exams/${examId}/attempts/start`).send({});
             const [first, second] = await Promise.all([
-                request(app).post(`/exams/${examId}/attempts`).send({ responses: [], startedAt }),
-                request(app).post(`/exams/${examId}/attempts`).send({ responses: [], startedAt }),
+                request(app).post(`/exams/${examId}/attempts`).send({ responses: [] }),
+                request(app).post(`/exams/${examId}/attempts`).send({ responses: [] }),
             ]);
             const statuses = [first.status, second.status].sort();
             expect(statuses).toEqual([201, 403]);
@@ -177,11 +180,11 @@ describe('Exams module — AttemptController eligibility, retakes, answer leakag
                 .send({ eligibility: { mode: 'none' }, published: true });
 
             (app as any).__asStudent();
+            await request(app).post(`/exams/${examId}/attempts/start`).send({});
             const submitRes = await request(app)
                 .post(`/exams/${examId}/attempts`)
                 .send({
                     responses: [{ questionId, selectedOptionIds: ['a'] }],
-                    startedAt: Date.now() - 5 * 60 * 1000,
                 });
             expect(submitRes.status).toBe(201);
             expect(submitRes.body.answers[questionId].correct).toEqual([]);
@@ -226,9 +229,10 @@ describe('Exams module — AttemptController eligibility, retakes, answer leakag
                 .send({ eligibility: { mode: 'none' }, published: true });
 
             (app as any).__asStudent();
+            await request(app).post(`/exams/${examId}/attempts/start`).send({});
             const submitRes = await request(app)
                 .post(`/exams/${examId}/attempts`)
-                .send({ responses: [], startedAt: Date.now() - 5 * 60 * 1000 });
+                .send({ responses: [] });
             expect(submitRes.status).toBe(201);
             expect(submitRes.body.answers[questionId].correct).toEqual(['b']);
         });
