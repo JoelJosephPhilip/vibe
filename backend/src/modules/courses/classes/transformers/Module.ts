@@ -9,7 +9,7 @@ import {
   ObjectIdToString,
   StringToObjectId,
 } from '#root/shared/constants/transformerConstants.js';
-import {IModule, ID} from '#root/shared/interfaces/models.js';
+import {IModule, ID, IDetectorSettings} from '#root/shared/interfaces/models.js';
 
 /**
  * Module data transformation.
@@ -34,12 +34,12 @@ class Module implements IModule {
   @Expose()
   isHidden: boolean = false;
 
-  // Absent (undefined) means "inherit the course's universal proctoring
-  // setting" — see resolveProctoringEnabled in shared/interfaces/models.ts.
+  // Absent/null means "inherit the course's universal proctoring detector
+  // list" — see resolveProctoringDetectors in shared/interfaces/models.ts.
   // No default value, unlike isHidden: defaulting this would make every
   // existing module explicitly override proctoring instead of inheriting.
   @Expose()
-  proctoringEnabled?: boolean;
+  proctoringDetectors?: IDetectorSettings[] | null;
 
   @Expose()
   @Type(() => Section)

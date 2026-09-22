@@ -13,7 +13,7 @@ import {
   ForbiddenError,
 } from 'routing-controllers';
 import { calculateNewOrder } from '../utils/calculateNewOrder.js';
-import { ICourseVersion } from '#root/shared/interfaces/models.js';
+import { ICourseVersion, IDetectorSettings } from '#root/shared/interfaces/models.js';
 import { BaseService } from '#root/shared/classes/BaseService.js';
 import { GLOBAL_TYPES } from '../../../types.js';
 import { MongoDatabase } from '#root/shared/database/providers/mongo/MongoDatabase.js';
@@ -153,22 +153,22 @@ export class ModuleService extends BaseService {
   }
 
   /**
-   * Sets or clears this module's proctoring override. `null` clears it back
-   * to "inherit the course's universal setting" -- deleting the key (not
-   * setting it to undefined) so updateVersion's whole-array $set correctly
-   * omits it from the stored subdocument, rather than silently leaving
-   * whatever was there before untouched.
+   * Sets or clears this module's proctoring detector override. `null` clears
+   * it back to "inherit the course's universal setting" -- deleting the key
+   * (not setting it to undefined) so updateVersion's whole-array $set
+   * correctly omits it from the stored subdocument, rather than silently
+   * leaving whatever was there before untouched.
    *
    * Deliberately does not cascade the value onto the module's items (unlike
    * toggleModuleVisibility's isHidden cascade) — an item can still
    * independently override this module's setting, and readItem's
-   * resolveProctoringEnabled call resolves the effective value at read time,
-   * so nothing needs to be physically propagated onto each item.
+   * resolveProctoringDetectors call resolves the effective value at read
+   * time, so nothing needs to be physically propagated onto each item.
    */
   public async updateModuleProctoringStatus(
     versionId: string,
     moduleId: string,
-    proctoringEnabled: boolean | null,
+    detectors: IDetectorSettings[] | null,
   ) {
     return this._withTransaction(async session => {
       const versionStatus=await this.courseRepo.getCourseVersionStatus(versionId,session);
@@ -182,10 +182,10 @@ export class ModuleService extends BaseService {
       );
       if (!module) throw new NotFoundError(`Module ${moduleId} not found.`);
 
-      if (proctoringEnabled === null) {
-        delete module.proctoringEnabled;
+      if (detectors === null) {
+        delete module.proctoringDetectors;
       } else {
-        module.proctoringEnabled = proctoringEnabled;
+        module.proctoringDetectors = detectors;
       }
       module.updatedAt = new Date();
       version.updatedAt = new Date();

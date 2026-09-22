@@ -1,4 +1,4 @@
-import {IModule, ICourseVersion} from '#root/shared/interfaces/models.js';
+import {IModule, ICourseVersion, IDetectorSettings} from '#root/shared/interfaces/models.js';
 import {
   IsNotEmpty,
   IsString,
@@ -6,10 +6,16 @@ import {
   IsOptional,
   IsMongoId,
   ValidateIf,
+  ValidateNested,
   IsBoolean,
 } from 'class-validator';
+import {Type} from 'class-transformer';
 import {JSONSchema} from 'class-validator-jsonschema';
 import {OnlyOneId} from './customValidators.js';
+import {
+  DetectorSettingsDto,
+  containsAllDetectors,
+} from '#root/modules/setting/classes/validators/CourseSettingValidators.js';
 
 class CreateModuleBody implements Partial<IModule> {
   @JSONSchema({
@@ -184,16 +190,17 @@ class HideModuleBody {
 
 class ModuleProctoringBody {
   @JSONSchema({
-    title: 'Module Proctoring Override',
+    title: 'Module Proctoring Detector Override',
     description:
-      'Overrides the course\'s universal proctoring default for every item in this module that does not have its own item-level override. Pass null to clear the override and inherit the universal setting again.',
-    type: 'boolean',
+      "Overrides the course's universal proctoring detector list for every item in this module that does not have its own item-level override. Pass null to clear the override and inherit the universal setting again. When not null, must list every detector (same shape as the course-level proctoring settings).",
+    type: 'array',
     nullable: true,
-    example: true,
   })
-  @ValidateIf(o => o.proctoringEnabled !== null)
-  @IsBoolean()
-  proctoringEnabled: boolean | null;
+  @ValidateIf(o => o.detectors !== null)
+  @ValidateNested({each: true})
+  @containsAllDetectors()
+  @Type(() => DetectorSettingsDto)
+  detectors: IDetectorSettings[] | null;
 }
 
 class ModuleDataResponse {

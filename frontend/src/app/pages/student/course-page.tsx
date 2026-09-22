@@ -518,28 +518,21 @@ export default function CoursePage() {
     async function fetch() {
       const data = await getSettings(COURSE_ID, VERSION_ID);
       setProctoringData(data);
-      const universalProctorsDisabled =
-        data.settings.proctors.detectors.every(
-          (detector: any) => detector.settings.enabled === false
-        );
-      // Selective proctoring: readItem now resolves item > module > universal
-      // and returns it as itemData.proctoringEnabled. When this item is
-      // explicitly exempted (item or its module overrides to false), disable
-      // for this item even if the course is otherwise universally proctored.
-      //
-      // Deliberately one-directional, same as the pre-existing universal
-      // check this extends: this only ever turns proctoring OFF, never back
-      // ON once disabled. The opposite case -- an item explicitly overridden
-      // to proctor even though the course/module default is off -- needs the
-      // webcam/media-stream lifecycle below (checkMediaPermissions, the
-      // consent dialog, stream registration) to support re-arming mid-session,
-      // which this effect's current one-shot-disable shape doesn't attempt.
-      // ponytail: known gap, re-enable-on-navigation not implemented; upgrade
-      // by making this effect (and the media lifecycle it feeds) symmetric.
-      const itemExemptFromProctoring =
-        itemData && 'proctoringEnabled' in (itemData as object)
-          ? (itemData as {proctoringEnabled?: boolean}).proctoringEnabled === false
-          : false;
+
+      // Selective proctoring: readItem resolves item > module > universal and
+      // returns the resolved detector list as itemData.proctoringDetectors.
+      // When present it's authoritative for this item, so it's what decides
+      // whether *anything* is active here -- not just the course-wide list.
+      // (The resolved list is also what actually gets passed to FloatingVideo
+      // below, so which specific detectors arm follows the item fully
+      // symmetrically already; this check only decides the outer gate.)
+      const resolvedDetectors =
+        (itemData as {proctoringDetectors?: {settings: {enabled: boolean}}[]})
+          ?.proctoringDetectors ?? data.settings.proctors.detectors;
+      const noDetectorsActive = resolvedDetectors.every(
+        (detector: any) => detector.settings.enabled === false,
+      );
+
       // A guest who opened a PLAIN share link is watching a video someone sent
       // them, not working through a proctored course — they take the same path
       // as a course with every detector switched off. Enrolled learners never
@@ -547,7 +540,16 @@ export default function CoursePage() {
       const isPlainShareViewer = useShareLinkStore
         .getState()
         .isPlainViewerFor(COURSE_ID, VERSION_ID);
-      if (universalProctorsDisabled || itemExemptFromProctoring || isPlainShareViewer) {
+
+      // Deliberately one-directional for this *outer* gate (whether the
+      // proctor dialog/session runs at all): once disabled for this session,
+      // it stays disabled rather than re-arming the webcam/consent flow
+      // mid-navigation. Symmetric re-arming needs the media lifecycle below
+      // (checkMediaPermissions, the consent dialog, stream registration) to
+      // support safely, which is separate, still-open work.
+      // ponytail: known gap, re-enable-on-navigation not implemented for the
+      // outer gate specifically.
+      if (noDetectorsActive || isPlainShareViewer) {
         setShowProctorDialog(false);
         setAllProctorsDisabled(true);
         setReadyToDetect(true);
@@ -555,6 +557,31 @@ export default function CoursePage() {
     }
     fetch();
   }, [itemData]);
+
+  // The detector list FloatingVideo actually arms. Swaps in this item's
+  // resolved (item > module > universal) detector list when readItem
+  // returned one, falling back to the course-wide list otherwise -- fully
+  // symmetric, so an item can enable or disable *specific* detectors
+  // relative to the course default, not just a one-way "exempt" flag.
+  const effectiveProctoringSettings = useMemo(() => {
+    const base = proctoringData || {
+      _id: "",
+      studentId: "",
+      versionId: "",
+      courseId: "",
+      settings: {
+        proctors: { detectors: [] },
+        linearProgressionEnabled: true,
+      },
+    };
+    const resolvedDetectors = (itemData as {proctoringDetectors?: any[]})
+      ?.proctoringDetectors;
+    if (!resolvedDetectors) return base;
+    return {
+      ...base,
+      settings: { ...base.settings, proctors: { detectors: resolvedDetectors } },
+    };
+  }, [proctoringData, itemData]);
 
   // Update section items when data is loaded
   useEffect(() => {
@@ -1940,18 +1967,7 @@ return false;
             onClose={() => { }}
             onAnomalyDetected={() => { }}
             setDoGesture={setDoGesture}
-            settings={proctoringData || {
-              _id: "",
-              studentId: "",
-              versionId: "",
-              courseId: "",
-              settings: {
-                proctors: {
-                  detectors: []
-                },
-                linearProgressionEnabled: true
-              }
-            }}
+            settings={effectiveProctoringSettings}
             anomalies={anomalies}
             readyToDetect={readyToDetect}
             setReadyToDetect={setReadyToDetect}

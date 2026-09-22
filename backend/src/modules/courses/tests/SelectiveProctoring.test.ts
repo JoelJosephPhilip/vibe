@@ -40,6 +40,9 @@ import { ModuleController } from '../controllers/ModuleController.js';
 import { SectionController } from '../controllers/SectionController.js';
 import { EnrollmentController } from '#root/modules/users/controllers/EnrollmentController.js';
 import { CourseSettingController } from '#root/modules/setting/controllers/CourseSettingController.js';
+import { AnomalyController } from '#root/modules/anomalies/controllers/AnomalyController.js';
+import { AnomalyType } from '#root/modules/anomalies/classes/transformers/Anomaly.js';
+import { CloudStorageService } from '#root/modules/anomalies/services/CloudStorageService.js';
 import { FirebaseAuthService } from '#root/modules/auth/services/FirebaseAuthService.js';
 import { currentUserChecker } from '#root/shared/functions/currentUserChecker.js';
 import { UserRepository } from '#root/shared/database/providers/mongo/repositories/UserRepository.js';
@@ -53,11 +56,18 @@ const controllers: Function[] = [
   ItemController,
   EnrollmentController,
   CourseSettingController,
+  AnomalyController,
 ];
+
+const validImageBuffer = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=',
+  'base64',
+);
 
 // A course-settings PUT payload must list every ProctoringComponent
 // (enforced by @containsAllDetectors) even when the test only cares about
-// one detector's on/off state.
+// one detector's on/off state. Item/module override PUTs share the same
+// constraint (both validated by the same containsAllDetectors decorator).
 function allDetectors(enabledDetectorNames: ProctoringComponent[] = []) {
   return Object.values(ProctoringComponent).map(detectorName => ({
     detectorName,
@@ -148,6 +158,14 @@ describe('Selective Proctoring Integration Tests', () => {
       roles: 'user',
     });
     registerTestUser('test-token', instructorId, 'admin');
+
+    // uploadAnomaly hits real Google Cloud Storage, which has no credentials
+    // in this test environment -- mock it so the AnomalyController tests
+    // below only exercise the FACE_RECOGNITION gate, not real cloud storage
+    // (same technique AnomalyController.test.ts already uses).
+    vi.spyOn(CloudStorageService.prototype, 'uploadAnomaly').mockResolvedValue(
+      'mock/anomaly/path.jpg',
+    );
   }, 90000);
 
   async function seedCourseStructure() {
@@ -191,17 +209,31 @@ describe('Selective Proctoring Integration Tests', () => {
     return studentToken;
   }
 
-  async function setUniversalProctoring(enabled: boolean) {
+  async function setUniversalProctoring(enabledDetectorNames: ProctoringComponent[]) {
     await request(app)
       .put(`/setting/course-setting/${courseId}/${versionId}/proctoring`)
       .set('Authorization', 'Bearer test-token')
       .send({
-        detectors: allDetectors(
-          enabled ? [ProctoringComponent.CAMERAMICRO] : [],
-        ),
+        detectors: allDetectors(enabledDetectorNames),
         linearProgressionEnabled: false,
         seekForwardEnabled: true,
       })
+      .expect(200);
+  }
+
+  async function putItemDetectors(itemId: string, detectors: ReturnType<typeof allDetectors> | null) {
+    await request(app)
+      .put(`/courses/versions/${versionId}/items/${itemId}/proctoring`)
+      .set('Authorization', 'Bearer test-token')
+      .send({ detectors })
+      .expect(200);
+  }
+
+  async function putModuleDetectors(id: string, detectors: ReturnType<typeof allDetectors> | null) {
+    await request(app)
+      .put(`/courses/versions/${versionId}/modules/${id}/proctoring`)
+      .set('Authorization', 'Bearer test-token')
+      .send({ detectors })
       .expect(200);
   }
 
@@ -219,66 +251,59 @@ describe('Selective Proctoring Integration Tests', () => {
     return res.body.item;
   }
 
+  function isProctored(item: any) {
+    return (item.proctoringDetectors ?? []).some((d: any) => d.settings.enabled);
+  }
+
   it('universal proctoring on, no overrides -> item resolves proctored for the student', async () => {
     await seedCourseStructure();
     const itemResponse = await createQuizItem(app, versionId, moduleId, sectionId);
     const itemId = (itemResponse as any).itemsGroup.items[0]._id;
 
-    await setUniversalProctoring(true);
+    await setUniversalProctoring([ProctoringComponent.CAMERAMICRO]);
     await enrollStudent();
     const item = await getItemAsStudent(itemId);
-    expect(item.proctoringEnabled).toBe(true);
+    expect(isProctored(item)).toBe(true);
   }, 90000);
 
-  it('universal off, item override true -> resolves proctored (selective enable)', async () => {
+  it('universal off, item override enables a specific detector -> resolves proctored with exactly that subset', async () => {
     await seedCourseStructure();
     const itemResponse = await createQuizItem(app, versionId, moduleId, sectionId);
     const itemId = (itemResponse as any).itemsGroup.items[0]._id;
 
-    await setUniversalProctoring(false);
-    await request(app)
-      .put(`/courses/versions/${versionId}/items/${itemId}/proctoring`)
-      .set('Authorization', 'Bearer test-token')
-      .send({ proctoringEnabled: true })
-      .expect(200);
+    await setUniversalProctoring([]);
+    await putItemDetectors(itemId, allDetectors([ProctoringComponent.BLURDETECTION]));
 
     await enrollStudent();
     const item = await getItemAsStudent(itemId);
-    expect(item.proctoringEnabled).toBe(true);
+    expect(item.proctoringDetectors).toEqual(allDetectors([ProctoringComponent.BLURDETECTION]));
+    expect(isProctored(item)).toBe(true);
   }, 90000);
 
-  it('universal on, item override false -> resolves not proctored (selective exception)', async () => {
+  it('universal on, item override to all-off -> resolves not proctored (selective exception)', async () => {
     await seedCourseStructure();
     const itemResponse = await createQuizItem(app, versionId, moduleId, sectionId);
     const itemId = (itemResponse as any).itemsGroup.items[0]._id;
 
-    await setUniversalProctoring(true);
-    await request(app)
-      .put(`/courses/versions/${versionId}/items/${itemId}/proctoring`)
-      .set('Authorization', 'Bearer test-token')
-      .send({ proctoringEnabled: false })
-      .expect(200);
+    await setUniversalProctoring([ProctoringComponent.CAMERAMICRO]);
+    await putItemDetectors(itemId, allDetectors([]));
 
     await enrollStudent();
     const item = await getItemAsStudent(itemId);
-    expect(item.proctoringEnabled).toBe(false);
+    expect(isProctored(item)).toBe(false);
   }, 90000);
 
-  it('module override true, item unset, universal off -> resolves proctored (module tier applies)', async () => {
+  it('module override present, item unset, universal off -> resolves proctored (module tier applies)', async () => {
     await seedCourseStructure();
     const itemResponse = await createQuizItem(app, versionId, moduleId, sectionId);
     const itemId = (itemResponse as any).itemsGroup.items[0]._id;
 
-    await setUniversalProctoring(false);
-    await request(app)
-      .put(`/courses/versions/${versionId}/modules/${moduleId}/proctoring`)
-      .set('Authorization', 'Bearer test-token')
-      .send({ proctoringEnabled: true })
-      .expect(200);
+    await setUniversalProctoring([]);
+    await putModuleDetectors(moduleId, allDetectors([ProctoringComponent.FACECOUNTDETECTION]));
 
     await enrollStudent();
     const item = await getItemAsStudent(itemId);
-    expect(item.proctoringEnabled).toBe(true);
+    expect(item.proctoringDetectors).toEqual(allDetectors([ProctoringComponent.FACECOUNTDETECTION]));
   }, 90000);
 
   it('item override wins over a conflicting module override, which wins over universal', async () => {
@@ -286,21 +311,13 @@ describe('Selective Proctoring Integration Tests', () => {
     const itemResponse = await createQuizItem(app, versionId, moduleId, sectionId);
     const itemId = (itemResponse as any).itemsGroup.items[0]._id;
 
-    await setUniversalProctoring(false);
-    await request(app)
-      .put(`/courses/versions/${versionId}/modules/${moduleId}/proctoring`)
-      .set('Authorization', 'Bearer test-token')
-      .send({ proctoringEnabled: false })
-      .expect(200);
-    await request(app)
-      .put(`/courses/versions/${versionId}/items/${itemId}/proctoring`)
-      .set('Authorization', 'Bearer test-token')
-      .send({ proctoringEnabled: true })
-      .expect(200);
+    await setUniversalProctoring([]);
+    await putModuleDetectors(moduleId, allDetectors([]));
+    await putItemDetectors(itemId, allDetectors([ProctoringComponent.VOICEDETECTION]));
 
     await enrollStudent();
     const item = await getItemAsStudent(itemId);
-    expect(item.proctoringEnabled).toBe(true);
+    expect(item.proctoringDetectors).toEqual(allDetectors([ProctoringComponent.VOICEDETECTION]));
   }, 90000);
 
   it('two items in the same module with different explicit overrides resolve independently', async () => {
@@ -319,17 +336,9 @@ describe('Selective Proctoring Integration Tests', () => {
     const itemB = await createQuizItem(app, versionId, moduleId, sectionBId);
     const itemBId = (itemB as any).itemsGroup.items[0]._id;
 
-    await setUniversalProctoring(false);
-    await request(app)
-      .put(`/courses/versions/${versionId}/items/${itemAId}/proctoring`)
-      .set('Authorization', 'Bearer test-token')
-      .send({ proctoringEnabled: true })
-      .expect(200);
-    await request(app)
-      .put(`/courses/versions/${versionId}/items/${itemBId}/proctoring`)
-      .set('Authorization', 'Bearer test-token')
-      .send({ proctoringEnabled: false })
-      .expect(200);
+    await setUniversalProctoring([]);
+    await putItemDetectors(itemAId, allDetectors([ProctoringComponent.CAMERAMICRO]));
+    await putItemDetectors(itemBId, allDetectors([]));
 
     // Read back as the instructor (bypasses readItem's student-only
     // linear-progression eligibility gate, which is unrelated to what this
@@ -344,8 +353,8 @@ describe('Selective Proctoring Integration Tests', () => {
       .get(`/courses/${courseId}/versions/${versionId}/modules/${moduleId}/sections/${sectionBId}/item/${itemBId}`)
       .set('Authorization', 'Bearer test-token')
       .expect(201);
-    expect(rereadItemA.body.item.proctoringEnabled).toBe(true);
-    expect(rereadItemB.body.item.proctoringEnabled).toBe(false);
+    expect(rereadItemA.body.item.proctoringDetectors).toEqual(allDetectors([ProctoringComponent.CAMERAMICRO]));
+    expect(rereadItemB.body.item.proctoringDetectors).toEqual(allDetectors([]));
   }, 90000);
 
   it('an item with no override field at all (pre-existing content) resolves exactly as universal alone dictates', async () => {
@@ -355,35 +364,26 @@ describe('Selective Proctoring Integration Tests', () => {
     // No PUT .../proctoring call at all -- item/module fields stay absent,
     // exactly like every item that existed before this feature shipped.
 
-    await setUniversalProctoring(true);
+    await setUniversalProctoring([ProctoringComponent.CAMERAMICRO]);
     await enrollStudent();
-    expect((await getItemAsStudent(itemId)).proctoringEnabled).toBe(true);
+    expect(isProctored(await getItemAsStudent(itemId))).toBe(true);
 
-    await setUniversalProctoring(false);
-    const item2 = await getItemAsStudent(itemId);
-    expect(item2.proctoringEnabled).toBe(false);
+    await setUniversalProctoring([]);
+    expect(isProctored(await getItemAsStudent(itemId))).toBe(false);
   }, 90000);
 
-  it('clearing an item override (proctoringEnabled: null) reverts to inherited value', async () => {
+  it('clearing an item override (detectors: null) reverts to inherited value', async () => {
     await seedCourseStructure();
     const itemResponse = await createQuizItem(app, versionId, moduleId, sectionId);
     const itemId = (itemResponse as any).itemsGroup.items[0]._id;
 
-    await setUniversalProctoring(true);
-    await request(app)
-      .put(`/courses/versions/${versionId}/items/${itemId}/proctoring`)
-      .set('Authorization', 'Bearer test-token')
-      .send({ proctoringEnabled: false })
-      .expect(200);
-    await request(app)
-      .put(`/courses/versions/${versionId}/items/${itemId}/proctoring`)
-      .set('Authorization', 'Bearer test-token')
-      .send({ proctoringEnabled: null })
-      .expect(200);
+    await setUniversalProctoring([ProctoringComponent.CAMERAMICRO]);
+    await putItemDetectors(itemId, allDetectors([]));
+    await putItemDetectors(itemId, null);
 
     await enrollStudent();
     const item = await getItemAsStudent(itemId);
-    expect(item.proctoringEnabled).toBe(true);
+    expect(isProctored(item)).toBe(true);
   }, 90000);
 
   it('rejects a STUDENT-role caller on both new PUT endpoints, and an unauthenticated caller', async () => {
@@ -395,21 +395,21 @@ describe('Selective Proctoring Integration Tests', () => {
     await request(app)
       .put(`/courses/versions/${versionId}/items/${itemId}/proctoring`)
       .set('Authorization', `Bearer ${studentToken}`)
-      .send({ proctoringEnabled: true })
+      .send({ detectors: allDetectors([ProctoringComponent.CAMERAMICRO]) })
       .expect(403);
     await request(app)
       .put(`/courses/versions/${versionId}/modules/${moduleId}/proctoring`)
       .set('Authorization', `Bearer ${studentToken}`)
-      .send({ proctoringEnabled: true })
+      .send({ detectors: allDetectors([ProctoringComponent.CAMERAMICRO]) })
       .expect(403);
 
     await request(app)
       .put(`/courses/versions/${versionId}/items/${itemId}/proctoring`)
-      .send({ proctoringEnabled: true })
+      .send({ detectors: allDetectors([ProctoringComponent.CAMERAMICRO]) })
       .expect(401);
     await request(app)
       .put(`/courses/versions/${versionId}/modules/${moduleId}/proctoring`)
-      .send({ proctoringEnabled: true })
+      .send({ detectors: allDetectors([ProctoringComponent.CAMERAMICRO]) })
       .expect(401);
   }, 90000);
 
@@ -418,15 +418,46 @@ describe('Selective Proctoring Integration Tests', () => {
     const itemResponse = await createQuizItem(app, versionId, moduleId, sectionId);
     const itemId = (itemResponse as any).itemsGroup.items[0]._id;
 
-    await request(app)
-      .put(`/courses/versions/${versionId}/items/${itemId}/proctoring`)
-      .set('Authorization', 'Bearer test-token')
-      .send({ proctoringEnabled: true })
-      .expect(200);
-    await request(app)
-      .put(`/courses/versions/${versionId}/modules/${moduleId}/proctoring`)
-      .set('Authorization', 'Bearer test-token')
-      .send({ proctoringEnabled: true })
-      .expect(200);
+    await putItemDetectors(itemId, allDetectors([ProctoringComponent.CAMERAMICRO]));
+    await putModuleDetectors(moduleId, allDetectors([ProctoringComponent.CAMERAMICRO]));
   }, 90000);
+
+  describe('AnomalyController FACE_RECOGNITION gate respects item-level overrides', () => {
+    async function postFaceRecognitionAnomaly(itemId: string, moduleIdForBody?: string) {
+      return request(app)
+        .post('/anomalies/record/image')
+        .set('Authorization', 'Bearer test-token')
+        .field('type', AnomalyType.FACE_RECOGNITION)
+        .field('courseId', courseId)
+        .field('versionId', versionId)
+        .field('itemId', itemId)
+        .field('moduleId', moduleIdForBody ?? moduleId)
+        .attach('image', validImageBuffer, 'test-image.png');
+    }
+
+    it('course-level FACE_RECOGNITION on, item override turns it off -> rejected', async () => {
+      await seedCourseStructure();
+      const itemResponse = await createQuizItem(app, versionId, moduleId, sectionId);
+      const itemId = (itemResponse as any).itemsGroup.items[0]._id;
+
+      await setUniversalProctoring([ProctoringComponent.FACERECOGNITION]);
+      await putItemDetectors(itemId, allDetectors([])); // explicitly off for this item
+
+      const res = await postFaceRecognitionAnomaly(itemId);
+      expect(res.status).toBe(403);
+      expect(res.body.message).toMatch(/Face recognition is disabled/i);
+    }, 90000);
+
+    it('course-level FACE_RECOGNITION off, item override turns it on -> accepted', async () => {
+      await seedCourseStructure();
+      const itemResponse = await createQuizItem(app, versionId, moduleId, sectionId);
+      const itemId = (itemResponse as any).itemsGroup.items[0]._id;
+
+      await setUniversalProctoring([]);
+      await putItemDetectors(itemId, allDetectors([ProctoringComponent.FACERECOGNITION]));
+
+      const res = await postFaceRecognitionAnomaly(itemId);
+      expect(res.status).toBe(201);
+    }, 90000);
+  });
 });

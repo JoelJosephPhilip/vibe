@@ -33,6 +33,7 @@ import {
   VersionModuleSectionItemParams,
   VersionItemParams,
   ItemProctoringParams,
+  ItemProctoringBody,
   GetFeedbackSubmissionsParams,
   GetFeedbackSubmissionsQuery,
   CSVItemBody,
@@ -52,7 +53,7 @@ import {Ability} from '#root/shared/functions/AbilityDecorator.js';
 import {subject} from '@casl/ability';
 import {QuizService} from '#root/modules/quizzes/services/QuizService.js';
 import {QUIZZES_TYPES} from '#root/modules/quizzes/types.js';
-import {ItemType, IUser} from '#shared/interfaces/models.js';
+import {ItemType, IUser, IDetectorSettings} from '#shared/interfaces/models.js';
 import {HideModuleBody} from '../classes/index.js';
 import {createObjectCsvStringifier} from 'csv-writer';
 import {Response} from 'express';
@@ -907,7 +908,7 @@ Accessible to:
   })
   async updateProctoringStatus(
     @Params() params: ItemProctoringParams,
-    @Body() body: {proctoringEnabled: boolean | null},
+    @Body() body: ItemProctoringBody,
     @Ability(getItemAbility) {ability, user, authenticatedUser},
     @Req() req: Request,
   ) {
@@ -944,13 +945,13 @@ Accessible to:
       },
       changes: {
         before: {
-          // The resolved (effective) value before this change -- readItem
-          // returns the item>module>universal resolution, not the item's
-          // own raw override, so this reflects what was actually in effect.
-          proctoringEnabled: (getItemBeforeUpdate as {proctoringEnabled?: boolean}).proctoringEnabled,
+          // This item's own raw stored override before the change (instructor
+          // callers get the raw item from readItem, not the resolved value --
+          // resolution only happens on the student-facing path).
+          detectors: (getItemBeforeUpdate as {proctoringDetectors?: IDetectorSettings[] | null}).proctoringDetectors,
         },
         after: {
-          proctoringEnabled: body.proctoringEnabled,
+          detectors: body.detectors,
         },
       },
       outcome: {
@@ -961,7 +962,7 @@ Accessible to:
     return await this.itemService.updateItemProctoringStatus(
       versionId,
       itemId,
-      body.proctoringEnabled,
+      body.detectors,
     );
   }
 

@@ -23,7 +23,7 @@ import { AnomalyDataResponse, AnomalyStats, AnomalyType, FileType } from '../cla
 import { SETTING_TYPES } from '#root/modules/setting/types.js';
 import { CourseSettingService } from '#root/modules/setting/services/CourseSettingService.js';
 import { ProctoringComponent } from '#root/shared/database/interfaces/ISettingRepository.js';
-import { PaginationQuery, resolveProctoringEnabled } from '#root/shared/index.js';
+import { PaginationQuery, resolveProctoringDetectors, isDetectorEnabled } from '#root/shared/index.js';
 import { GLOBAL_TYPES } from '#root/types.js';
 import { COURSES_TYPES } from '#root/modules/courses/types.js';
 import type { ICourseRepository } from '#root/shared/database/interfaces/ICourseRepository.js';
@@ -89,30 +89,27 @@ export class AnomalyController {
         this.itemRepo.readItemById(itemId.toString()),
         // Only needed to resolve the module's own override — skip if the
         // client didn't send moduleId (item-level + universal still resolve
-        // correctly without it, per resolveProctoringEnabled's precedence).
+        // correctly without it, per resolveProctoringDetectors' precedence).
         moduleId ? this.courseRepo.readVersion(versionId.toString()) : null,
       ]);
 
-      const detector = courseSetting?.settings?.proctors?.detectors?.find(
-        d => d.detectorName === ProctoringComponent.FACERECOGNITION,
-      );
       const itemModule = moduleId
         ? courseVersion?.modules?.find(
             m => m.moduleId?.toString() === moduleId.toString(),
           )
         : undefined;
-      const isItemProctored = resolveProctoringEnabled(
+      // Resolves the item's own/module's detector override before falling
+      // back to the course-wide list, so an item-level override can turn
+      // FACE_RECOGNITION off (or on) even if the course-level setting says
+      // otherwise -- unlike the old course-only check, this respects
+      // selective proctoring instead of ignoring it.
+      const resolvedDetectors = resolveProctoringDetectors(
         item ?? undefined,
         itemModule,
         courseSetting,
       );
 
-      // Detector *type* selection (is FACERECOGNITION configured at all)
-      // stays course-wide, per resolveProctoringEnabled's own doc comment --
-      // only whether proctoring applies to THIS item is selective. Both must
-      // hold: the course must have this detector on, and this specific item
-      // (after its own/its module's override) must actually be proctored.
-      if (!detector?.settings?.enabled || !isItemProctored) {
+      if (!isDetectorEnabled(resolvedDetectors, ProctoringComponent.FACERECOGNITION)) {
         throw new ForbiddenError('Face recognition is disabled for this item');
       }
     }

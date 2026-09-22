@@ -1,7 +1,7 @@
 import { GLOBAL_TYPES } from '#root/types.js';
 import { ICourseRepository } from '#shared/database/interfaces/ICourseRepository.js';
 import { IItemRepository } from '#shared/database/interfaces/IItemRepository.js';
-import { IQuizItem, ItemType } from '#shared/interfaces/models.js';
+import { IQuizItem, ItemType, IDetectorSettings } from '#shared/interfaces/models.js';
 import { instanceToPlain } from 'class-transformer';
 import { injectable, inject } from 'inversify';
 import { Collection, ClientSession, ObjectId } from 'mongodb';
@@ -1046,7 +1046,7 @@ export class ItemRepository implements IItemRepository {
   async updateItemProctoringOverride(
     itemId: string,
     itemType: string,
-    proctoringEnabled: boolean | null,
+    detectors: IDetectorSettings[] | null,
     session?: ClientSession,
   ): Promise<Item> {
     await this.init();
@@ -1077,9 +1077,9 @@ export class ItemRepository implements IItemRepository {
     }
 
     const update =
-      proctoringEnabled === null
-        ? { $unset: { proctoringEnabled: '' } }
-        : { $set: { proctoringEnabled } };
+      detectors === null
+        ? { $unset: { proctoringDetectors: '' } }
+        : { $set: { proctoringDetectors: detectors } };
 
     const result = await collection.findOneAndUpdate(
       { _id: new ObjectId(itemId) },

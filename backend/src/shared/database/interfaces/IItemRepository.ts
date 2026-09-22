@@ -1,6 +1,6 @@
 import {Item, ItemRef, ItemsGroup} from '#courses/classes/transformers/Item.js';
 import {UpdateItemBody} from '#root/modules/courses/classes/index.js';
-import {IQuizItem} from '#root/shared/interfaces/models.js';
+import {IQuizItem, IDetectorSettings} from '#root/shared/interfaces/models.js';
 import {ClientSession, ObjectId} from 'mongodb';
 
 export interface IItemRepository {
@@ -57,7 +57,7 @@ export interface IItemRepository {
   updateItemProctoringOverride(
     itemId: string,
     itemType: string,
-    proctoringEnabled: boolean | null,
+    detectors: IDetectorSettings[] | null,
     session?: ClientSession,
   ): Promise<Item>;
 
