@@ -81,6 +81,7 @@ import type {
 } from '@/types/reportanomaly.types';
 
 import type { ProctoringSettings } from '@/types/video.types';
+import type { DetectorSetting } from '@/components/proctoring-detectors';
 import { InviteBody, InviteResponse, MessageResponse } from '@/types/invite.types';
 import { EntityType, IReport, ReportStatus } from '@/types/flag.types';
 import { PendingRegistrationNotification, ApprovedRegistrationNotification, PendingStudentRegistrationNotification, RejectedStudentRegistrationNotification } from '@/types/notification.types';
@@ -2096,7 +2097,7 @@ export function useUpdateItemProctoring(): {
   mutate: (variables: { params: { path: { versionId: ObjectId, itemId: ObjectId } } }) => void,
   mutateAsync: (variables: {
     params: { path: { versionId: ObjectId, itemId: ObjectId } },
-    body: { proctoringEnabled: boolean }
+    body: { detectors: DetectorSetting[] | null }
   }) => Promise<unknown>,
   data: unknown | undefined,
   error: string | null,
@@ -2120,7 +2121,7 @@ export function useUpdateModuleProctoring(): {
   mutate: (variables: { params: { path: { versionId: ObjectId, moduleId: ObjectId } } }) => void,
   mutateAsync: (variables: {
     params: { path: { versionId: ObjectId, moduleId: ObjectId } },
-    body: { proctoringEnabled: boolean }
+    body: { detectors: DetectorSetting[] | null }
   }) => Promise<unknown>,
   data: unknown | undefined,
   error: string | null,
