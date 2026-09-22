@@ -39,12 +39,13 @@ import {
   EnrollmentRepository,
   IBaseItem,
   ICourseVersion,
+  IDetectorSettings,
   IQuizDetails,
   ItemType,
   Priority,
   ProgressRepository,
   QuestionType,
-  resolveProctoringEnabled,
+  resolveProctoringDetectors,
 } from '#root/shared/index.js';
 import { USERS_TYPES } from '#root/modules/users/types.js';
 import { ProgressService } from '#root/modules/users/services/ProgressService.js';
@@ -652,12 +653,12 @@ export class ItemService extends BaseService {
       this.courseSettingService.readCourseSettings(courseId, versionId),
     ]);
 
-    // Item > module > universal (course-derived) — see resolveProctoringEnabled.
+    // Item > module > universal (course-derived) — see resolveProctoringDetectors.
     const itemModule = courseVersion?.modules?.find(
       m => m.moduleId?.toString() === moduleId,
     );
-    const resolvedProctoringEnabled = resolveProctoringEnabled(
-      item as {proctoringEnabled?: boolean},
+    const resolvedProctoringDetectors = resolveProctoringDetectors(
+      item as {proctoringDetectors?: IDetectorSettings[] | null},
       itemModule,
       courseSettings,
     );
@@ -682,7 +683,7 @@ export class ItemService extends BaseService {
       ...item,
       _id: item._id.toString(),
       isAlreadyWatched,
-      proctoringEnabled: resolvedProctoringEnabled,
+      proctoringDetectors: resolvedProctoringDetectors,
     });
 
     // If linear progression is disabled, allow immediately
@@ -1304,15 +1305,15 @@ export class ItemService extends BaseService {
   }
 
   /**
-   * `proctoringEnabled: null` clears this item's override back to "inherit
-   * the module/course setting" -- see IItemRepository.updateItemProctoringOverride
+   * `detectors: null` clears this item's override back to "inherit the
+   * module/course setting" -- see IItemRepository.updateItemProctoringOverride
    * for why this needs its own dedicated repository method rather than
    * reusing updateItem's generic field whitelist.
    */
   public async updateItemProctoringStatus(
     versionId: string,
     itemId: string,
-    proctoringEnabled: boolean | null,
+    detectors: IDetectorSettings[] | null,
   ) {
     return this._withTransaction(async session => {
       const versionStatus=await this.courseRepo.getCourseVersionStatus(versionId,session);
@@ -1331,7 +1332,7 @@ export class ItemService extends BaseService {
       const result = await this.itemRepo.updateItemProctoringOverride(
         itemId,
         item.type,
-        proctoringEnabled,
+        detectors,
         session,
       );
 

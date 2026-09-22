@@ -39,8 +39,13 @@ import {
   IProjectDetails,
   IFeedBackFormDetails,
   VideoSource,
+  IDetectorSettings,
 } from '#root/shared/interfaces/models.js';
 import { OnlyOneId } from './customValidators.js';
+import {
+  DetectorSettingsDto,
+  containsAllDetectors,
+} from '#root/modules/setting/classes/validators/CourseSettingValidators.js';
 
 class VideoDetailsPayloadValidator implements IVideoDetails {
   @JSONSchema({
@@ -471,16 +476,6 @@ class CreateItemBody implements Partial<IBaseItem> {
   isOptional?: boolean;
 
   @JSONSchema({
-    description:
-      'Overrides the module/course proctoring default for this item. Omit to inherit.',
-    example: true,
-    type: 'boolean',
-  })
-  @IsBoolean()
-  @IsOptional()
-  proctoringEnabled?: boolean;
-
-  @JSONSchema({
     description: 'Details specific to video items',
     type: 'object',
   })
@@ -594,16 +589,6 @@ class UpdateItemBody implements Partial<IBaseItem> {
   @IsBoolean()
   @IsOptional()
   isOptional?: boolean;
-
-  @JSONSchema({
-    description:
-      'Overrides the module/course proctoring default for this item. Omit to inherit.',
-    example: true,
-    type: 'boolean',
-  })
-  @IsBoolean()
-  @IsOptional()
-  proctoringEnabled?: boolean;
 
   @JSONSchema({
     description: 'Details specific to video items',
@@ -820,6 +805,21 @@ class ItemProctoringParams {
   @IsMongoId()
   @IsString()
   itemId: string;
+}
+
+class ItemProctoringBody {
+  @JSONSchema({
+    title: 'Item Proctoring Detector Override',
+    description:
+      "Overrides the module/course proctoring detector list for this item. Pass null to clear the override and inherit again. When not null, must list every detector (same shape as the course-level proctoring settings).",
+    type: 'array',
+    nullable: true,
+  })
+  @ValidateIf(o => o.detectors !== null)
+  @ValidateNested({each: true})
+  @containsAllDetectors()
+  @Type(() => DetectorSettingsDto)
+  detectors: IDetectorSettings[] | null;
 }
 
 class DeleteItemParams {
@@ -1279,6 +1279,7 @@ export {
   CSVQuizQuestion,
   VersionItemParams,
   ItemProctoringParams,
+  ItemProctoringBody,
   DeleteItemParams,
   ItemNotFoundErrorResponse,
   ItemDataResponse,
@@ -1303,6 +1304,7 @@ export const ITEM_VALIDATORS = [
   CSVQuizQuestion,
   VersionItemParams,
   ItemProctoringParams,
+  ItemProctoringBody,
   DeleteItemParams,
   ItemNotFoundErrorResponse,
   ItemDataResponse,
