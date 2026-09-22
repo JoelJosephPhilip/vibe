@@ -2912,11 +2912,16 @@ function TeacherCourseContent() {
                                   </div>
                                 </div>
                                 {isOverriding && (
-                                  <DetectorChecklist
-                                    value={itemOverride ?? allDetectorsOff()}
-                                    disabled={isBusy}
-                                    onChange={next => saveItemDetectors(next)}
-                                  />
+                                  <>
+                                    <DetectorChecklist
+                                      value={itemOverride ?? allDetectorsOff()}
+                                      disabled={isBusy}
+                                      onChange={next => saveItemDetectors(next)}
+                                    />
+                                    <p className="text-xs text-muted-foreground">
+                                      Leave all unchecked to disable proctoring entirely for this item.
+                                    </p>
+                                  </>
                                 )}
                               </div>
                             );
@@ -2979,11 +2984,16 @@ function TeacherCourseContent() {
                                   </div>
                                 </div>
                                 {isOverriding && (
-                                  <DetectorChecklist
-                                    value={moduleOverride ?? allDetectorsOff()}
-                                    disabled={isBusy}
-                                    onChange={next => saveModuleDetectors(next)}
-                                  />
+                                  <>
+                                    <DetectorChecklist
+                                      value={moduleOverride ?? allDetectorsOff()}
+                                      disabled={isBusy}
+                                      onChange={next => saveModuleDetectors(next)}
+                                    />
+                                    <p className="text-xs text-muted-foreground">
+                                      Leave all unchecked to disable proctoring entirely for items in this module.
+                                    </p>
+                                  </>
                                 )}
                               </div>
                             );
