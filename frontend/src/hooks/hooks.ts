@@ -2106,7 +2106,20 @@ export function useUpdateItemProctoring(): {
   isError: boolean,
   isIdle: boolean,
 } {
-  const result = api.useMutation("put", "/courses/versions/{versionId}/items/{itemId}/proctoring");
+  const queryClient = useQueryClient();
+  const result = api.useMutation("put", "/courses/versions/{versionId}/items/{itemId}/proctoring", {
+    onSuccess: () => {
+      // Without this, useItemById keeps serving its pre-update cached
+      // resolved detector list -- the override saved correctly, the UI
+      // just never knew to ask again.
+      queryClient.invalidateQueries({
+        predicate: (query) =>
+          query.queryKey[0] === "get" &&
+          query.queryKey[1] ===
+          "/courses/{courseId}/versions/{versionId}/modules/{moduleId}/sections/{sectionId}/item/{itemId}",
+      });
+    },
+  });
   return {
     ...result,
     error: result.error ? (result.error.message || 'Failed to update item proctoring') : null
@@ -2130,7 +2143,20 @@ export function useUpdateModuleProctoring(): {
   isError: boolean,
   isIdle: boolean,
 } {
-  const result = api.useMutation("put", "/courses/versions/{versionId}/modules/{moduleId}/proctoring");
+  const queryClient = useQueryClient();
+  const result = api.useMutation("put", "/courses/versions/{versionId}/modules/{moduleId}/proctoring", {
+    onSuccess: () => {
+      // A module override changes the resolved detectors for every item in
+      // it that doesn't have its own item-level override -- invalidate every
+      // cached item, not just one, so none of them keep serving stale data.
+      queryClient.invalidateQueries({
+        predicate: (query) =>
+          query.queryKey[0] === "get" &&
+          query.queryKey[1] ===
+          "/courses/{courseId}/versions/{versionId}/modules/{moduleId}/sections/{sectionId}/item/{itemId}",
+      });
+    },
+  });
   return {
     ...result,
     error: result.error ? (result.error.message || 'Failed to update module proctoring') : null

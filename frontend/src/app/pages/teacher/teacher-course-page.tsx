@@ -2880,7 +2880,13 @@ function TeacherCourseContent() {
                                   params: { path: { versionId, itemId } },
                                   body: { detectors },
                                 });
-                                refetchItem();
+                                // Awaited so isBusy (and the Switch's disabled
+                                // state) doesn't clear until the new value has
+                                // actually landed -- otherwise the switch
+                                // re-enables while still showing the stale
+                                // checked state, and a click in that gap fires
+                                // a second save that races the first.
+                                await refetchItem();
                               } catch (error) {
                                 toast.error('Failed to update item proctoring status');
                               } finally {
@@ -2952,7 +2958,7 @@ function TeacherCourseContent() {
                                     ? { type: "module", data: { ...prev.data, proctoringDetectors: detectors ?? undefined } }
                                     : prev
                                 );
-                                refetchVersion();
+                                await refetchVersion();
                               } catch (error) {
                                 toast.error('Failed to update module proctoring status');
                               } finally {
