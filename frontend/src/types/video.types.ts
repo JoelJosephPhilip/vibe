@@ -47,7 +47,7 @@ export interface VideoProps {
  * the parent can await a stop before navigating away from an in-progress video.
  */
 export interface VideoRef {
-  stopItem: () => void;
+  stopItem: () => Promise<void>;
 }
 
 
@@ -131,6 +131,9 @@ export interface StudentProctoringSettings {
     };
     linearProgressionEnabled: boolean;
     seekForwardEnabled: boolean;
+    caseStudiesEnabled?: boolean;
+    caseStudyStrictUnlockEnabled?: boolean;
+    caseStudyWeakStreakThreshold?: number;
   };
 }
 
