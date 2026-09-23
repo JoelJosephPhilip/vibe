@@ -520,15 +520,19 @@ export default function CoursePage() {
       setProctoringData(data);
 
       // Selective proctoring: readItem resolves item > module > universal and
-      // returns the resolved detector list as itemData.proctoringDetectors.
+      // returns the resolved detector list as itemData.item.proctoringDetectors
+      // -- ItemController wraps the service's response as { item: ... }, so
+      // this must go through .item, not itemData.proctoringDetectors directly
+      // (that's always undefined, silently falling back to the course-wide
+      // list below -- which is why item/module overrides never took effect).
       // When present it's authoritative for this item, so it's what decides
       // whether *anything* is active here -- not just the course-wide list.
       // (The resolved list is also what actually gets passed to FloatingVideo
       // below, so which specific detectors arm follows the item fully
       // symmetrically already; this check only decides the outer gate.)
       const resolvedDetectors =
-        (itemData as {proctoringDetectors?: {settings: {enabled: boolean}}[]})
-          ?.proctoringDetectors ?? data.settings.proctors.detectors;
+        (itemData as {item?: {proctoringDetectors?: {settings: {enabled: boolean}}[]}})
+          ?.item?.proctoringDetectors ?? data.settings.proctors.detectors;
       const noDetectorsActive = resolvedDetectors.every(
         (detector: any) => detector.settings.enabled === false,
       );
@@ -574,8 +578,8 @@ export default function CoursePage() {
         linearProgressionEnabled: true,
       },
     };
-    const resolvedDetectors = (itemData as {proctoringDetectors?: any[]})
-      ?.proctoringDetectors;
+    const resolvedDetectors = (itemData as {item?: {proctoringDetectors?: any[]}})
+      ?.item?.proctoringDetectors;
     if (!resolvedDetectors) return base;
     return {
       ...base,
