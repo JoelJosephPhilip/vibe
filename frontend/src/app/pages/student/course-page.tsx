@@ -168,8 +168,14 @@ export default function CoursePage() {
         streamRef.current = null;
       }
     };
+    // allProctorsDisabled is a real dependency, not just an extra guard: when
+    // it flips back to false (an item re-enabling detectors after an earlier
+    // item in the session disabled them all), this effect must re-run to
+    // actually re-acquire the camera/mic stream -- without it in the deps
+    // array, allProctorsDisabled flipping false was invisible to this effect
+    // and the stream was never requested again.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showProctorDialog, consentSatisfied]);
+  }, [showProctorDialog, consentSatisfied, allProctorsDisabled]);
 
   // Get the setCurrentCourse function from the store
   const { setCurrentCourse } = useCourseStore();
@@ -541,18 +547,27 @@ export default function CoursePage() {
         .getState()
         .isPlainViewerFor(COURSE_ID, VERSION_ID);
 
-      // Deliberately one-directional for this *outer* gate (whether the
-      // proctor dialog/session runs at all): once disabled for this session,
-      // it stays disabled rather than re-arming the webcam/consent flow
-      // mid-navigation. Symmetric re-arming needs the media lifecycle below
-      // (checkMediaPermissions, the consent dialog, stream registration) to
-      // support safely, which is separate, still-open work.
-      // ponytail: known gap, re-enable-on-navigation not implemented for the
-      // outer gate specifically.
+      // Bidirectional: an item with every detector off must disable the
+      // outer gate, and a later item with any detector back on must re-arm
+      // it -- otherwise the first all-off item a student visits permanently
+      // kills proctoring for the rest of the session regardless of what
+      // later items require. setShowProctorDialog is deliberately left
+      // alone here: that's the one-time-per-session notice dialog, not the
+      // detection status, and re-showing it on every item would be noise.
+      // Re-acquiring the camera/mic stream itself happens in the
+      // checkMediaPermissions effect above, which has allProctorsDisabled
+      // in its dependency array for exactly this transition.
       if (noDetectorsActive || isPlainShareViewer) {
         setShowProctorDialog(false);
         setAllProctorsDisabled(true);
         setReadyToDetect(true);
+      } else {
+        setAllProctorsDisabled(false);
+        // Stale true from a previous all-off item would let FloatingVideo's
+        // detection checks fire immediately on the freshly re-acquired
+        // stream, before its own models/warm-up actually catch up -- let it
+        // re-set this itself once ready, same as on first mount.
+        setReadyToDetect(false);
       }
     }
     fetch();
