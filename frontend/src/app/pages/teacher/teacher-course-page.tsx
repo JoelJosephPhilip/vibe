@@ -326,6 +326,17 @@ function TeacherCourseContent() {
   const [togglingItemId, setTogglingItemId] = useState<string | null>(null);
   const [togglingItemProctoringId, setTogglingItemProctoringId] = useState<string | null>(null);
   const [togglingModuleProctoringId, setTogglingModuleProctoringId] = useState<string | null>(null);
+  // Optimistic value shown the instant a proctoring toggle/checklist is
+  // clicked, before the save round-trip lands -- cleared on settle (success
+  // or failure), which snaps the UI back to real server data either way.
+  const [optimisticItemDetectors, setOptimisticItemDetectors] = useState<{
+    itemId: string;
+    detectors: DetectorSetting[] | null;
+  } | null>(null);
+  const [optimisticModuleDetectors, setOptimisticModuleDetectors] = useState<{
+    moduleId: string;
+    detectors: DetectorSetting[] | null;
+  } | null>(null);
 
   // Check if a project already exists in any section
   const hasExistingProject = useMemo(() => {
@@ -2901,15 +2912,18 @@ function TeacherCourseContent() {
                             </div>
                           )}
                           {selectedEntity.type === "item" && (() => {
-                            const itemOverride: DetectorSetting[] | null | undefined =
-                              selectedItemData?.item?.proctoringDetectors;
-                            const isOverriding = itemOverride != null;
                             const itemId = selectedItemData?.item?._id;
+                            const itemOverride: DetectorSetting[] | null | undefined =
+                              optimisticItemDetectors && optimisticItemDetectors.itemId === itemId
+                                ? optimisticItemDetectors.detectors
+                                : selectedItemData?.item?.proctoringDetectors;
+                            const isOverriding = itemOverride != null;
                             const isBusy =
                               updateItemProctoring.isPending && togglingItemProctoringId === itemId;
                             const saveItemDetectors = async (detectors: DetectorSetting[] | null) => {
                               if (!versionId || !itemId) return;
                               setTogglingItemProctoringId(itemId);
+                              setOptimisticItemDetectors({ itemId, detectors });
                               try {
                                 await updateItemProctoring.mutateAsync({
                                   params: { path: { versionId, itemId } },
@@ -2925,6 +2939,11 @@ function TeacherCourseContent() {
                               } catch (error) {
                                 toast.error('Failed to update item proctoring status');
                               } finally {
+                                // Clears the optimistic value either way: on
+                                // success the just-awaited refetch already has
+                                // the real value, on failure this snaps back
+                                // to whatever selectedItemData still says.
+                                setOptimisticItemDetectors(null);
                                 setTogglingItemProctoringId(null);
                               }
                             };
@@ -2968,15 +2987,18 @@ function TeacherCourseContent() {
                             );
                           })()}
                           {selectedEntity.type === "module" && (() => {
-                            const moduleOverride: DetectorSetting[] | null | undefined =
-                              selectedEntity.data?.proctoringDetectors;
-                            const isOverriding = moduleOverride != null;
                             const moduleId = selectedEntity.data?.moduleId;
+                            const moduleOverride: DetectorSetting[] | null | undefined =
+                              optimisticModuleDetectors && optimisticModuleDetectors.moduleId === moduleId
+                                ? optimisticModuleDetectors.detectors
+                                : selectedEntity.data?.proctoringDetectors;
+                            const isOverriding = moduleOverride != null;
                             const isBusy =
                               updateModuleProctoring.isPending && togglingModuleProctoringId === moduleId;
                             const saveModuleDetectors = async (detectors: DetectorSetting[] | null) => {
                               if (!versionId || !moduleId) return;
                               setTogglingModuleProctoringId(moduleId);
+                              setOptimisticModuleDetectors({ moduleId, detectors });
                               try {
                                 await updateModuleProctoring.mutateAsync({
                                   params: { path: { versionId, moduleId } },
@@ -2997,6 +3019,9 @@ function TeacherCourseContent() {
                               } catch (error) {
                                 toast.error('Failed to update module proctoring status');
                               } finally {
+                                // On failure this drops back to selectedEntity.data's
+                                // original value since it was never overwritten above.
+                                setOptimisticModuleDetectors(null);
                                 setTogglingModuleProctoringId(null);
                               }
                             };
