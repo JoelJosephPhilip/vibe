@@ -286,27 +286,6 @@ export class CourseVersionService extends BaseService {
       const version = instanceToPlain(
         Object.assign(new CourseVersion(), readVersion),
       ) as CourseVersion;
-
-      // instanceToPlain drops each module's proctoringDetectors entirely --
-      // confirmed live: a module holding a full 8-entry array serialises with
-      // the key absent, exactly like a module that has no override at all.
-      // The teacher panel reads this field to decide whether a module
-      // overrides the course's proctoring, so losing it makes every module
-      // render as "Inherits" even when an override IS set -- which silently
-      // hides the override and leaves no way to clear it from the UI.
-      // Re-attach from the pre-serialisation data, matched by moduleId.
-      const overrideByModuleId = new Map(
-        (readVersion.modules ?? []).map(m => [
-          m.moduleId?.toString(),
-          m.proctoringDetectors ?? null,
-        ]),
-      );
-      version.modules = (version.modules ?? []).map(m => ({
-        ...m,
-        proctoringDetectors:
-          overrideByModuleId.get(m.moduleId?.toString()) ?? null,
-      }));
-
       return { ...version, hpSystem: hpSystem,shouldRandomize: shouldRandomize };
     });
   }
