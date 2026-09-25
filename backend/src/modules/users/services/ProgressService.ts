@@ -2721,12 +2721,51 @@ class ProgressService extends BaseService {
         percentCompleted >= FOLLOW_UP_INVITE_THRESHOLD;
 
       if (percentCompleted > 99) {
-        await this.recalculateStudentProgress(
-          userId,
-          courseId,
-          courseVersionId,
-          cohortId,
-        );
+        // session must be passed here: without it, this recalculation reads
+        // student-completion data from outside the still-open transaction,
+        // missing the very item completion that triggered it, and its own
+        // write then silently overwrites the correct percentCompleted step
+        // 10 just computed with a stale, too-low value.
+        //
+        // This is also a best-effort consistency pass on top of the
+        // authoritative update a few lines above, already part of this same
+        // transaction -- it must never be the reason the student's actual
+        // completion gets rolled back. recalculateStudentProgress throws
+        // NotFoundError/BadRequestError for edge cases (e.g. a course with
+        // no non-hidden items), which would otherwise abort this entire
+        // transaction over a step whose job is only to double-check, not to
+        // record, the completion.
+        try {
+          await this.recalculateStudentProgress(
+            userId,
+            courseId,
+            courseVersionId,
+            cohortId,
+            session,
+          );
+        } catch (err) {
+          // Only swallow the specific validation-edge-case errors
+          // recalculateStudentProgress deliberately throws BEFORE any
+          // write (NotFoundError/BadRequestError, e.g. "no items found for
+          // this course version"). A genuine MongoDB-level error from one
+          // of its own now-session-threaded writes must NOT be swallowed
+          // here: by the time it's thrown, MongoDB has already marked
+          // this transaction dead server-side, so silently continuing
+          // doesn't "protect" step 10's write -- it just means the next
+          // operation (step 11, the actual completion write) throws a
+          // confusing NoSuchTransaction instead of the original, useful
+          // error, while step 10 survives as a stale, inconsistent
+          // partial write instead of a clean rollback. Let it propagate
+          // so _withTransaction's existing retry/abort handling does the
+          // right thing, the same as any other failure in this transaction.
+          if (!(err instanceof NotFoundError || err instanceof BadRequestError)) {
+            throw err;
+          }
+          console.error(
+            `recalculateStudentProgress failed as a post-completion consistency check for user ${userId}, course ${courseId}/${courseVersionId}:`,
+            err,
+          );
+        }
       }
 
       // ----------------------------------------------------
@@ -3025,6 +3064,11 @@ class ProgressService extends BaseService {
    * and stays incomplete, so this recovers lost progress without handing out
    * completions and without weakening linear progression.
    *
+   * BLOG is the one exception to needing a heartbeat at all: isValidWatchTime
+   * never checks duration for it (no minimum reading time exists in the live
+   * path either), so a blog read fast enough to lose its stop call before the
+   * first 15s heartbeat still gets closed here, falling back to startTime.
+   *
    * Safe to run concurrently across instances and safe to re-run: closing is
    * guarded on the row still being open, and the pointer only moves when it is
    * still parked on the recovered item.
@@ -3066,19 +3110,27 @@ class ProgressService extends BaseService {
       const cohortId = orphan.cohortId?.toString();
 
       try {
-        // Without a heartbeat there is no evidence of time spent, so there is
-        // nothing to justify a completion.
-        if (!orphan.lastSeenAt) {
-          rejectedIds.push(orphan._id);
-          summary.skipped++;
-          continue;
-        }
-
         const item = await this.itemRepo.readItemById(itemId);
 
         // QUIZ and PROJECT completion depends on a submission this job must
         // not invent; only watch-duration items can be judged from timestamps.
         if (!item || !WATCH_TIME_RECOVERABLE_ITEMS.has(item.type)) {
+          rejectedIds.push(orphan._id);
+          summary.skipped++;
+          continue;
+        }
+
+        // Without a heartbeat there is no evidence of time spent -- for VIDEO
+        // that is nothing to justify a completion against, since its
+        // isValidWatchTime check depends on measuring elapsed time. BLOG is
+        // different: isValidWatchTime never checks duration for it at all
+        // ("no minimum reading time exists in the live path either" -- see
+        // that check), so requiring a heartbeat here is stricter than the
+        // rule this job is supposed to mirror. A blog read fast enough to
+        // lose its stop call before the first 15s heartbeat would otherwise
+        // never be recoverable. Fall back to startTime (0 measured duration)
+        // for BLOG, matching what the live path already accepts unconditionally.
+        if (!orphan.lastSeenAt && item.type !== 'BLOG') {
           rejectedIds.push(orphan._id);
           summary.skipped++;
           continue;
@@ -3100,7 +3152,7 @@ class ProgressService extends BaseService {
           continue;
         }
 
-        const endTime = new Date(orphan.lastSeenAt);
+        const endTime = new Date(orphan.lastSeenAt ?? orphan.startTime);
 
         if (!this.isValidWatchTime({...orphan, endTime}, item)) {
           rejectedIds.push(orphan._id);
@@ -3166,7 +3218,21 @@ class ProgressService extends BaseService {
             `(user ${userId}, item ${itemId}):`,
           err,
         );
-        summary.skipped++;
+        // A NotFoundError here means something this record depends on is
+        // permanently gone -- itemRepo.readItemById and courseRepo.readVersion
+        // both throw (not return null) when the item / course version can't
+        // be found, so their `if (!item)` / `if (!courseVersion)` guards above
+        // are unreachable and a deleted item or deleted course version ends
+        // up here instead. That's not transient: leaving it unmarked (like
+        // every other throw) means findOrphanedWatchTimes returns this exact
+        // record again next sweep, hits the identical NotFoundError, forever.
+        // Reject it like any other permanently-unrecoverable record instead.
+        if (err instanceof NotFoundError) {
+          rejectedIds.push(orphan._id);
+          summary.rejected++;
+        } else {
+          summary.skipped++;
+        }
       }
     }
 
@@ -4805,8 +4871,27 @@ class ProgressService extends BaseService {
     const collectedItemIds: string[] = [];
     let isItemFound = false;
 
-    for (const module of courseVersion.modules) {
-      for (const section of module.sections) {
+    // Modules/sections/items are stored in insertion order, not display
+    // order -- every other traversal in this codebase re-sorts by `order`
+    // before walking the tree (see CourseVersionService.sortItemsByOrder
+    // and its call sites). This one didn't, so after a drag-drop reorder
+    // "items up to the current one" could silently include items that are
+    // actually later in the course and exclude ones that are earlier,
+    // corrupting the missed-item backfill below.
+    // `order` is a required field on every module/section/item per the
+    // schema, but legacy or partially-migrated documents can still lack it
+    // at the DB level -- CourseVersionService.sortItemsByOrder (the
+    // codebase's canonical sort for this same data) defends against that
+    // with `a.order || ''` before comparing. Match that here so a missing
+    // `order` degrades to "sorts first", not a crash.
+    const sortedModules = [...courseVersion.modules].sort((a, b) =>
+      (a.order || '').localeCompare(b.order || ''),
+    );
+    for (const module of sortedModules) {
+      const sortedSections = [...module.sections].sort((a, b) =>
+        (a.order || '').localeCompare(b.order || ''),
+      );
+      for (const section of sortedSections) {
         const itemGroupId = section.itemsGroupId;
         if (!itemGroupId) continue;
 
@@ -4815,7 +4900,10 @@ class ProgressService extends BaseService {
         );
         if (!itemGroup || !itemGroup.items) continue;
 
-        for (const item of itemGroup.items) {
+        const sortedItems = [...itemGroup.items].sort((a, b) =>
+          (a.order || '').localeCompare(b.order || ''),
+        );
+        for (const item of sortedItems) {
           if (!item._id) continue;
 
           const currentItemId = item._id.toString();
@@ -4852,8 +4940,20 @@ class ProgressService extends BaseService {
 
     const allItemIds: string[] = [];
 
-    for (const module of courseVersion.modules) {
-      for (const section of module.sections) {
+    // Same insertion-order-vs-display-order issue as getItemIdsUntilItem --
+    // sort before walking so a drag-drop-reordered course still produces
+    // its items in the order the student actually sees them.
+    // Same missing-order defensiveness as getItemIdsUntilItem above --
+    // matches CourseVersionService.sortItemsByOrder's `a.order || ''`
+    // fallback instead of crashing on a legacy/malformed document.
+    const sortedModules = [...courseVersion.modules].sort((a, b) =>
+      (a.order || '').localeCompare(b.order || ''),
+    );
+    for (const module of sortedModules) {
+      const sortedSections = [...module.sections].sort((a, b) =>
+        (a.order || '').localeCompare(b.order || ''),
+      );
+      for (const section of sortedSections) {
         const itemGroupId = section.itemsGroupId;
         if (!itemGroupId) continue;
 
@@ -4862,7 +4962,10 @@ class ProgressService extends BaseService {
         );
         if (!itemGroup || !itemGroup.items) continue;
 
-        for (const item of itemGroup.items) {
+        const sortedItems = [...itemGroup.items].sort((a, b) =>
+          (a.order || '').localeCompare(b.order || ''),
+        );
+        for (const item of sortedItems) {
           if (item._id) {
             allItemIds.push(item._id.toString());
           }
@@ -4974,7 +5077,8 @@ class ProgressService extends BaseService {
     userId: string,
     courseId: string,
     versionId: string,
-    cohortId?: string
+    cohortId?: string,
+    session?: ClientSession,
   ): Promise<string> {
     if (!userId || !courseId || !versionId) {
       throw new BadRequestError('userId, courseId and versionId are required');
@@ -4985,7 +5089,8 @@ class ProgressService extends BaseService {
       userId,
       courseId,
       versionId,
-      cohortId
+      cohortId,
+      session,
     );
 
     if (!progress) {
@@ -4998,10 +5103,20 @@ class ProgressService extends BaseService {
     }
 
     // 2. Fetch required data's in parallel
+    // session is threaded through the student-state reads (progress,
+    // completed items, enrollment) so a caller running inside an open
+    // transaction (stopItem, when a completion pushes past 99%) sees its own
+    // not-yet-committed writes instead of racing ahead of them -- confirmed
+    // live: without it, this recalculation is blind to the very item
+    // completion that triggered it, and its unconditional write below then
+    // overwrites the correct percentCompleted stopItem had just computed
+    // with a stale, too-low value. courseRepo.readVersion reads course
+    // structure, which nothing in this same transaction is concurrently
+    // editing, so it's left as-is.
     const [completedItemIds, courseVersion, enrollment] = await Promise.all([
-      this.progressRepository.getCompletedItems(userId, courseId, versionId, cohortId),
+      this.progressRepository.getCompletedItems(userId, courseId, versionId, cohortId, session),
       this.courseRepo.readVersion(versionId),
-      this.resolveEnrollment(userId, courseId, versionId, cohortId),
+      this.resolveEnrollment(userId, courseId, versionId, cohortId, session),
     ]);
 
     if (!courseVersion) {
@@ -5020,6 +5135,7 @@ class ProgressService extends BaseService {
         guruProgress.percentCompleted,
         guruProgress.completedItemsCount,
         cohortId,
+        session,
       );
       return 'Progress recalculated successfully';
     }
@@ -5046,7 +5162,7 @@ class ProgressService extends BaseService {
     let missedItemIds = allRelevantItemIds.filter(
       itemId => !completedItemSet.has(itemId),
     );
-    const hiddenItems = await this.progressRepository.getHiddenOrDeletedItems(versionId);
+    const hiddenItems = await this.progressRepository.getHiddenOrDeletedItems(versionId, session);
     const hiddenSet = new Set(hiddenItems.map(i => i.itemId.toString()));
     missedItemIds = missedItemIds.filter(itemId => !hiddenSet.has(itemId));
     // 3. Backfill missed watch-time records
@@ -5056,7 +5172,8 @@ class ProgressService extends BaseService {
         courseId,
         versionId,
         missedItemIds,
-        cohortId
+        cohortId,
+        session,
       );
     }
 
@@ -5112,6 +5229,7 @@ class ProgressService extends BaseService {
       percentCompleted,
       totalCompletedItemsCount,
       enrollment.cohort,
+      session,
     );
 
     return 'Progress recalculated successfully';
