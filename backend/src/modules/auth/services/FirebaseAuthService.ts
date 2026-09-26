@@ -106,11 +106,16 @@ export class FirebaseAuthService extends BaseService implements IAuthService {
   ) {
     super(database);
     if (!admin.apps.length) {
-      // Use the explicit service account whenever one is configured (self-hosted
-      // deploys like Render); applicationDefault() only resolves on real GCP
-      // infra (Cloud Run's metadata service or a GOOGLE_APPLICATION_CREDENTIALS
-      // file), which isn't gated on NODE_ENV.
-      if (appConfig.firebase.clientEmail && appConfig.firebase.privateKey) {
+      // Explicit service-account creds whenever they're configured, in any
+      // environment — not just isDevelopment. applicationDefault() only
+      // resolves on real GCP infrastructure (Cloud Run/App Engine with an
+      // attached service account, or GOOGLE_APPLICATION_CREDENTIALS pointing
+      // at a key file); a non-GCP host like Render has neither, so it fails
+      // outright with "Could not load the default credentials." Falling back
+      // to applicationDefault() only when the explicit vars are absent keeps
+      // the real-GCP-production path unchanged (those vars aren't normally
+      // set there).
+      if (appConfig.firebase.clientEmail && appConfig.firebase.privateKey && appConfig.firebase.projectId) {
         admin.initializeApp({
           credential: admin.credential.cert({
             clientEmail: appConfig.firebase.clientEmail,

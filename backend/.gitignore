@@ -87,3 +87,4 @@ build/
 # installed to a fixed --target dir rather than the default user
 # site-packages so runtime can find them via PYTHONPATH regardless of $HOME.
 scripts/.python-fallback-deps/
+.local-mongo-data/

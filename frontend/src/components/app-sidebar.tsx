@@ -5,6 +5,7 @@ import {
   Bell,
   BookOpen,
   Bot,
+  ClipboardList,
   Command,
   Frame,
   GalleryVerticalEnd,
@@ -63,6 +64,11 @@ export function AppSidebar() {
           { title: "Share a video", url: "/teacher/share-video" },
           { title: "Generate Section (AI)", url: "/teacher/jobs" },
         ],
+      },
+      {
+        title: "Examination",
+        url: "/teacher/exam-app",
+        icon: ClipboardList,
       },
       {
         title: "Announcements",
