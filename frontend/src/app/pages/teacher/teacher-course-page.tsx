@@ -337,6 +337,17 @@ function TeacherCourseContent() {
     moduleId: string;
     detectors: DetectorSetting[] | null;
   } | null>(null);
+  // Re-entrancy guards for the two save functions below: the `isBusy` flags
+  // that disable the checklist UI only take effect once React commits the
+  // re-render from setTogglingItem/ModuleProctoringId, one tick after the
+  // click that set them. A second checkbox click landing inside that window
+  // still reads the pre-toggle `value` prop (neither save has resolved yet),
+  // computes its own array without the first click's change, and whichever
+  // save's PUT lands second on the server wins -- silently discarding the
+  // first click. A plain ref is synchronous, so checking it before any
+  // `await` closes that window regardless of render timing.
+  const itemProctoringSaveInFlight = useRef(false);
+  const moduleProctoringSaveInFlight = useRef(false);
 
   // Check if a project already exists in any section
   const hasExistingProject = useMemo(() => {
@@ -2922,6 +2933,8 @@ function TeacherCourseContent() {
                               updateItemProctoring.isPending && togglingItemProctoringId === itemId;
                             const saveItemDetectors = async (detectors: DetectorSetting[] | null) => {
                               if (!versionId || !itemId) return;
+                              if (itemProctoringSaveInFlight.current) return;
+                              itemProctoringSaveInFlight.current = true;
                               setTogglingItemProctoringId(itemId);
                               setOptimisticItemDetectors({ itemId, detectors });
                               try {
@@ -2945,6 +2958,7 @@ function TeacherCourseContent() {
                                 // to whatever selectedItemData still says.
                                 setOptimisticItemDetectors(null);
                                 setTogglingItemProctoringId(null);
+                                itemProctoringSaveInFlight.current = false;
                               }
                             };
                             return (
@@ -2997,6 +3011,8 @@ function TeacherCourseContent() {
                               updateModuleProctoring.isPending && togglingModuleProctoringId === moduleId;
                             const saveModuleDetectors = async (detectors: DetectorSetting[] | null) => {
                               if (!versionId || !moduleId) return;
+                              if (moduleProctoringSaveInFlight.current) return;
+                              moduleProctoringSaveInFlight.current = true;
                               setTogglingModuleProctoringId(moduleId);
                               setOptimisticModuleDetectors({ moduleId, detectors });
                               try {
@@ -3023,6 +3039,7 @@ function TeacherCourseContent() {
                                 // original value since it was never overwritten above.
                                 setOptimisticModuleDetectors(null);
                                 setTogglingModuleProctoringId(null);
+                                moduleProctoringSaveInFlight.current = false;
                               }
                             };
                             return (
