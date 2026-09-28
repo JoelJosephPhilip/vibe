@@ -348,6 +348,14 @@ function TeacherCourseContent() {
   // `await` closes that window regardless of render timing.
   const itemProctoringSaveInFlight = useRef(false);
   const moduleProctoringSaveInFlight = useRef(false);
+  // Latest detector array queued by a click that landed while a save was
+  // already in flight. `undefined` means "nothing queued" -- distinct from
+  // `null`, which is itself a valid detectors value (clearing an override).
+  // The in-flight save's own loop drains this once it finishes, so a burst
+  // of rapid clicks all eventually land instead of being silently dropped
+  // once the in-flight guard above blocks their own save attempt.
+  const itemProctoringPending = useRef<DetectorSetting[] | null | undefined>(undefined);
+  const moduleProctoringPending = useRef<DetectorSetting[] | null | undefined>(undefined);
 
   // Check if a project already exists in any section
   const hasExistingProject = useMemo(() => {
@@ -2933,33 +2941,55 @@ function TeacherCourseContent() {
                               updateItemProctoring.isPending && togglingItemProctoringId === itemId;
                             const saveItemDetectors = async (detectors: DetectorSetting[] | null) => {
                               if (!versionId || !itemId) return;
-                              if (itemProctoringSaveInFlight.current) return;
+                              // Always show the click immediately, even if a
+                              // save is already in flight -- DetectorChecklist
+                              // recomputes `value` from this on every render,
+                              // so the NEXT click (guarded below) still starts
+                              // from what the user just checked, not a stale
+                              // pre-click snapshot.
+                              setOptimisticItemDetectors({ itemId, detectors });
+                              if (itemProctoringSaveInFlight.current) {
+                                // A save is already running. Earlier this just
+                                // returned here, silently dropping the click --
+                                // confirmed live: 4 rapid checkbox clicks left
+                                // only the first one persisted. Record this as
+                                // the latest desired state instead; the running
+                                // save's own drain loop below picks it up.
+                                itemProctoringPending.current = detectors;
+                                return;
+                              }
                               itemProctoringSaveInFlight.current = true;
                               setTogglingItemProctoringId(itemId);
-                              setOptimisticItemDetectors({ itemId, detectors });
-                              try {
-                                await updateItemProctoring.mutateAsync({
-                                  params: { path: { versionId, itemId } },
-                                  body: { detectors },
-                                });
-                                // Awaited so isBusy (and the Switch's disabled
-                                // state) doesn't clear until the new value has
-                                // actually landed -- otherwise the switch
-                                // re-enables while still showing the stale
-                                // checked state, and a click in that gap fires
-                                // a second save that races the first.
-                                await refetchItem();
-                              } catch (error) {
-                                toast.error('Failed to update item proctoring status');
-                              } finally {
-                                // Clears the optimistic value either way: on
-                                // success the just-awaited refetch already has
-                                // the real value, on failure this snaps back
-                                // to whatever selectedItemData still says.
-                                setOptimisticItemDetectors(null);
-                                setTogglingItemProctoringId(null);
-                                itemProctoringSaveInFlight.current = false;
+                              let toSend: DetectorSetting[] | null | undefined = detectors;
+                              while (toSend !== undefined) {
+                                try {
+                                  await updateItemProctoring.mutateAsync({
+                                    params: { path: { versionId, itemId } },
+                                    body: { detectors: toSend },
+                                  });
+                                  // Awaited so isBusy (and the Switch's disabled
+                                  // state) doesn't clear until the new value has
+                                  // actually landed -- otherwise the switch
+                                  // re-enables while still showing the stale
+                                  // checked state, and a click in that gap fires
+                                  // a second save that races the first.
+                                  await refetchItem();
+                                } catch (error) {
+                                  toast.error('Failed to update item proctoring status');
+                                }
+                                // Drain whatever the newest click queued while
+                                // this save was in flight; loop again if one
+                                // landed, otherwise stop.
+                                toSend = itemProctoringPending.current;
+                                itemProctoringPending.current = undefined;
                               }
+                              // Clears the optimistic value either way: on
+                              // success the last refetch already has the real
+                              // value, on failure this snaps back to whatever
+                              // selectedItemData still says.
+                              setOptimisticItemDetectors(null);
+                              setTogglingItemProctoringId(null);
+                              itemProctoringSaveInFlight.current = false;
                             };
                             return (
                               <div className="flex flex-col gap-2 px-3 py-2 rounded-md border bg-card">
@@ -3011,36 +3041,59 @@ function TeacherCourseContent() {
                               updateModuleProctoring.isPending && togglingModuleProctoringId === moduleId;
                             const saveModuleDetectors = async (detectors: DetectorSetting[] | null) => {
                               if (!versionId || !moduleId) return;
-                              if (moduleProctoringSaveInFlight.current) return;
+                              // Always show the click immediately, even if a
+                              // save is already in flight -- DetectorChecklist
+                              // recomputes `value` from this on every render,
+                              // so the NEXT click (guarded below) still starts
+                              // from what the user just checked, not a stale
+                              // pre-click snapshot.
+                              setOptimisticModuleDetectors({ moduleId, detectors });
+                              if (moduleProctoringSaveInFlight.current) {
+                                // A save is already running. Earlier this just
+                                // returned here, silently dropping the click --
+                                // confirmed live: 4 rapid checkbox clicks left
+                                // only the first one persisted. Record this as
+                                // the latest desired state instead; the running
+                                // save's own drain loop below picks it up.
+                                moduleProctoringPending.current = detectors;
+                                return;
+                              }
                               moduleProctoringSaveInFlight.current = true;
                               setTogglingModuleProctoringId(moduleId);
-                              setOptimisticModuleDetectors({ moduleId, detectors });
-                              try {
-                                await updateModuleProctoring.mutateAsync({
-                                  params: { path: { versionId, moduleId } },
-                                  body: { detectors },
-                                });
-                                // selectedEntity.data is a plain snapshot taken at selection
-                                // time, not a live query result like selectedItemData --
-                                // refetchVersion() alone updates initialModules (the tree)
-                                // but not this detail panel, so it would keep showing the
-                                // stale value until the module was re-selected. Update it
-                                // directly.
-                                setSelectedEntity((prev: any) =>
-                                  prev?.type === "module" && prev.data?.moduleId === moduleId
-                                    ? { type: "module", data: { ...prev.data, proctoringDetectors: detectors ?? undefined } }
-                                    : prev
-                                );
-                                await refetchVersion();
-                              } catch (error) {
-                                toast.error('Failed to update module proctoring status');
-                              } finally {
-                                // On failure this drops back to selectedEntity.data's
-                                // original value since it was never overwritten above.
-                                setOptimisticModuleDetectors(null);
-                                setTogglingModuleProctoringId(null);
-                                moduleProctoringSaveInFlight.current = false;
+                              let toSend: DetectorSetting[] | null | undefined = detectors;
+                              while (toSend !== undefined) {
+                                const sending = toSend;
+                                try {
+                                  await updateModuleProctoring.mutateAsync({
+                                    params: { path: { versionId, moduleId } },
+                                    body: { detectors: sending },
+                                  });
+                                  // selectedEntity.data is a plain snapshot taken at selection
+                                  // time, not a live query result like selectedItemData --
+                                  // refetchVersion() alone updates initialModules (the tree)
+                                  // but not this detail panel, so it would keep showing the
+                                  // stale value until the module was re-selected. Update it
+                                  // directly.
+                                  setSelectedEntity((prev: any) =>
+                                    prev?.type === "module" && prev.data?.moduleId === moduleId
+                                      ? { type: "module", data: { ...prev.data, proctoringDetectors: sending ?? undefined } }
+                                      : prev
+                                  );
+                                  await refetchVersion();
+                                } catch (error) {
+                                  toast.error('Failed to update module proctoring status');
+                                }
+                                // Drain whatever the newest click queued while
+                                // this save was in flight; loop again if one
+                                // landed, otherwise stop.
+                                toSend = moduleProctoringPending.current;
+                                moduleProctoringPending.current = undefined;
                               }
+                              // On failure this drops back to selectedEntity.data's
+                              // original value since it was never overwritten above.
+                              setOptimisticModuleDetectors(null);
+                              setTogglingModuleProctoringId(null);
+                              moduleProctoringSaveInFlight.current = false;
                             };
                             return (
                               <div className="flex flex-col gap-2 px-3 py-2 rounded-md border bg-card">
