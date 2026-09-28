@@ -2971,7 +2971,6 @@ function TeacherCourseContent() {
                                   </div>
                                   <div className="flex items-center gap-2">
                                     <Switch
-                                      disabled={isBusy}
                                       checked={isOverriding}
                                       onCheckedChange={checked =>
                                         saveItemDetectors(checked ? allDetectorsOff() : null)
@@ -2982,9 +2981,18 @@ function TeacherCourseContent() {
                                 </div>
                                 {isOverriding && (
                                   <>
+                                    {/* Not disabled while isBusy: TanStack's
+                                    isPending flickers false between each
+                                    drain-loop iteration (during the await
+                                    refetchItem() gap), which would let a
+                                    disabled Radix control silently swallow
+                                    clicks at the browser level before they
+                                    ever reach the ref-guard/pending queue
+                                    below that's built to handle exactly this
+                                    concurrency. Confirmed live: this caused
+                                    every other rapid click to be lost. */}
                                     <DetectorChecklist
                                       value={itemOverride ?? allDetectorsOff()}
-                                      disabled={isBusy}
                                       onChange={next => saveItemDetectors(next)}
                                     />
                                     <p className="text-xs text-muted-foreground">
@@ -3075,7 +3083,6 @@ function TeacherCourseContent() {
                                   </div>
                                   <div className="flex items-center gap-2">
                                     <Switch
-                                      disabled={isBusy}
                                       checked={isOverriding}
                                       onCheckedChange={checked =>
                                         saveModuleDetectors(checked ? allDetectorsOff() : null)
@@ -3086,9 +3093,10 @@ function TeacherCourseContent() {
                                 </div>
                                 {isOverriding && (
                                   <>
+                                    {/* Not disabled while isBusy -- see the
+                                    matching comment on the item panel above. */}
                                     <DetectorChecklist
                                       value={moduleOverride ?? allDetectorsOff()}
-                                      disabled={isBusy}
                                       onChange={next => saveModuleDetectors(next)}
                                     />
                                     <p className="text-xs text-muted-foreground">
