@@ -29,6 +29,11 @@ import {
   useAddQuestionsFromBank,
   useBulkAddQuestions,
 } from '@/hooks/exam-hooks'
+import {
+  useUserEnrollments,
+  useCourseVersionById,
+  useCourseVersionCohorts,
+} from '@/hooks/hooks'
 
 // Same random-4-digit-string convention used everywhere a question/option id
 // is generated client-side (manual "+ Add question" form, CSV bulk import
@@ -565,22 +570,85 @@ function ExamScheduleSettings({ exam }) {
 // Admin-configured visibility gate: who can see/open this exam. Follows the
 // same "local state + explicit Save button" shape as ExamScheduleSettings
 // above, PATCHing the whole `eligibility` object on save.
+// Renders a course version's display name inside a <select>'s <option> --
+// mounted per-option so each fetches independently via the normal
+// useCourseVersionById hook (React Query dedupes/caches repeats), falling
+// back to the raw id while its own fetch is still pending.
+function VersionOptionLabel({ versionId }) {
+  const { data } = useCourseVersionById(versionId, true)
+  return data?.version || versionId
+}
+
+// Only mounted once both courseId and courseVersionId are chosen -- gates
+// the useCourseVersionCohorts call by conditional mount rather than a
+// conditional hook call (the hook itself has no enabled guard, so calling
+// it eagerly with empty ids would fire a malformed request).
+function CohortSelect({ courseId, courseVersionId, cohortId, onChange }) {
+  const { data, isLoading } = useCourseVersionCohorts(courseId, courseVersionId, 1, 100, '', 'name', 'asc')
+  const cohorts = data?.cohorts ?? []
+  return (
+    <label className="block text-sm">
+      Cohort
+      <select
+        value={cohortId}
+        onChange={(e) => onChange(e.target.value)}
+        className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+      >
+        <option value="">{isLoading ? 'Loading cohorts…' : 'Select a cohort'}</option>
+        {cohorts.map((c) => (
+          <option key={c.id} value={c.id}>{c.name}</option>
+        ))}
+      </select>
+    </label>
+  )
+}
+
 function ExamEligibilitySettings({ exam }) {
   const rule = exam.eligibility
   const [mode, setMode] = useState(rule?.mode ?? 'none')
   const [courseId, setCourseId] = useState(rule?.courseId ?? '')
   const [courseVersionId, setCourseVersionId] = useState(rule?.courseVersionId ?? '')
+  const [cohortId, setCohortId] = useState(rule?.cohortId ?? '')
   const [minCompletionPercent, setMinCompletionPercent] = useState(rule?.minCompletionPercent ?? 80)
   const [emailsText, setEmailsText] = useState((rule?.allowedEmails ?? []).join('\n'))
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState(null)
   const updateExam = useUpdateExam()
 
+  // Powers the course/version dropdowns below -- there's no dedicated "list
+  // my courses"/"list versions for a course" endpoint, but every course a
+  // teacher has an INSTRUCTOR enrollment in (with its course name embedded)
+  // is already available from this one call.
+  const { data: enrollmentsData } = useUserEnrollments(1, 100, true, '', 'INSTRUCTOR', 'active')
+  const instructorEnrollments = enrollmentsData?.enrollments ?? []
+
+  const myCourses = []
+  const seenCourseIds = new Set()
+  for (const e of instructorEnrollments) {
+    const id = String(e.courseId)
+    if (!seenCourseIds.has(id)) {
+      seenCourseIds.add(id)
+      myCourses.push({ id, name: e.course?.name || id })
+    }
+  }
+
+  const versionIdsForCourse = []
+  const seenVersionIds = new Set()
+  for (const e of instructorEnrollments) {
+    if (String(e.courseId) !== courseId) continue
+    const id = String(e.courseVersionId)
+    if (!seenVersionIds.has(id)) {
+      seenVersionIds.add(id)
+      versionIdsForCourse.push(id)
+    }
+  }
+
   useEffect(() => {
     const r = exam.eligibility
     setMode(r?.mode ?? 'none')
     setCourseId(r?.courseId ?? '')
     setCourseVersionId(r?.courseVersionId ?? '')
+    setCohortId(r?.cohortId ?? '')
     setMinCompletionPercent(r?.minCompletionPercent ?? 80)
     setEmailsText((r?.allowedEmails ?? []).join('\n'))
   }, [exam.id])
@@ -600,6 +668,17 @@ function ExamEligibilitySettings({ exam }) {
         courseId: courseId.trim(),
         courseVersionId: courseVersionId.trim() || undefined,
         minCompletionPercent: Number(minCompletionPercent),
+      }
+    } else if (mode === 'cohort') {
+      if (!courseVersionId.trim() || !cohortId) {
+        setError('Course version and cohort are required for cohort-based eligibility')
+        return
+      }
+      eligibility = {
+        mode: 'cohort',
+        courseId: courseId.trim() || undefined,
+        courseVersionId: courseVersionId.trim(),
+        cohortId,
       }
     } else {
       const allowedEmails = emailsText
@@ -630,7 +709,7 @@ function ExamEligibilitySettings({ exam }) {
       <p className="mb-3 text-xs text-muted-foreground">
         Even published, a test is hidden from every student until you save a choice
         here — enforced on the server, not just hidden in this UI. Pick "Everyone" to
-        open it up with no restriction, or gate it by completion % / an email list.
+        open it up with no restriction, or gate it by completion % / an email list / a cohort.
       </p>
       {!rule && (
         <p className="mb-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
@@ -643,6 +722,7 @@ function ExamEligibilitySettings({ exam }) {
           { value: 'none', label: 'Everyone' },
           { value: 'completion', label: 'Course completion %' },
           { value: 'manual', label: 'Specific students (by email)' },
+          { value: 'cohort', label: 'Specific cohort' },
         ].map((opt) => (
           <label key={opt.value} className="flex select-none items-center gap-2 text-sm cursor-pointer">
             <input
@@ -656,39 +736,68 @@ function ExamEligibilitySettings({ exam }) {
         ))}
       </div>
 
-      {mode === 'completion' && (
+      {(mode === 'completion' || mode === 'cohort') && (
         <div className="mt-3 grid gap-3 sm:grid-cols-3">
           <label className="block text-sm">
-            Course id
-            <input
-              type="text"
+            Course
+            <select
               value={courseId}
-              onChange={(e) => setCourseId(e.target.value)}
-              placeholder="Mongo course id"
+              onChange={(e) => {
+                setCourseId(e.target.value)
+                setCourseVersionId('')
+                setCohortId('')
+              }}
               className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-            />
+            >
+              <option value="">Select a course</option>
+              {myCourses.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
           </label>
           <label className="block text-sm">
-            Course version id <span className="text-muted-foreground">(optional)</span>
-            <input
-              type="text"
+            Course version{mode === 'completion' && <span className="text-muted-foreground"> (optional)</span>}
+            <select
               value={courseVersionId}
-              onChange={(e) => setCourseVersionId(e.target.value)}
-              placeholder="Leave blank for any version"
+              onChange={(e) => {
+                setCourseVersionId(e.target.value)
+                setCohortId('')
+              }}
+              disabled={!courseId}
               className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-            />
+            >
+              <option value="">{mode === 'completion' ? 'Any version' : 'Select a version'}</option>
+              {versionIdsForCourse.map((id) => (
+                <option key={id} value={id}>
+                  <VersionOptionLabel versionId={id} />
+                </option>
+              ))}
+            </select>
           </label>
-          <label className="block text-sm">
-            Minimum completion %
-            <input
-              type="number"
-              min={0}
-              max={100}
-              value={minCompletionPercent}
-              onChange={(e) => setMinCompletionPercent(e.target.value)}
-              className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-            />
-          </label>
+          {mode === 'completion' && (
+            <label className="block text-sm">
+              Minimum completion %
+              <input
+                type="number"
+                min={0}
+                max={100}
+                value={minCompletionPercent}
+                onChange={(e) => setMinCompletionPercent(e.target.value)}
+                className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              />
+            </label>
+          )}
+        </div>
+      )}
+
+      {mode === 'cohort' && courseId && courseVersionId && (
+        <div className="mt-3 grid gap-3 sm:grid-cols-3">
+          <CohortSelect
+            courseId={courseId}
+            courseVersionId={courseVersionId}
+            cohortId={cohortId}
+            onChange={setCohortId}
+          />
         </div>
       )}
 

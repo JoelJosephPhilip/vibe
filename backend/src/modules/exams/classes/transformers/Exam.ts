@@ -98,7 +98,7 @@ export interface IExamProctoringConfig {
     detectors: IExamProctoringDetector[];
 }
 
-export type ExamEligibilityMode = 'none' | 'completion' | 'manual';
+export type ExamEligibilityMode = 'none' | 'completion' | 'manual' | 'cohort';
 
 /**
  * Admin-configured gate on which students can see/open this exam.
@@ -107,8 +107,10 @@ export type ExamEligibilityMode = 'none' | 'completion' | 'manual';
  * have a non-deleted STUDENT enrollment in `courseId` (optionally scoped
  * further to `courseVersionId`) with `percentCompleted >=
  * minCompletionPercent`. `manual`: student's own email (case-insensitive)
- * must appear in `allowedEmails`. Absent on `IExam` (nobody has configured
- * visibility for this exam yet) means hidden from every student — see
+ * must appear in `allowedEmails`. `cohort`: student must have a non-deleted
+ * STUDENT enrollment in `courseVersionId` whose `cohortId` equals
+ * `cohortId`. Absent on `IExam` (nobody has configured visibility for this
+ * exam yet) means hidden from every student — see
  * `ExamService.isEligibleForStudent`.
  */
 export interface IExamEligibility {
@@ -117,6 +119,7 @@ export interface IExamEligibility {
     courseVersionId?: string;
     minCompletionPercent?: number;
     allowedEmails?: string[];
+    cohortId?: string;
 }
 
 /**

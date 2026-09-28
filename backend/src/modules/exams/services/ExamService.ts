@@ -223,8 +223,9 @@ export class ExamService {
      * `mode: 'none'` is different: that's an admin having gone into "Who can
      * see this exam" and explicitly chosen "Everyone", which does open it up
      * to every student. (`{ eligibility: { mode: 'none' } }` is also the
-     * documented way to clear an existing completion/manual restriction back
-     * to open - see `ExamEligibilitySettings` on the frontend.)
+     * documented way to clear an existing completion/manual/cohort
+     * restriction back to open - see `ExamEligibilitySettings` on the
+     * frontend.)
      */
     private async isEligibleForStudent(exam: IExam, user: IUser): Promise<boolean> {
         const rule = exam.eligibility;
@@ -238,6 +239,31 @@ export class ExamService {
         if (rule.mode === 'manual') {
             const email = (user.email || '').toLowerCase();
             return (rule.allowedEmails ?? []).some(e => e.toLowerCase() === email);
+        }
+
+        if (rule.mode === 'cohort') {
+            // Both fields are required for this mode, but fail closed if a
+            // legacy/malformed document somehow lacks one — same reasoning
+            // as the completion-mode guard below.
+            if (!rule.courseVersionId || !rule.cohortId) {
+                return false;
+            }
+
+            const userId = user._id!.toString();
+            // Deliberately not using enrollmentRepo.findAnyEnrollment here --
+            // it matches soft-deleted rows (see EnrollmentService.ts's own
+            // comment on that method), which would wrongly grant eligibility
+            // to a student who was later unenrolled from this cohort. The
+            // explicit isDeleted filter below, copied from the completion
+            // branch, avoids that.
+            const enrollments = await this.enrollmentRepo.findEnrollments({
+                userId: { $in: [userId, new ObjectId(userId)] },
+                courseVersionId: { $in: [rule.courseVersionId, new ObjectId(rule.courseVersionId)] },
+                role: 'STUDENT',
+                isDeleted: { $ne: true },
+            });
+
+            return enrollments.some(e => e.cohortId?.toString() === rule.cohortId);
         }
 
         // mode === 'completion'. Both fields are required by

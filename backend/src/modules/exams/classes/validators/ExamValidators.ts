@@ -89,19 +89,19 @@ export class ExamEligibilityBody {
     @JSONSchema({
         description:
             'Eligibility rule kind: "none" (unrestricted), gate by course completion %, ' +
-            'or gate by an explicit email allow-list',
+            'gate by an explicit email allow-list, or gate by cohort membership',
         type: 'string',
-        enum: ['none', 'completion', 'manual'],
+        enum: ['none', 'completion', 'manual', 'cohort'],
     })
-    @IsIn(['none', 'completion', 'manual'])
-    mode: 'none' | 'completion' | 'manual';
+    @IsIn(['none', 'completion', 'manual', 'cohort'])
+    mode: 'none' | 'completion' | 'manual' | 'cohort';
 
-    @JSONSchema({ description: 'Course id to check completion against (required for mode "completion")', type: 'string' })
+    @JSONSchema({ description: 'Course id to check completion against (required for mode "completion"; also used by mode "cohort" to resolve the cohort list)', type: 'string' })
     @IsOptional()
     @IsMongoId()
     courseId?: string;
 
-    @JSONSchema({ description: 'Optional course version id, to scope completion to one version', type: 'string' })
+    @JSONSchema({ description: 'Optional course version id, to scope completion to one version (required for mode "cohort")', type: 'string' })
     @IsOptional()
     @IsMongoId()
     courseVersionId?: string;
@@ -118,6 +118,11 @@ export class ExamEligibilityBody {
     @IsArray()
     @IsString({ each: true })
     allowedEmails?: string[];
+
+    @JSONSchema({ description: 'Cohort id a student must belong to (required for mode "cohort")', type: 'string' })
+    @IsOptional()
+    @IsMongoId()
+    cohortId?: string;
 }
 
 export class NegativeMarkingRatioBody {
