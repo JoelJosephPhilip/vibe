@@ -229,7 +229,15 @@ export class ExamService {
                 isDeleted: { $ne: true },
             });
 
-            return enrollments.some(e => e.cohortId?.toString() === rule.cohortId);
+            // minCompletionPercent is optional here -- when set, it's an
+            // additional AND condition on top of cohort membership (not a
+            // separate mode), so a teacher can require both "in cohort X"
+            // and "at least Y% through the course" on the same exam.
+            return enrollments.some(e => {
+                if (e.cohortId?.toString() !== rule.cohortId) return false;
+                if (rule.minCompletionPercent != null && (e.percentCompleted ?? 0) < rule.minCompletionPercent) return false;
+                return true;
+            });
         }
 
         // mode === 'completion'. Both fields are required by
