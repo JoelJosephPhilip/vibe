@@ -109,8 +109,11 @@ export type ExamEligibilityMode = 'none' | 'completion' | 'manual' | 'cohort';
  * minCompletionPercent`. `manual`: student's own email (case-insensitive)
  * must appear in `allowedEmails`. `cohort`: student must have a non-deleted
  * STUDENT enrollment in `courseVersionId` whose `cohortId` equals
- * `cohortId`. Absent on `IExam` (nobody has configured visibility for this
- * exam yet) means hidden from every student — see
+ * `cohortId` — and, if `minCompletionPercent` is also set, that same
+ * enrollment's `percentCompleted` must meet it too (an AND condition on top
+ * of cohort membership, not a separate mode; leaving it unset keeps cohort
+ * mode membership-only). Absent on `IExam` (nobody has configured visibility
+ * for this exam yet) means hidden from every student — see
  * `ExamService.isEligibleForStudent`.
  */
 export interface IExamEligibility {

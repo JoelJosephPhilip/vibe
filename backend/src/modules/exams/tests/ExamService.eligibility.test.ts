@@ -190,6 +190,34 @@ describe('ExamService.isEligibleForStudent', () => {
             const exam = await makeExam({ mode: 'cohort' } as IExamEligibility);
             expect(await isEligible(exam, user)).toBe(false);
         });
+
+        it('cohort matches, minCompletionPercent unset: eligible regardless of percentCompleted', async () => {
+            const user = makeStudentUser();
+            await insertEnrollment({ userId: new ObjectId(user._id!.toString()), cohortId, percentCompleted: 0 });
+            const exam = await makeExam({ mode: 'cohort', courseVersionId: courseVersionId.toString(), cohortId: cohortId.toString() });
+            expect(await isEligible(exam, user)).toBe(true);
+        });
+
+        it('cohort matches, percentCompleted at/above minCompletionPercent: eligible', async () => {
+            const user = makeStudentUser();
+            await insertEnrollment({ userId: new ObjectId(user._id!.toString()), cohortId, percentCompleted: 80 });
+            const exam = await makeExam({ mode: 'cohort', courseVersionId: courseVersionId.toString(), cohortId: cohortId.toString(), minCompletionPercent: 80 });
+            expect(await isEligible(exam, user)).toBe(true);
+        });
+
+        it('cohort matches, percentCompleted below minCompletionPercent: not eligible', async () => {
+            const user = makeStudentUser();
+            await insertEnrollment({ userId: new ObjectId(user._id!.toString()), cohortId, percentCompleted: 40 });
+            const exam = await makeExam({ mode: 'cohort', courseVersionId: courseVersionId.toString(), cohortId: cohortId.toString(), minCompletionPercent: 80 });
+            expect(await isEligible(exam, user)).toBe(false);
+        });
+
+        it('cohort does not match even though percentCompleted meets minCompletionPercent: not eligible', async () => {
+            const user = makeStudentUser();
+            await insertEnrollment({ userId: new ObjectId(user._id!.toString()), cohortId: otherCohortId, percentCompleted: 100 });
+            const exam = await makeExam({ mode: 'cohort', courseVersionId: courseVersionId.toString(), cohortId: cohortId.toString(), minCompletionPercent: 80 });
+            expect(await isEligible(exam, user)).toBe(false);
+        });
     });
 
     it('owner always sees their own exam regardless of eligibility', async () => {

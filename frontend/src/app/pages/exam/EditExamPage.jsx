@@ -609,7 +609,7 @@ function ExamEligibilitySettings({ exam }) {
   const [courseId, setCourseId] = useState(rule?.courseId ?? '')
   const [courseVersionId, setCourseVersionId] = useState(rule?.courseVersionId ?? '')
   const [cohortId, setCohortId] = useState(rule?.cohortId ?? '')
-  const [minCompletionPercent, setMinCompletionPercent] = useState(rule?.minCompletionPercent ?? 80)
+  const [minCompletionPercent, setMinCompletionPercent] = useState(rule?.minCompletionPercent ?? '')
   const [emailsText, setEmailsText] = useState((rule?.allowedEmails ?? []).join('\n'))
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState(null)
@@ -649,7 +649,7 @@ function ExamEligibilitySettings({ exam }) {
     setCourseId(r?.courseId ?? '')
     setCourseVersionId(r?.courseVersionId ?? '')
     setCohortId(r?.cohortId ?? '')
-    setMinCompletionPercent(r?.minCompletionPercent ?? 80)
+    setMinCompletionPercent(r?.minCompletionPercent ?? '')
     setEmailsText((r?.allowedEmails ?? []).join('\n'))
   }, [exam.id])
 
@@ -661,6 +661,10 @@ function ExamEligibilitySettings({ exam }) {
     } else if (mode === 'completion') {
       if (!courseId.trim()) {
         setError('Course id is required for completion-based eligibility')
+        return
+      }
+      if (!String(minCompletionPercent).trim()) {
+        setError('Minimum completion % is required for completion-based eligibility')
         return
       }
       eligibility = {
@@ -679,6 +683,7 @@ function ExamEligibilitySettings({ exam }) {
         courseId: courseId.trim() || undefined,
         courseVersionId: courseVersionId.trim(),
         cohortId,
+        minCompletionPercent: String(minCompletionPercent).trim() ? Number(minCompletionPercent) : undefined,
       }
     } else {
       const allowedEmails = emailsText
@@ -774,13 +779,16 @@ function ExamEligibilitySettings({ exam }) {
               ))}
             </select>
           </label>
-          {mode === 'completion' && (
+          {(mode === 'completion' || mode === 'cohort') && (
             <label className="block text-sm">
-              Minimum completion %
+              {mode === 'cohort'
+                ? 'Minimum completion % (optional — leave blank for cohort-only)'
+                : 'Minimum completion %'}
               <input
                 type="number"
                 min={0}
                 max={100}
+                placeholder="e.g. 80"
                 value={minCompletionPercent}
                 onChange={(e) => setMinCompletionPercent(e.target.value)}
                 className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
