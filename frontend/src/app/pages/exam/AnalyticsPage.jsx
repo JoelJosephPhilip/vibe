@@ -423,7 +423,12 @@ function slug(s) {
 }
 
 function csvEscape(value) {
-  const s = value === null || value === undefined ? '' : String(value)
+  let s = value === null || value === undefined ? '' : String(value)
+  // Guard against CSV/formula injection (CWE-1236): a cell starting with
+  // =/+/-/@/tab/CR gets evaluated as a formula by Excel/Sheets on open,
+  // regardless of whether it's also RFC-4180-quoted below -- quoting only
+  // protects CSV parsing, not spreadsheet formula evaluation.
+  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
 }
 

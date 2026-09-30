@@ -99,6 +99,21 @@ describe('Exams module — QuestionBank', { timeout: 30000 }, () => {
             expect(res.status).toBe(201);
             expect(typeof res.body._id).toBe('string');
         });
+
+        it('rejects a question whose negativeMarks exceeds its own marks', async () => {
+            // Bank entries bypass ExamService.buildQuestion entirely (a
+            // separate insertion path) and later get copied into an exam via
+            // appendQuestions with no re-validation -- so this same guard
+            // (assertValidQuestionFields) needs its own coverage here, not
+            // just on ExamService's addQuestion/updateQuestion/bulk paths.
+            const res = await request(app).post('/exams/question-bank').send({
+                ...sampleQuestion(),
+                marks: 1,
+                useCustomNegative: true,
+                negativeMarks: 1000,
+            });
+            expect(res.status).toBe(400);
+        });
     });
 
     describe('GET /exams/question-bank (id-normalization regression)', () => {

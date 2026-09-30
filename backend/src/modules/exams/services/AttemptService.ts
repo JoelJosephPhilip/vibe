@@ -24,6 +24,33 @@ import { IUser } from '#root/shared/interfaces/models.js';
  */
 const SUBMIT_GRACE_MS = 2 * 60_000;
 
+/**
+ * Bounds how many proctoring-snapshot uploads run concurrently for one
+ * submission -- unbounded `Promise.all` here meant a single (otherwise
+ * valid, within the ArrayMaxSize/MaxLength caps on SubmitAttemptBody)
+ * request could fire hundreds of concurrent GCS uploads at once. Same
+ * worker-pool shape as LocalTranscriptFormatService's mapWithConcurrency
+ * (genAI module); GCS uploads are cheaper than that service's LLM calls,
+ * so a bit more headroom than its WINDOW_CONCURRENCY of 3.
+ */
+const PROCTORING_UPLOAD_CONCURRENCY = 5;
+
+export async function mapWithConcurrency<T, R>(
+    items: T[],
+    concurrency: number,
+    fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+    const results: R[] = new Array(items.length);
+    let next = 0;
+    const worker = async () => {
+        for (let i = next++; i < items.length; i = next++) {
+            results[i] = await fn(items[i]);
+        }
+    };
+    await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
+    return results;
+}
+
 @injectable()
 export class AttemptService {
     constructor(
@@ -202,15 +229,13 @@ export class AttemptService {
         // one offending snapshot instead of throwing.
         const proctoringPathPrefix = `exams/${examId}/attempts/${studentId}/proctoring`;
         const proctoringEvents = meta.proctoringEvents
-            ? await Promise.all(
-                  meta.proctoringEvents.map(async event => ({
-                      ...event,
-                      imageDataUrl: await this.examImageStorageService.resolveUploadForProctoringImage(
-                          event.imageDataUrl,
-                          proctoringPathPrefix,
-                      ),
-                  })),
-              )
+            ? await mapWithConcurrency(meta.proctoringEvents, PROCTORING_UPLOAD_CONCURRENCY, async event => ({
+                  ...event,
+                  imageDataUrl: await this.examImageStorageService.resolveUploadForProctoringImage(
+                      event.imageDataUrl,
+                      proctoringPathPrefix,
+                  ),
+              }))
             : undefined;
 
         const attempt: IExamAttempt = {

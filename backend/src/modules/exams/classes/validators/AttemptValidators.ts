@@ -8,6 +8,8 @@ import {
     IsBoolean,
     IsNumber,
     Min,
+    MaxLength,
+    ArrayMaxSize,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { JSONSchema } from 'class-validator-jsonschema';
@@ -71,6 +73,11 @@ export class ProctoringEventBody {
     })
     @IsOptional()
     @IsString()
+    // A real capture is ~15-40KB base64 (320x240, JPEG quality 0.6 --
+    // see ExamProctoring.tsx's own capture settings); 100k chars leaves
+    // generous headroom for a noisy frame while still bounding a spoofed
+    // multi-MB string.
+    @MaxLength(100_000)
     imageDataUrl?: string;
 }
 
@@ -101,6 +108,11 @@ export class SubmitAttemptBody {
     @JSONSchema({ description: 'Proctoring violation events recorded during the attempt' })
     @IsOptional()
     @IsArray()
+    // Bounds the upload fan-out in AttemptService.submitAttempt
+    // independent of the 20mb total-body cap on this route -- many small
+    // events can flood the upload loop well under that ceiling. Far above
+    // any plausible real violation-transition count for one attempt.
+    @ArrayMaxSize(300)
     @ValidateNested({ each: true })
     @Type(() => ProctoringEventBody)
     proctoringEvents?: ProctoringEventBody[];
