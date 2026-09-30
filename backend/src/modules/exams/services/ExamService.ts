@@ -80,6 +80,9 @@ export function assertValidQuestionFields(q: {
     }
     if (q.type === 'MCQ' || q.type === 'MSQ') {
         const ids = (q.options ?? []).map(o => o.id);
+        if (ids.length < 2) {
+            throw new BadRequestError('MCQ/MSQ requires at least 2 options');
+        }
         if (new Set(ids).size !== ids.length) {
             throw new BadRequestError('Duplicate option id');
         }
@@ -337,6 +340,12 @@ export class ExamService {
             patch.opensAt !== undefined ? patch.opensAt : existing.opensAt,
             patch.closesAt !== undefined ? patch.closesAt : existing.closesAt,
         );
+        // The "Publish" button is disabled client-side until at least one
+        // question exists, but that's UI-only -- a direct PATCH bypassed it
+        // entirely and published an empty exam.
+        if (patch.published === true && existing.questions.length === 0) {
+            throw new BadRequestError('Cannot publish an exam with no questions');
+        }
         const updated = await this.examRepo.update(examId, patch as Partial<IExam>);
         if (!updated) {
             throw new NotFoundError('Exam not found');

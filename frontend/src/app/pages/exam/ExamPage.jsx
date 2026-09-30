@@ -309,11 +309,21 @@ function ExamPageInner({ examId, isDemo, examData, navigate, serverStartedAt }) 
       // exam again, with no chance to see the question UI at all.
       const durationSec = (examData.duration || 0) * 60 + (parsed.extraSeconds || 0)
       const elapsed = Math.floor((Date.now() - (parsed.startedAt || 0)) / 1000)
+      // A stored session is only valid for the attempt the server just
+      // started for us -- comparing against the blob's OWN startedAt/
+      // tabSwitches alone can't tell "refresh mid-this-attempt" apart from
+      // "leftover from an already-submitted attempt whose removeItem never
+      // ran" (page closed before the submit onSuccess fired, a network
+      // blip, etc.). serverStartedAt is idempotent per attempt (same value
+      // on a refresh, a new value on a genuinely new attempt), so require
+      // it to match before trusting anything else in the blob.
+      const identityMismatch = !isDemo && serverStartedAt && parsed.startedAt !== serverStartedAt
       if (
         parsed.submitted ||
         !parsed.startedAt ||
         elapsed >= durationSec ||
-        (parsed.tabSwitches ?? 0) >= MAX_TAB_SWITCHES
+        (parsed.tabSwitches ?? 0) >= MAX_TAB_SWITCHES ||
+        identityMismatch
       ) {
         sessionStorage.removeItem(sessionKey)
         return null
