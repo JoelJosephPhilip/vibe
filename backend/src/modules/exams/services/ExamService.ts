@@ -55,6 +55,40 @@ function assertValidSchedulingWindow(opensAt?: number, closesAt?: number): void 
     }
 }
 
+/**
+ * Enforced unconditionally, not just when `useCustomNegative`/scheme
+ * `'custom'` is active -- for every other scheme this is inert (they derive
+ * `negativeMarks` from `marks` themselves), but it also closes a latent
+ * variant of the same bug: a question saved with a large `negativeMarks`
+ * under a non-custom scheme would otherwise sit dormant until an exam's
+ * scheme is later flipped to `'custom'` (no re-validation of existing
+ * questions on that path), silently reactivating an unbounded per-question
+ * penalty. Without this, one low-marks question with `negativeMarks` far
+ * exceeding its own `marks` can drag an otherwise-correct exam's score to 0
+ * -- `AttemptService.submitAttempt` only floors the running total once, at
+ * the very end, not per question.
+ */
+export function assertValidQuestionFields(q: {
+    type: string;
+    options?: { id: string }[];
+    correctOptions: string[];
+    marks: number;
+    negativeMarks?: number;
+}): void {
+    if (q.negativeMarks != null && q.negativeMarks > q.marks) {
+        throw new BadRequestError('negativeMarks cannot exceed marks');
+    }
+    if (q.type === 'MCQ' || q.type === 'MSQ') {
+        const ids = (q.options ?? []).map(o => o.id);
+        if (new Set(ids).size !== ids.length) {
+            throw new BadRequestError('Duplicate option id');
+        }
+        if (q.correctOptions.some(c => !ids.includes(c))) {
+            throw new BadRequestError('correctOptions must reference an existing option id');
+        }
+    }
+}
+
 @injectable()
 export class ExamService {
     constructor(
@@ -258,6 +292,7 @@ export class ExamService {
      * before this was split out.
      */
     private async buildQuestion(examId: string, questionId: string, body: AddQuestionBody): Promise<IExamQuestion> {
+        assertValidQuestionFields(body);
         const pathPrefix = `exams/${examId}/questions/${questionId}`;
         const [questionImage, options] = await Promise.all([
             this.examImageStorageService.resolveUploadForQuestionImage(body.questionImage, pathPrefix),
@@ -352,9 +387,21 @@ export class ExamService {
         patch: UpdateQuestionBody,
     ): Promise<IExam> {
         const exam = await this.getExamById(examId);
-        if (!exam.questions.some(q => q.id === questionId)) {
+        const existingQuestion = exam.questions.find(q => q.id === questionId);
+        if (!existingQuestion) {
             throw new NotFoundError('Question not found');
         }
+
+        // Validate the merged (existing + patch) view -- a patch that only
+        // touches one of marks/negativeMarks/options/correctOptions still
+        // needs checking against the question's other, unpatched fields.
+        assertValidQuestionFields({
+            type: patch.type ?? existingQuestion.type,
+            options: patch.options ?? existingQuestion.options,
+            correctOptions: patch.correctOptions ?? existingQuestion.correctOptions,
+            marks: patch.marks ?? existingQuestion.marks,
+            negativeMarks: patch.negativeMarks ?? existingQuestion.negativeMarks,
+        });
 
         // Only touch the image fields the client actually sent (IsOptional —
         // absence means "don't change"). `EditExamPage.jsx` resends the

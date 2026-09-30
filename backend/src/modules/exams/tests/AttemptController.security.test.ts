@@ -288,4 +288,245 @@ describe('Exams module — AttemptController eligibility, retakes, answer leakag
             expect(res.status).toBe(400);
         });
     });
+
+    describe('Question negativeMarks/correctOptions/options validation', () => {
+        it('rejects a question whose negativeMarks exceeds its own marks (the live-repro scenario)', async () => {
+            (app as any).__asOwner();
+            const examRes = await request(app).post('/exams').send({ title: 'Overpenalty test exam' });
+            const examId = examRes.body._id;
+            // The exact shape that produced a live 0/101 score before this fix:
+            // a 100-mark correct question would have been dragged to 0 by one
+            // 1-mark question carrying a 1000-point custom penalty. Now rejected
+            // at creation instead of being reachable at all.
+            const res = await request(app)
+                .post(`/exams/${examId}/questions`)
+                .send({
+                    type: 'MCQ',
+                    questionText: 'Low marks, huge custom penalty',
+                    options: [{ id: 'a', text: 'wrong' }, { id: 'b', text: 'right' }],
+                    correctOptions: ['b'],
+                    marks: 1,
+                    useCustomNegative: true,
+                    negativeMarks: 1000,
+                });
+            expect(res.status).toBe(400);
+        });
+
+        it('rejects a PATCH that pushes negativeMarks above the question\'s existing marks', async () => {
+            (app as any).__asOwner();
+            const examRes = await request(app).post('/exams').send({ title: 'Patch overpenalty test exam' });
+            const examId = examRes.body._id;
+            const qRes = await request(app)
+                .post(`/exams/${examId}/questions`)
+                .send({
+                    type: 'MCQ',
+                    questionText: 'Ok for now',
+                    options: [{ id: 'a', text: 'wrong' }, { id: 'b', text: 'right' }],
+                    correctOptions: ['b'],
+                    marks: 1,
+                    useCustomNegative: true,
+                    negativeMarks: 1,
+                });
+            const questionId = qRes.body.questions[0].id;
+
+            const res = await request(app)
+                .patch(`/exams/${examId}/questions/${questionId}`)
+                .send({ negativeMarks: 5 });
+            expect(res.status).toBe(400);
+        });
+
+        it('rejects a bulk-add batch containing one overpenalized question, with no partial write', async () => {
+            (app as any).__asOwner();
+            const examRes = await request(app).post('/exams').send({ title: 'Bulk overpenalty test exam' });
+            const examId = examRes.body._id;
+
+            const res = await request(app)
+                .post(`/exams/${examId}/questions/bulk`)
+                .send({
+                    questions: [
+                        {
+                            type: 'MCQ',
+                            questionText: 'Fine question',
+                            options: [{ id: 'a', text: 'wrong' }, { id: 'b', text: 'right' }],
+                            correctOptions: ['b'],
+                            marks: 5,
+                        },
+                        {
+                            type: 'MCQ',
+                            questionText: 'Bad question',
+                            options: [{ id: 'a', text: 'wrong' }, { id: 'b', text: 'right' }],
+                            correctOptions: ['b'],
+                            marks: 1,
+                            useCustomNegative: true,
+                            negativeMarks: 1000,
+                        },
+                    ],
+                });
+            expect(res.status).toBe(400);
+
+            const examAfter = await request(app).get(`/exams/${examId}`);
+            expect(examAfter.body.questions).toHaveLength(0);
+        });
+
+        it('rejects correctOptions referencing an option id that does not exist', async () => {
+            (app as any).__asOwner();
+            const examRes = await request(app).post('/exams').send({ title: 'Bad correctOptions test exam' });
+            const examId = examRes.body._id;
+            const res = await request(app)
+                .post(`/exams/${examId}/questions`)
+                .send({
+                    type: 'MCQ',
+                    questionText: 'Unanswerable question',
+                    options: [{ id: 'a', text: 'x' }, { id: 'b', text: 'y' }],
+                    correctOptions: ['z'],
+                    marks: 1,
+                });
+            expect(res.status).toBe(400);
+        });
+
+        it('rejects duplicate option ids on the same question', async () => {
+            (app as any).__asOwner();
+            const examRes = await request(app).post('/exams').send({ title: 'Duplicate option id test exam' });
+            const examId = examRes.body._id;
+            const res = await request(app)
+                .post(`/exams/${examId}/questions`)
+                .send({
+                    type: 'MCQ',
+                    questionText: 'Ambiguous options',
+                    options: [{ id: 'a', text: 'x' }, { id: 'a', text: 'y' }],
+                    correctOptions: ['a'],
+                    marks: 1,
+                });
+            expect(res.status).toBe(400);
+        });
+
+        it('rejects field lengths past the new caps', async () => {
+            (app as any).__asOwner();
+            const examRes = await request(app).post('/exams').send({ title: 'Length cap test exam' });
+            const examId = examRes.body._id;
+            const baseQuestion = {
+                type: 'MCQ' as const,
+                options: [{ id: 'a', text: 'x' }, { id: 'b', text: 'y' }],
+                correctOptions: ['a'],
+                marks: 1,
+            };
+
+            const overLongQuestionText = await request(app)
+                .post(`/exams/${examId}/questions`)
+                .send({ ...baseQuestion, questionText: 'x'.repeat(10001) });
+            expect(overLongQuestionText.status).toBe(400);
+
+            const overLongExplanation = await request(app)
+                .post(`/exams/${examId}/questions`)
+                .send({ ...baseQuestion, questionText: 'ok', explanation: 'x'.repeat(10001) });
+            expect(overLongExplanation.status).toBe(400);
+
+            const overLongOptionText = await request(app)
+                .post(`/exams/${examId}/questions`)
+                .send({
+                    ...baseQuestion,
+                    questionText: 'ok',
+                    options: [{ id: 'a', text: 'x'.repeat(2001) }, { id: 'b', text: 'y' }],
+                });
+            expect(overLongOptionText.status).toBe(400);
+
+            const overLongInstructions = await request(app)
+                .patch(`/exams/${examId}`)
+                .send({ instructions: 'x'.repeat(20001) });
+            expect(overLongInstructions.status).toBe(400);
+        });
+    });
+
+    describe('Rate limiting', () => {
+        it('429s a burst of startAttempt calls past the configured max', async () => {
+            (app as any).__asOwner();
+            const examRes = await request(app).post('/exams').send({ title: 'Rate limit start test exam' });
+            const examId = examRes.body._id;
+            await addQuestion(examId);
+            await request(app)
+                .patch(`/exams/${examId}`)
+                .send({ eligibility: { mode: 'none' }, published: true });
+
+            (app as any).__asStudent();
+            // Comfortably above max:30 even accounting for this file's earlier
+            // tests sharing the same per-IP bucket (no Authorization header is
+            // ever set in this test harness, so keyGenerator falls back to
+            // req.ip for every request in the file).
+            const results = await Promise.all(
+                Array.from({ length: 40 }, () => request(app).post(`/exams/${examId}/attempts/start`).send({})),
+            );
+            expect(results.some((r) => r.status === 429)).toBe(true);
+        });
+
+        it('429s a burst of submitAttempt calls past the configured max', async () => {
+            (app as any).__asOwner();
+            const examRes = await request(app)
+                .post('/exams')
+                .send({ title: 'Rate limit submit test exam', allowRetakes: true });
+            const examId = examRes.body._id;
+            await addQuestion(examId);
+            await request(app)
+                .patch(`/exams/${examId}`)
+                .send({ eligibility: { mode: 'none' }, published: true });
+
+            (app as any).__asStudent();
+            await request(app).post(`/exams/${examId}/attempts/start`).send({});
+            // allowRetakes: true so repeated submissions on one exam aren't
+            // themselves rejected by the no-retakes lock, isolating this test
+            // to the rate limiter specifically. Comfortably above max:20 for
+            // the same shared-bucket reason as the startAttempt burst above.
+            const results = await Promise.all(
+                Array.from({ length: 30 }, () =>
+                    request(app).post(`/exams/${examId}/attempts`).send({ responses: [] }),
+                ),
+            );
+            expect(results.some((r) => r.status === 429)).toBe(true);
+        });
+    });
+
+    describe('Proctoring payload limits', () => {
+        it('rejects more than 300 proctoringEvents in one submission', async () => {
+            (app as any).__asOwner();
+            const examRes = await request(app)
+                .post('/exams')
+                .send({ title: 'Too many proctoring events test exam' });
+            const examId = examRes.body._id;
+            await addQuestion(examId);
+            await request(app)
+                .patch(`/exams/${examId}`)
+                .send({ eligibility: { mode: 'none' }, published: true });
+
+            (app as any).__asStudent();
+            await request(app).post(`/exams/${examId}/attempts/start`).send({});
+            const res = await request(app)
+                .post(`/exams/${examId}/attempts`)
+                .send({
+                    responses: [],
+                    proctoringEvents: Array.from({ length: 301 }, (_, i) => ({ type: 'no-face', at: Date.now() + i })),
+                });
+            expect(res.status).toBe(400);
+        });
+
+        it('rejects a proctoring event imageDataUrl over 100,000 characters', async () => {
+            (app as any).__asOwner();
+            const examRes = await request(app)
+                .post('/exams')
+                .send({ title: 'Oversized proctoring image test exam' });
+            const examId = examRes.body._id;
+            await addQuestion(examId);
+            await request(app)
+                .patch(`/exams/${examId}`)
+                .send({ eligibility: { mode: 'none' }, published: true });
+
+            (app as any).__asStudent();
+            await request(app).post(`/exams/${examId}/attempts/start`).send({});
+            const res = await request(app)
+                .post(`/exams/${examId}/attempts`)
+                .send({
+                    responses: [],
+                    proctoringEvents: [{ type: 'no-face', at: Date.now(), imageDataUrl: 'x'.repeat(100_001) }],
+                });
+            expect(res.status).toBe(400);
+        });
+    });
 });

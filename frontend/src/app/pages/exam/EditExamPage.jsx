@@ -1003,6 +1003,7 @@ function ExamSettings({ exam }) {
             value={instructions}
             onChange={(e) => setInstructions(e.target.value)}
             rows={4}
+            maxLength={20000}
             className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
           />
         </label>
@@ -1433,6 +1434,7 @@ const [options, setOptions] = useState(
           value={questionText}
           onChange={(e) => setQuestionText(e.target.value)}
           rows={3}
+          maxLength={10000}
           className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
         />
         {questionText.trim() && (
@@ -1461,6 +1463,7 @@ const [options, setOptions] = useState(
           value={explanation}
           onChange={(e) => setExplanation(e.target.value)}
           rows={3}
+          maxLength={10000}
           placeholder="Why this is the correct answer…"
           className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
         />
@@ -1519,6 +1522,7 @@ const [options, setOptions] = useState(
                       next[i] = { ...o, text: e.target.value }
                       setOptions(next)
                     }}
+                    maxLength={2000}
                     placeholder={`Option ${String.fromCharCode(65 + i)} text (or leave blank if using image)`}
                     className="flex-1 rounded-md border border-input bg-background px-3 py-1.5 text-sm"
                   />
@@ -1825,6 +1829,9 @@ function validateAndMapCsvRow(row) {
   if (!questionText) {
     return { ok: false, summary, error: 'questionText is required' }
   }
+  if (questionText.length > 10000) {
+    return { ok: false, summary, error: 'questionText exceeds 10,000 characters' }
+  }
 
   const marks = Number(row.marks)
   if (!Number.isFinite(marks) || marks <= 0) {
@@ -1837,6 +1844,9 @@ function validateAndMapCsvRow(row) {
   if (negativeMarksProvided && !Number.isFinite(negativeMarks)) {
     return { ok: false, summary, error: 'negativeMarks must be a number' }
   }
+  if (negativeMarksProvided && negativeMarks > marks) {
+    return { ok: false, summary, error: 'negativeMarks cannot exceed marks' }
+  }
 
   const correctOptionsRaw = String(row.correctOptions ?? '').trim()
   if (!correctOptionsRaw) {
@@ -1844,7 +1854,13 @@ function validateAndMapCsvRow(row) {
   }
 
   const topic = String(row.topic ?? '').trim()
+  if (topic.length > 200) {
+    return { ok: false, summary, error: 'topic exceeds 200 characters' }
+  }
   const explanation = String(row.explanation ?? '').trim()
+  if (explanation.length > 10000) {
+    return { ok: false, summary, error: 'explanation exceeds 10,000 characters' }
+  }
   const qId = randomQuestionId()
 
   if (type === 'NAT') {
@@ -1872,6 +1888,9 @@ function validateAndMapCsvRow(row) {
     .filter(Boolean)
   if (optionTexts.length < 2) {
     return { ok: false, summary, error: 'options must have at least 2 pipe-separated values for MCQ/MSQ' }
+  }
+  if (optionTexts.some((t) => t.length > 2000)) {
+    return { ok: false, summary, error: 'each option exceeds 2,000 characters' }
   }
   const rowOptions = optionTexts.map((text, i) => ({ id: `${qId}_${i + 1}`, text }))
 

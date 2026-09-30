@@ -13,6 +13,7 @@ import {
     Max,
     Matches,
     ArrayMinSize,
+    MaxLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { JSONSchema } from 'class-validator-jsonschema';
@@ -220,6 +221,7 @@ export class CreateExamBody {
     @JSONSchema({ description: 'Instructions shown before starting the exam', type: 'string' })
     @IsOptional()
     @IsString()
+    @MaxLength(20_000)
     instructions?: string;
 
     @JSONSchema({
@@ -333,6 +335,7 @@ export class UpdateExamBody {
     @JSONSchema({ description: 'Instructions shown before starting the exam', type: 'string' })
     @IsOptional()
     @IsString()
+    @MaxLength(20_000)
     instructions?: string;
 
     @JSONSchema({
@@ -404,6 +407,7 @@ export class ExamQuestionOptionBody {
     @JSONSchema({ description: 'Option text', type: 'string' })
     @IsOptional()
     @IsString()
+    @MaxLength(2_000)
     text?: string;
 
     @JSONSchema({ description: 'Optional option image (data URL or URL)', type: 'string' })
@@ -420,6 +424,7 @@ export class AddQuestionBody {
     @JSONSchema({ description: 'Question text', type: 'string' })
     @IsString()
     @IsNotEmpty()
+    @MaxLength(10_000)
     questionText: string;
 
     @JSONSchema({ description: 'Optional question image (data URL or URL)', type: 'string' })
@@ -473,11 +478,13 @@ export class AddQuestionBody {
     @JSONSchema({ description: 'Optional explanation for this question, e.g. shown with results', type: 'string' })
     @IsOptional()
     @IsString()
+    @MaxLength(10_000)
     explanation?: string;
 
     @JSONSchema({ description: 'Optional free-text topic tag for this question, e.g. "Graphs"', type: 'string' })
     @IsOptional()
     @IsString()
+    @MaxLength(200)
     topic?: string;
 }
 
@@ -490,6 +497,7 @@ export class UpdateQuestionBody {
     @JSONSchema({ description: 'Question text', type: 'string' })
     @IsOptional()
     @IsString()
+    @MaxLength(10_000)
     questionText?: string;
 
     @JSONSchema({ description: 'Optional question image (data URL or URL)', type: 'string' })
@@ -541,11 +549,13 @@ export class UpdateQuestionBody {
     @JSONSchema({ description: 'Optional explanation for this question, e.g. shown with results', type: 'string' })
     @IsOptional()
     @IsString()
+    @MaxLength(10_000)
     explanation?: string;
 
     @JSONSchema({ description: 'Optional free-text topic tag for this question, e.g. "Graphs"', type: 'string' })
     @IsOptional()
     @IsString()
+    @MaxLength(200)
     topic?: string;
 }
 
