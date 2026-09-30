@@ -629,4 +629,88 @@ describe('Exams module — AttemptController eligibility, retakes, answer leakag
             expect(res.status).toBe(400);
         });
     });
+
+    describe('Publish gate on question count', () => {
+        it('rejects publishing an exam with no questions', async () => {
+            (app as any).__asOwner();
+            const examRes = await request(app).post('/exams').send({ title: 'Zero-question publish test' });
+            const examId = examRes.body._id;
+
+            const res = await request(app).patch(`/exams/${examId}`).send({ published: true });
+            expect(res.status).toBe(400);
+        });
+
+        it('allows publishing once the exam has at least one question', async () => {
+            (app as any).__asOwner();
+            const examRes = await request(app).post('/exams').send({ title: 'One-question publish test' });
+            const examId = examRes.body._id;
+            await addQuestion(examId);
+
+            const res = await request(app).patch(`/exams/${examId}`).send({ published: true });
+            expect(res.status).toBe(200);
+            expect(res.body.published).toBe(true);
+        });
+    });
+
+    describe('Clearing opensAt/closesAt', () => {
+        it('actually clears both fields when patched to null', async () => {
+            (app as any).__asOwner();
+            const now = Date.now();
+            const examRes = await request(app)
+                .post('/exams')
+                .send({ title: 'Window clear test exam', opensAt: now + 3_600_000, closesAt: now + 7_200_000 });
+            const examId = examRes.body._id;
+
+            const clearRes = await request(app)
+                .patch(`/exams/${examId}`)
+                .send({ opensAt: null, closesAt: null });
+            expect(clearRes.status).toBe(200);
+            expect(clearRes.body.opensAt).toBeFalsy();
+            expect(clearRes.body.closesAt).toBeFalsy();
+
+            const refetch = await request(app).get(`/exams/${examId}`);
+            expect(refetch.body.opensAt).toBeFalsy();
+            expect(refetch.body.closesAt).toBeFalsy();
+        });
+    });
+
+    describe('MCQ/MSQ option count validation', () => {
+        it('rejects a question created with fewer than 2 options', async () => {
+            (app as any).__asOwner();
+            const examRes = await request(app).post('/exams').send({ title: 'Single-option create test exam' });
+            const examId = examRes.body._id;
+
+            const res = await request(app)
+                .post(`/exams/${examId}/questions`)
+                .send({
+                    type: 'MCQ',
+                    questionText: 'Only one option',
+                    options: [{ id: 'a', text: 'x' }],
+                    correctOptions: ['a'],
+                    marks: 1,
+                });
+            expect(res.status).toBe(400);
+        });
+
+        it('rejects a PATCH that drops an existing question below 2 options', async () => {
+            (app as any).__asOwner();
+            const examRes = await request(app).post('/exams').send({ title: 'Single-option patch test exam' });
+            const examId = examRes.body._id;
+            const qRes = await request(app)
+                .post(`/exams/${examId}/questions`)
+                .send({
+                    type: 'MCQ',
+                    questionText: 'Starts with 2 options',
+                    options: [{ id: 'a', text: 'x' }, { id: 'b', text: 'y' }],
+                    correctOptions: ['a'],
+                    marks: 1,
+                });
+            const questionId = qRes.body.questions[0].id;
+
+            const res = await request(app)
+                .patch(`/exams/${examId}/questions/${questionId}`)
+                .send({ options: [{ id: 'a', text: 'x' }] });
+            expect(res.status).toBe(400);
+        });
+    });
 });

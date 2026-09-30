@@ -78,15 +78,21 @@ export class ExamRepository {
         // `[[Define]]` semantics. The driver's default `ignoreUndefined:
         // false` serializes those as BSON null, so spreading `patch` as-is
         // into $set would silently wipe out every field not present in this
-        // particular partial update. Drop undefined (and null, which no
-        // field on UpdateExamBody is documented to accept as an intentional
-        // "clear this" value - every clearable field has its own explicit
-        // sentinel, e.g. `{ eligibility: { mode: 'none' } }`) so only fields
-        // actually sent by the caller are touched. This also self-heals: a
-        // client form seeded from an already-corrupted `null` field that
-        // goes untouched now round-trips as a no-op instead of re-persisting
-        // the null.
-        const fields = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined && v !== null));
+        // particular partial update. Drop undefined so only fields actually
+        // sent by the caller are touched.
+        //
+        // `null` is NOT dropped for opensAt/closesAt: those two are
+        // documented as "absent means always open"/"never closes", so
+        // `null` is exactly how a caller clears a previously-set value back
+        // to unbounded -- stripping it here silently no-op'd every attempt
+        // to remove a scheduling window. Every other field keeps the
+        // undefined-only behavior (they have their own explicit "clear"
+        // sentinel instead, e.g. `{ eligibility: { mode: 'none' } }`, so an
+        // accidental `null` there stays a no-op rather than corrupting data).
+        const NULLABLE_CLEARABLE_FIELDS = new Set(['opensAt', 'closesAt']);
+        const fields = Object.fromEntries(
+            Object.entries(patch).filter(([k, v]) => v !== undefined && (v !== null || NULLABLE_CLEARABLE_FIELDS.has(k))),
+        );
         const result = await this.collection.findOneAndUpdate(
             { _id: new ObjectId(examId) },
             { $set: { ...fields, updatedAt: Date.now() } },

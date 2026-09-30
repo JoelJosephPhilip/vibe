@@ -114,6 +114,15 @@ describe('Exams module — QuestionBank', { timeout: 30000 }, () => {
             });
             expect(res.status).toBe(400);
         });
+
+        it('rejects an MCQ/MSQ question with fewer than 2 options', async () => {
+            const res = await request(app).post('/exams/question-bank').send({
+                ...sampleQuestion(),
+                options: [{ id: 'a', text: 'only one' }],
+                correctOptions: ['a'],
+            });
+            expect(res.status).toBe(400);
+        });
     });
 
     describe('GET /exams/question-bank (id-normalization regression)', () => {
