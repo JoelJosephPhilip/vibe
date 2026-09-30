@@ -98,7 +98,7 @@ export function RichText({ text, className }: RichTextProps) {
             </pre>
           );
         return (
-          <span key={i} style={{ whiteSpace: "pre-wrap" }}>
+          <span key={i} style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
             {t.value}
           </span>
         );

@@ -189,7 +189,15 @@ export default function AIQuestionGenerator() {
     downloadBlob(JSON.stringify(selectedQuestions, null, 2), 'ai-generated-questions.json', 'application/json')
   }
 
-  const csvEscape = (value) => `"${String(value ?? '').replace(/"/g, '""')}"`
+  // Guard against CSV/formula injection (CWE-1236) before quoting -- Excel
+  // evaluates a leading =/+/-/@/tab/CR as a formula regardless of the
+  // surrounding quotes, which only protect CSV parsing, not formula
+  // evaluation.
+  const csvEscape = (value) => {
+    let s = String(value ?? '')
+    if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`
+    return `"${s.replace(/"/g, '""')}"`
+  }
 
   const exportCsv = () => {
     const header = ['Question', 'Option A', 'Option B', 'Option C', 'Option D', 'Correct Answer', 'Explanation', 'Difficulty', 'Key Concepts']

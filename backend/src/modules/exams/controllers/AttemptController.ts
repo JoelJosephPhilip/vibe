@@ -8,14 +8,40 @@ import {
     Body,
     Authorized,
     CurrentUser,
+    UseBefore,
 } from 'routing-controllers';
 import { injectable, inject } from 'inversify';
 import { OpenAPI } from 'routing-controllers-openapi';
 import { EXAMS_TYPES } from '../types.js';
 import { AttemptService } from '../services/AttemptService.js';
+import { createRateLimiter } from '#root/shared/index.js';
 import { ExamIdParams } from '../classes/validators/ExamValidators.js';
 import { AttemptIdParams, SubmitAttemptBody } from '../classes/validators/AttemptValidators.js';
 import { IUser } from '#root/shared/interfaces/models.js';
+
+// Neither route had any throttling before this — a script could hammer
+// either with no limit beyond the logic they already enforce (retake lock,
+// duration). Sized well above this module's own test suite's call volume
+// (AttemptController.duration.test.ts + AttemptController.security.test.ts
+// together already make 13+ calls to .../attempts/start and 12+ to
+// POST /:examId/attempts, sharing one bucket per file since these tests
+// never set an Authorization header, falling back to the shared req.ip key)
+// so real test/retry traffic doesn't trip it, while still bounding a
+// hammering script. Same bearer-token-keyed pattern as
+// ExamController's redeemGrantRateLimiter, for the same NAT reasoning.
+const startAttemptRateLimiter = createRateLimiter({
+    windowMs: 60_000,
+    max: 30,
+    message: { status: 429, error: 'Too many attempt-start requests, please wait a minute and try again.' },
+    keyGenerator: (req) => req.headers.authorization ?? req.ip ?? 'unknown',
+});
+
+const submitAttemptRateLimiter = createRateLimiter({
+    windowMs: 60_000,
+    max: 20,
+    message: { status: 429, error: 'Too many submission attempts, please wait a minute and try again.' },
+    keyGenerator: (req) => req.headers.authorization ?? req.ip ?? 'unknown',
+});
 
 /**
  * Same `/exams` prefix as `ExamController`, since these routes are logically
@@ -82,6 +108,7 @@ export class AttemptController {
     // literal `attempts` at segment 1 itself (examId sits there instead).
     @Authorized()
     @Post('/:examId/attempts/start')
+    @UseBefore(startAttemptRateLimiter)
     @HttpCode(200)
     @OpenAPI({
         summary: 'Start (or resume) a timed exam attempt',
@@ -98,6 +125,7 @@ export class AttemptController {
     // Submit attempt -> authoritative score, persisted
     @Authorized()
     @Post('/:examId/attempts')
+    @UseBefore(submitAttemptRateLimiter)
     @HttpCode(201)
     @OpenAPI({
         summary: 'Submit an exam attempt',
