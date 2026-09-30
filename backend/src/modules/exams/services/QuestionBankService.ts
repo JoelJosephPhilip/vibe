@@ -4,7 +4,7 @@ import { injectable, inject } from 'inversify';
 import { ForbiddenError, NotFoundError } from 'routing-controllers';
 import { EXAMS_TYPES } from '../types.js';
 import { QuestionBankRepository } from '../repositories/providers/mongodb/QuestionBankRepository.js';
-import { ExamService } from './ExamService.js';
+import { ExamService, assertValidQuestionFields } from './ExamService.js';
 import { ExamImageStorageService } from './ExamImageStorageService.js';
 import { IQuestionBankEntry } from '../classes/transformers/QuestionBank.js';
 import { IExam, IExamQuestion, IExamQuestionOption } from '../classes/transformers/Exam.js';
@@ -31,6 +31,7 @@ export class QuestionBankService {
      * manages, mirroring `exams/<examId>/questions/<questionId>`).
      */
     async addToBank(body: AddQuestionBody, userId: string): Promise<IQuestionBankEntry> {
+        assertValidQuestionFields(body);
         const questionId = `bank-${randomUUID()}`;
         const pathPrefix = `exams/question-bank/${userId}/${questionId}`;
         const [questionImage, options] = await Promise.all([
