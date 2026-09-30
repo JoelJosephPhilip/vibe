@@ -136,7 +136,7 @@ export class ExamService {
         if (!(await this.isEligibleForStudent(exam, user))) {
             throw new ForbiddenError('You are not eligible to view this exam');
         }
-        return exam;
+        return this.sanitizeForNonOwner(exam);
     }
 
     /**
@@ -178,7 +178,41 @@ export class ExamService {
             return exams;
         }
         const eligibility = await Promise.all(exams.map(exam => this.isEligibleForStudent(exam, user)));
-        return exams.filter((_, i) => eligibility[i]);
+        return exams.filter((_, i) => eligibility[i]).map(exam => this.sanitizeForNonOwner(exam));
+    }
+
+    /**
+     * Strips question content a non-owner/admin has no legitimate need to see
+     * over the wire. `correctOptions`/`explanation` are blanked unconditionally
+     * -- the server is the sole source of truth for scoring
+     * (`AttemptService.submitAttempt` recomputes it independently), so a
+     * student's browser never needs the answer key, open exam or not. Outside
+     * the scheduling window (`opensAt`/`closesAt`) the actual question content
+     * (`questionText`/`questionImage`/`options`) is blanked too, so an exam is
+     * genuinely unreadable before it opens or after it closes -- not just
+     * unscoreable.
+     *
+     * `id`/`type`/`marks` and the array length itself are preserved
+     * regardless: `HomePage.jsx` sums `marks` and shows the question count for
+     * every published exam (including not-yet-open/closed ones), and
+     * `ExamPage.jsx`'s own "opens at X"/"closed" messaging is gated behind a
+     * non-empty `questions` array.
+     */
+    private sanitizeForNonOwner(exam: IExam): IExam {
+        const now = Date.now();
+        const outsideWindow =
+            (exam.opensAt != null && now < exam.opensAt) ||
+            (exam.closesAt != null && now > exam.closesAt);
+
+        return {
+            ...exam,
+            questions: exam.questions.map(q => ({
+                ...q,
+                correctOptions: [],
+                explanation: undefined,
+                ...(outsideWindow ? { questionText: '', questionImage: undefined, options: [] } : {}),
+            })),
+        };
     }
 
     /**
