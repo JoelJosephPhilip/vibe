@@ -157,11 +157,16 @@ export interface IExam {
     /**
      * Scheduling window (epoch-ms). Both optional/absent means "always open",
      * preserving current behavior for every existing exam. Enforced
-     * server-side in `AttemptService.submitAttempt` (a student cannot submit
-     * before `opensAt` or after `closesAt`); deliberately NOT enforced on the
-     * `GET /exams/:examId` read path, since teachers need to fetch/preview an
-     * exam regardless of its window — the frontend handles the student-facing
-     * "not open yet" screen itself using these same fields.
+     * server-side in both `AttemptService.startAttempt`/`submitAttempt` (a
+     * student cannot start or submit before `opensAt` or after `closesAt`)
+     * AND on the read paths a non-owner/admin uses (`ExamService.getExamForUser`
+     * / `findPublished`): outside the window, `ExamService.sanitizeForNonOwner`
+     * blanks each question's `questionText`/`questionImage`/`options`, so the
+     * exam is unreadable, not just unscoreable, before it opens or after it
+     * closes. `correctOptions`/`explanation` are blanked by that same method
+     * unconditionally, open or not — the server independently regrades on
+     * submit, so a student's browser never needs the answer key. Owner/admin
+     * always see the exam unredacted, any time.
      */
     opensAt?: number;
     closesAt?: number;
