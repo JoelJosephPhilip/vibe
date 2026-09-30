@@ -264,6 +264,106 @@ describe('Exams module — AttemptController eligibility, retakes, answer leakag
         });
     });
 
+    describe('Exam content redaction for students', () => {
+        const createRedactionExam = async (windowFields: Record<string, unknown> = {}) => {
+            (app as any).__asOwner();
+            const examRes = await request(app)
+                .post('/exams')
+                .send({ title: 'Redaction test exam', ...windowFields });
+            const examId = examRes.body._id;
+            await request(app)
+                .post(`/exams/${examId}/questions`)
+                .send({
+                    type: 'MCQ',
+                    questionText: 'What is 2 + 2?',
+                    options: [
+                        { id: 'a', text: '3' },
+                        { id: 'b', text: '4' },
+                    ],
+                    correctOptions: ['b'],
+                    marks: 1,
+                    explanation: 'Correct answer: 4, because 2+2=4.',
+                });
+            await request(app)
+                .patch(`/exams/${examId}`)
+                .send({ eligibility: { mode: 'none' }, published: true });
+            return examId;
+        };
+
+        it('always strips correctOptions/explanation for a student, window open or unset', async () => {
+            const examId = await createRedactionExam();
+
+            (app as any).__asStudent();
+            const res = await request(app).get(`/exams/${examId}`);
+            expect(res.status).toBe(200);
+            expect(res.body.questions[0].correctOptions).toEqual([]);
+            expect(res.body.questions[0].explanation).toBeFalsy();
+            // Question content itself is still readable -- the student is
+            // inside the (unbounded) window, just never gets the answer key.
+            expect(res.body.questions[0].questionText).toBe('What is 2 + 2?');
+            expect(res.body.questions[0].options).toHaveLength(2);
+
+            (app as any).__asOwner();
+            const ownerRes = await request(app).get(`/exams/${examId}`);
+            expect(ownerRes.body.questions[0].correctOptions).toEqual(['b']);
+        });
+
+        it('also strips question content for a student before opensAt', async () => {
+            const now = Date.now();
+            const examId = await createRedactionExam({ opensAt: now + 3_600_000, closesAt: now + 7_200_000 });
+
+            (app as any).__asStudent();
+            const res = await request(app).get(`/exams/${examId}`);
+            expect(res.status).toBe(200);
+            expect(res.body.questions[0].correctOptions).toEqual([]);
+            expect(res.body.questions[0].questionText).toBe('');
+            expect(res.body.questions[0].options).toEqual([]);
+            // Metadata a "not open yet" UI needs still comes through.
+            expect(res.body.title).toBe('Redaction test exam');
+            expect(res.body.opensAt).toBe(now + 3_600_000);
+            expect(res.body.closesAt).toBe(now + 7_200_000);
+            expect(res.body.questions).toHaveLength(1);
+            expect(res.body.questions[0].marks).toBe(1);
+
+            (app as any).__asOwner();
+            const ownerRes = await request(app).get(`/exams/${examId}`);
+            expect(ownerRes.body.questions[0].questionText).toBe('What is 2 + 2?');
+        });
+
+        it('also strips question content for a student after closesAt', async () => {
+            const now = Date.now();
+            const examId = await createRedactionExam({ opensAt: now - 7_200_000, closesAt: now - 3_600_000 });
+
+            (app as any).__asStudent();
+            const res = await request(app).get(`/exams/${examId}`);
+            expect(res.status).toBe(200);
+            expect(res.body.questions[0].correctOptions).toEqual([]);
+            expect(res.body.questions[0].questionText).toBe('');
+            expect(res.body.questions[0].options).toEqual([]);
+            expect(res.body.questions).toHaveLength(1);
+
+            (app as any).__asOwner();
+            const ownerRes = await request(app).get(`/exams/${examId}`);
+            expect(ownerRes.body.questions[0].questionText).toBe('What is 2 + 2?');
+        });
+
+        it('applies the same redaction to GET /exams/published', async () => {
+            const now = Date.now();
+            const examId = await createRedactionExam({ opensAt: now + 3_600_000, closesAt: now + 7_200_000 });
+
+            (app as any).__asStudent();
+            const res = await request(app).get('/exams/published');
+            expect(res.status).toBe(200);
+            const listed = res.body.find((e: any) => e._id === examId);
+            expect(listed).toBeTruthy();
+            expect(listed.questions[0].correctOptions).toEqual([]);
+            expect(listed.questions[0].questionText).toBe('');
+            expect(listed.questions).toHaveLength(1);
+            expect(listed.questions[0].marks).toBe(1);
+            expect(listed.opensAt).toBe(now + 3_600_000);
+        });
+    });
+
     describe('Exam scheduling window validation', () => {
         it('rejects creating an exam where closesAt is before opensAt', async () => {
             (app as any).__asOwner();
