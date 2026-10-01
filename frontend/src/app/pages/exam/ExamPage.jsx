@@ -22,6 +22,7 @@ const SUBMIT_BLOCK_MESSAGES = [
   'This exam is not open yet',
   'This exam is now closed',
   'You have already attempted this exam',
+  'You must spend at least',
 ]
 
 // Black/white is the primary palette. Orange is kept only as a thin accent
@@ -812,6 +813,21 @@ function ExamPageInner({ examId, isDemo, examData, navigate, serverStartedAt }) 
     exam.duration * 60 + extraSeconds - Math.floor((Date.now() - startedAtRef.current) / 1000)
   )
 
+  // Ticks once a second (only while it still matters) purely to force a
+  // re-render so minSubmitRemaining below -- recomputed fresh from
+  // Date.now() every render, same anti-drift approach as CountdownDisplay --
+  // counts down live instead of only updating when something else happens
+  // to re-render the page.
+  const [, forceMinSubmitTick] = useState(0)
+  useEffect(() => {
+    if (!exam.minSubmitTime) return
+    const id = setInterval(() => forceMinSubmitTick(t => t + 1), 1000)
+    return () => clearInterval(id)
+  }, [exam.minSubmitTime])
+  const minSubmitRemaining = exam.minSubmitTime
+    ? Math.max(0, exam.minSubmitTime - Math.floor((Date.now() - startedAtRef.current) / 1000))
+    : 0
+
   // Same blur overlay used for camera proctoring violations also covers a
   // detected (docked) DevTools panel — one consistent "something's wrong,
   // resolve it, the timer keeps running" response instead of a second UI.
@@ -1152,6 +1168,11 @@ function ExamPageInner({ examId, isDemo, examData, navigate, serverStartedAt }) 
               />
             </div>
 
+            {minSubmitRemaining > 0 && (
+              <p className="px-6 pb-3 text-sm text-gray-500">
+                This test requires at least {exam.minSubmitTime}s before you can submit — {minSubmitRemaining}s to go.
+              </p>
+            )}
             <div className="flex justify-end gap-3 bg-gray-50 px-6 py-4">
               <button
                 onClick={() => setShowSubmitConfirm(false)}
@@ -1161,11 +1182,11 @@ function ExamPageInner({ examId, isDemo, examData, navigate, serverStartedAt }) 
               </button>
               <button
                 onClick={() => handleSubmit()}
-                disabled={submitAttempt.isPending}
+                disabled={submitAttempt.isPending || minSubmitRemaining > 0}
                 className="rounded-full px-6 py-2 text-sm font-semibold text-white shadow-sm hover:brightness-110 disabled:opacity-60"
                 style={{ backgroundColor: ACCENT, color: INK }}
               >
-                {submitAttempt.isPending ? 'Submitting…' : 'Submit Test'}
+                {submitAttempt.isPending ? 'Submitting…' : minSubmitRemaining > 0 ? `Wait ${minSubmitRemaining}s` : 'Submit Test'}
               </button>
             </div>
           </div>
