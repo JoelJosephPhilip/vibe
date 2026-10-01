@@ -196,6 +196,18 @@ export class AttemptService {
             throw new ForbiddenError('The time allotted for this exam has expired');
         }
 
+        // `minSubmitTime` ("minimum seconds a student must spend before
+        // Submit is allowed") was previously stored on the exam and shown in
+        // the editor but never checked anywhere -- a student could submit
+        // the instant they started regardless of the configured minimum.
+        // Enforced the same way as the duration deadline above: against the
+        // server-recorded startedAt, not any client-reported elapsed time.
+        if (exam.minSubmitTime && now - startedAt < exam.minSubmitTime * 1000) {
+            throw new ForbiddenError(
+                `You must spend at least ${exam.minSubmitTime} seconds on this exam before submitting`,
+            );
+        }
+
         // This read-then-insert check alone has a race: two concurrent
         // submissions can both read "no existing attempt" before either
         // insert lands. It stays as a fast, friendly rejection for the
