@@ -438,6 +438,11 @@ export const examApi = {
         return apiFetch(`${BASE_URL}/${examId}/attempts/start`, { method: 'POST' });
     },
 
+    // Proctoring liveness ping — fire-and-forget by design, see ExamProctoring.tsx.
+    heartbeatAttempt: async (examId: string): Promise<{ ok: boolean }> => {
+        return apiFetch(`${BASE_URL}/${examId}/attempts/heartbeat`, { method: 'POST' });
+    },
+
     submitAttempt: async (examId: string, input: SubmitAttemptInput): Promise<ExamAttempt> => {
         const data = await apiFetch<ExamAttempt>(`${BASE_URL}/${examId}/attempts`, {
             method: 'POST',

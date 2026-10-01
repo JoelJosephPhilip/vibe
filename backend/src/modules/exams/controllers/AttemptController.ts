@@ -43,6 +43,16 @@ const submitAttemptRateLimiter = createRateLimiter({
     keyGenerator: (req) => req.headers.authorization ?? req.ip ?? 'unknown',
 });
 
+// A real attempt pings this roughly every 20s (see ExamProctoring.tsx), so
+// even a long exam stays well under this per-minute budget; sized to match
+// startAttemptRateLimiter's reasoning otherwise.
+const heartbeatRateLimiter = createRateLimiter({
+    windowMs: 60_000,
+    max: 10,
+    message: { status: 429, error: 'Too many heartbeat requests, please wait a minute and try again.' },
+    keyGenerator: (req) => req.headers.authorization ?? req.ip ?? 'unknown',
+});
+
 /**
  * Same `/exams` prefix as `ExamController`, since these routes are logically
  * nested under an exam ("submit an attempt for this exam") or under the
@@ -120,6 +130,27 @@ export class AttemptController {
     })
     async startAttempt(@Params() params: ExamIdParams, @CurrentUser() user: IUser) {
         return this.attemptService.startAttempt(params.examId, user);
+    }
+
+    // Proctoring liveness ping, sent periodically by ExamProctoring.tsx
+    // while it's actually mounted and running. `/:examId/attempts/heartbeat`
+    // is a 3-segment path (examId, literal `attempts`, literal `heartbeat`) —
+    // same shape as `/:examId/attempts/start` immediately above, so the same
+    // non-collision reasoning in this class's doc comment applies verbatim.
+    @Authorized()
+    @Post('/:examId/attempts/heartbeat')
+    @UseBefore(heartbeatRateLimiter)
+    @HttpCode(200)
+    @OpenAPI({
+        summary: 'Record a proctoring liveness ping for an in-progress attempt',
+        description:
+            'Best-effort: a no-op if this student never called /start for this exam. ' +
+            'submitAttempt uses the accumulated count, not any single call, to decide ' +
+            'whether a proctored exam\'s attempt looks like it actually ran.',
+    })
+    async heartbeatAttempt(@Params() params: ExamIdParams, @CurrentUser() user: IUser) {
+        await this.attemptService.recordHeartbeat(params.examId, user);
+        return { ok: true };
     }
 
     // Submit attempt -> authoritative score, persisted

@@ -31,7 +31,7 @@ export default function AttemptsPage() {
 
   const isLoading = examLoading || attemptsLoading
 
-  const flaggedCount = (attempts || []).filter((a) => (a.proctoringEvents?.length ?? 0) > 0).length
+  const flaggedCount = (attempts || []).filter((a) => (a.proctoringEvents?.length ?? 0) > 0 || a.proctoringSuspicious).length
   const tabSwitchCount = (attempts || []).filter((a) => (a.tabSwitches ?? 0) > 0).length
 
   return (
@@ -143,7 +143,18 @@ export default function AttemptsPage() {
                                 background: '#FEE2E2', color: '#991B1B',
                               }}>{tabSwitches} tab switch{tabSwitches === 1 ? '' : 'es'}</span>
                             )}
-                            {flagCount === 0 && tabSwitches === 0 && (
+                            {a.proctoringSuspicious && (
+                              <span
+                                title="Proctoring was configured for this exam, but this attempt received little to no liveness confirmation it was actually running — worth a closer look."
+                                style={{
+                                  padding: '2px 8px', borderRadius: 12, fontSize: 12,
+                                  background: '#FEF3C7', color: '#92400E',
+                                }}
+                              >
+                                Low heartbeat coverage
+                              </span>
+                            )}
+                            {flagCount === 0 && tabSwitches === 0 && !a.proctoringSuspicious && (
                               <span style={{ fontSize: 12, color: '#9CA3AF' }}>—</span>
                             )}
                           </div>

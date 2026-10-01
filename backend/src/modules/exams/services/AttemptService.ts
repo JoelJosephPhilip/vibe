@@ -51,6 +51,31 @@ export async function mapWithConcurrency<T, R>(
     return results;
 }
 
+/**
+ * Grace period, in ms, before zero proctoring heartbeats counts as
+ * suspicious -- several multiples of ExamProctoring.tsx's ~20s ping
+ * interval, so a real student's first ping or two arriving late (a slow
+ * connection, the tab being backgrounded briefly) doesn't get flagged.
+ */
+export const PROCTORING_HEARTBEAT_GRACE_MS = 90_000;
+
+/**
+ * True only when an exam actually has proctoring enabled, the attempt ran
+ * long enough that several heartbeat pings should have landed by now, and
+ * not even one did -- the strongest available signal that the real exam
+ * page (and therefore the real camera/voice/tab-switch detectors) was
+ * never actually running for this attempt, as opposed to a raw API caller
+ * that self-reports whatever tabSwitches/proctoringEvents it likes.
+ */
+export function isProctoringHeartbeatSuspicious(
+    hasEnabledDetector: boolean,
+    elapsedMs: number,
+    heartbeatCount: number,
+): boolean {
+    if (!hasEnabledDetector || elapsedMs < PROCTORING_HEARTBEAT_GRACE_MS) return false;
+    return heartbeatCount === 0;
+}
+
 @injectable()
 export class AttemptService {
     constructor(
@@ -90,6 +115,17 @@ export class AttemptService {
 
         const startedAt = await this.attemptStartRepo.getOrCreate(examId, studentId);
         return { startedAt };
+    }
+
+    /**
+     * Records one proctoring liveness ping. No eligibility/window checks --
+     * a no-op if this (examId, studentId) never called startAttempt (see
+     * AttemptStartRepository.recordHeartbeat), so there's nothing here a
+     * caller could abuse beyond wasting their own rate-limit budget.
+     */
+    async recordHeartbeat(examId: string, student: IUser): Promise<void> {
+        const studentId = student._id!.toString();
+        await this.attemptStartRepo.recordHeartbeat(examId, studentId);
     }
 
     /**
@@ -146,10 +182,11 @@ export class AttemptService {
         // defeat a check based on the request body alone. Requires the
         // client to have called `startAttempt` first; there is no fallback
         // to the client-supplied value.
-        const startedAt = await this.attemptStartRepo.get(examId, studentId);
-        if (!startedAt) {
+        const startRecord = await this.attemptStartRepo.get(examId, studentId);
+        if (!startRecord) {
             throw new ForbiddenError('Attempt was never started — call the start endpoint first');
         }
+        const { startedAt, heartbeatCount } = startRecord;
         const grantedMinutes = (exam.timeGrants ?? [])
             .filter(g => g.used && g.redeemedByStudentId === studentId)
             .reduce((sum, g) => sum + (Number(g.minutes) || 0), 0);
@@ -238,6 +275,20 @@ export class AttemptService {
               }))
             : undefined;
 
+        // Whether this exam's proctoring was ever actually running is
+        // computed server-side from the heartbeat count recorded by
+        // ExamProctoring.tsx's periodic ping -- tabSwitches/proctoringEvents
+        // above are self-reported by the client and, on their own, prove
+        // nothing (silence is also what a clean, well-monitored attempt
+        // looks like). Flagged, not rejected: a dropped connection
+        // shouldn't cost a real student their exam.
+        const hasEnabledDetector = exam.proctoring?.detectors?.some(d => d.enabled) ?? false;
+        const proctoringSuspicious = isProctoringHeartbeatSuspicious(
+            hasEnabledDetector,
+            Date.now() - startedAt,
+            heartbeatCount,
+        );
+
         const attempt: IExamAttempt = {
             examId,
             examTitle: exam.title,
@@ -259,6 +310,7 @@ export class AttemptService {
             proctoringEvents,
             submittedAt: Date.now(),
             ...(exam.allowRetakes === false ? { noRetakesLock: true as const } : {}),
+            ...(proctoringSuspicious ? { proctoringSuspicious: true as const } : {}),
         };
 
         let created: IExamAttempt;
