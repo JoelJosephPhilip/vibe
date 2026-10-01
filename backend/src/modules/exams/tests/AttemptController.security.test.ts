@@ -787,4 +787,43 @@ describe('Exams module — AttemptController eligibility, retakes, answer leakag
             expect(res.body.proctoringSuspicious).toBeFalsy();
         });
     });
+
+    describe('minSubmitTime enforcement', () => {
+        it('rejects an immediate submission when the exam requires a minimum time on it', async () => {
+            (app as any).__asOwner();
+            const examRes = await request(app)
+                .post('/exams')
+                .send({ title: 'Min submit time test exam', minSubmitTime: 120 });
+            const examId = examRes.body._id;
+            await addQuestion(examId);
+            await request(app)
+                .patch(`/exams/${examId}`)
+                .send({ eligibility: { mode: 'none' }, published: true });
+
+            (app as any).__asStudent();
+            await request(app).post(`/exams/${examId}/attempts/start`).send({});
+            const res = await request(app)
+                .post(`/exams/${examId}/attempts`)
+                .send({ responses: [], tabSwitches: 0, proctoringEvents: [] });
+            expect(res.status).toBe(403);
+            expect(res.body.message).toContain('You must spend at least');
+        });
+
+        it('does not reject an immediate submission when no minSubmitTime is configured', async () => {
+            (app as any).__asOwner();
+            const examRes = await request(app).post('/exams').send({ title: 'No min submit time test exam' });
+            const examId = examRes.body._id;
+            await addQuestion(examId);
+            await request(app)
+                .patch(`/exams/${examId}`)
+                .send({ eligibility: { mode: 'none' }, published: true });
+
+            (app as any).__asStudent();
+            await request(app).post(`/exams/${examId}/attempts/start`).send({});
+            const res = await request(app)
+                .post(`/exams/${examId}/attempts`)
+                .send({ responses: [], tabSwitches: 0, proctoringEvents: [] });
+            expect(res.status).toBe(201);
+        });
+    });
 });
