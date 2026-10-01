@@ -713,4 +713,78 @@ describe('Exams module — AttemptController eligibility, retakes, answer leakag
             expect(res.status).toBe(400);
         });
     });
+
+    describe('Proctoring heartbeat', () => {
+        it('is a no-op (200) when pinged before the attempt was ever started', async () => {
+            (app as any).__asOwner();
+            const examRes = await request(app).post('/exams').send({ title: 'Heartbeat before start test exam' });
+            const examId = examRes.body._id;
+            await addQuestion(examId);
+            await request(app)
+                .patch(`/exams/${examId}`)
+                .send({ eligibility: { mode: 'none' }, published: true });
+
+            (app as any).__asStudent();
+            const res = await request(app).post(`/exams/${examId}/attempts/heartbeat`).send({});
+            expect(res.status).toBe(200);
+        });
+
+        it('succeeds after the attempt was started', async () => {
+            (app as any).__asOwner();
+            const examRes = await request(app).post('/exams').send({ title: 'Heartbeat after start test exam' });
+            const examId = examRes.body._id;
+            await addQuestion(examId);
+            await request(app)
+                .patch(`/exams/${examId}`)
+                .send({ eligibility: { mode: 'none' }, published: true });
+
+            (app as any).__asStudent();
+            await request(app).post(`/exams/${examId}/attempts/start`).send({});
+            const res = await request(app).post(`/exams/${examId}/attempts/heartbeat`).send({});
+            expect(res.status).toBe(200);
+        });
+
+        it('429s a burst of heartbeat calls past the configured max', async () => {
+            (app as any).__asOwner();
+            const examRes = await request(app).post('/exams').send({ title: 'Heartbeat rate limit test exam' });
+            const examId = examRes.body._id;
+            await addQuestion(examId);
+            await request(app)
+                .patch(`/exams/${examId}`)
+                .send({ eligibility: { mode: 'none' }, published: true });
+
+            (app as any).__asStudent();
+            await request(app).post(`/exams/${examId}/attempts/start`).send({});
+            // Comfortably above max:10 for the same shared-bucket reason as
+            // the other rate-limit burst tests in this file.
+            const results = await Promise.all(
+                Array.from({ length: 20 }, () => request(app).post(`/exams/${examId}/attempts/heartbeat`).send({})),
+            );
+            expect(results.some((r) => r.status === 429)).toBe(true);
+        });
+
+        it('never flags a fast test-speed attempt (well under the grace window) even with zero heartbeats', async () => {
+            (app as any).__asOwner();
+            const examRes = await request(app).post('/exams').send({ title: 'Fast attempt no-flag test exam' });
+            const examId = examRes.body._id;
+            await request(app).patch(`/exams/${examId}`).send({
+                proctoring: { detectors: [{ detectorName: 'cameraMic', enabled: true }] },
+            });
+            await addQuestion(examId);
+            await request(app)
+                .patch(`/exams/${examId}`)
+                .send({ eligibility: { mode: 'none' }, published: true });
+
+            (app as any).__asStudent();
+            await request(app).post(`/exams/${examId}/attempts/start`).send({});
+            // No heartbeat calls at all -- same shape as the original live
+            // bypass -- but submitted immediately, well under the 90s grace
+            // window, so this must NOT be flagged.
+            const res = await request(app)
+                .post(`/exams/${examId}/attempts`)
+                .send({ responses: [], tabSwitches: 0, proctoringEvents: [] });
+            expect(res.status).toBe(201);
+            expect(res.body.proctoringSuspicious).toBeFalsy();
+        });
+    });
 });

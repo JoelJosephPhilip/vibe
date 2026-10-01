@@ -76,4 +76,12 @@ export interface IExamAttempt {
      * comment for why this closes the retake race condition.
      */
     noRetakesLock?: true;
+    /**
+     * Set by `submitAttempt` (never client-supplied) when the exam had
+     * proctoring enabled but received suspiciously few/zero liveness
+     * heartbeats for how long the attempt took -- see
+     * `isProctoringHeartbeatSuspicious` in `AttemptService.ts`. Flags the
+     * attempt for instructor review rather than blocking the submission.
+     */
+    proctoringSuspicious?: true;
 }

@@ -1259,6 +1259,7 @@ function ExamPageInner({ examId, isDemo, examData, navigate, serverStartedAt }) 
           enforced), but there's no extra in-app dialog on top of it. */}
       {hasProctoring && (
         <ExamProctoring
+          examId={examId}
           settings={examData.proctoring}
           onEvent={handleProctoringEvent}
           onBlockingChange={handleProctoringBlockingChange}

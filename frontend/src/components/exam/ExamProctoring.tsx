@@ -7,7 +7,14 @@ import useCameraProcessor from "@/components/ai/useCameraProcessor";
 import { FaceRegistrationModal } from "@/components/ai/FaceRegistrationModal";
 import { runProctoringChecks } from "@/utils/proctoring/proctoringGuard";
 import { getStream } from "@/lib/MediaRegistry";
+import { examApi } from "@/lib/api/exams";
 import type { ExamProctoringConfig, ProctoringDetectorSetting } from "@/lib/api/exams";
+
+// How often a real attempt pings the server-side heartbeat while this
+// component is mounted -- see AttemptService.PROCTORING_HEARTBEAT_GRACE_MS
+// (90s), which is sized as several multiples of this interval so one slow
+// or dropped ping never looks like proctoring was never running at all.
+const HEARTBEAT_INTERVAL_MS = 20_000;
 
 // Much smaller, exam-specific cousin of `components/floating-video.tsx`
 // (the lesson-flow proctoring orchestrator). Reuses the same detection
@@ -84,6 +91,8 @@ const ANOMALY_LABELS: Record<string, string> = {
 };
 
 export interface ExamProctoringProps {
+  /** The exam this attempt belongs to -- needed to address the heartbeat ping at the right attempt. */
+  examId: string;
   /** The exam's `proctoring` field. `undefined` means "not configured" — falls back to the default detector set above. */
   settings?: ExamProctoringConfig;
   /**
@@ -101,7 +110,7 @@ export interface ExamProctoringProps {
   onBlockingChange: (isBlocking: boolean, reasons: string[]) => void;
 }
 
-export default function ExamProctoring({ settings, onEvent, onBlockingChange }: ExamProctoringProps) {
+export default function ExamProctoring({ examId, settings, onEvent, onBlockingChange }: ExamProctoringProps) {
   const detectors = settings?.detectors;
 
   const isBlurDetectionEnabled = isDetectorEnabled(detectors, "blurDetection");
@@ -207,6 +216,21 @@ export default function ExamProctoring({ settings, onEvent, onBlockingChange }: 
     const intervalId = window.setInterval(check, 3000);
     return () => window.clearInterval(intervalId);
   }, []);
+
+  // Server-side "proof this component was actually mounted and running"
+  // signal -- see AttemptService.isProctoringHeartbeatSuspicious. Fires
+  // once immediately (so even a very short proctored exam gets one ping in)
+  // then on the interval. Best-effort: a failed ping is silently dropped,
+  // never surfaced to the student or retried out-of-band -- the 90s grace
+  // window server-side exists precisely to absorb the occasional miss.
+  useEffect(() => {
+    const ping = () => {
+      examApi.heartbeatAttempt(examId).catch(() => {});
+    };
+    ping();
+    const intervalId = window.setInterval(ping, HEARTBEAT_INTERVAL_MS);
+    return () => window.clearInterval(intervalId);
+  }, [examId]);
 
   // Grabs a downscaled evidence thumbnail from the preview widget's own
   // <video> element for a flagged violation — same canvas-snapshot pattern
