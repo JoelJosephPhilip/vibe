@@ -8,6 +8,7 @@ interface IAttemptStartDoc {
     examId: string;
     studentId: string;
     startedAt: number;
+    heartbeatCount: number;
 }
 
 /**
@@ -61,7 +62,7 @@ export class AttemptStartRepository {
         await this.init();
         const startedAt = Date.now();
         try {
-            await this.collection.insertOne({ examId, studentId, startedAt });
+            await this.collection.insertOne({ examId, studentId, startedAt, heartbeatCount: 0 });
             return startedAt;
         } catch (error) {
             if ((error as { code?: number })?.code === 11000) {
@@ -72,10 +73,25 @@ export class AttemptStartRepository {
         }
     }
 
-    async get(examId: string, studentId: string): Promise<number | null> {
+    async get(examId: string, studentId: string): Promise<{ startedAt: number; heartbeatCount: number } | null> {
         await this.init();
         const existing = await this.collection.findOne({ examId, studentId });
-        return existing?.startedAt ?? null;
+        if (!existing) return null;
+        return { startedAt: existing.startedAt, heartbeatCount: existing.heartbeatCount ?? 0 };
+    }
+
+    /**
+     * Records one proctoring liveness ping for an in-progress attempt — the
+     * server-side "proof the client's proctoring UI was actually mounted
+     * and running" signal `submitAttempt` checks against, since a raw API
+     * caller bypassing the real exam page entirely can self-report whatever
+     * `tabSwitches`/`proctoringEvents` it wants, same as `startedAt` above.
+     * A no-op (not an upsert) if no start record exists yet — a ping before
+     * `/start` is meaningless and safe to ignore.
+     */
+    async recordHeartbeat(examId: string, studentId: string): Promise<void> {
+        await this.init();
+        await this.collection.updateOne({ examId, studentId }, { $inc: { heartbeatCount: 1 } });
     }
 
     /**
