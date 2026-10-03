@@ -52,6 +52,16 @@ import { LedgerRepository } from '#root/modules/hpSystem/repositories/index.js';
 const GURU_SETU_COURSE_ID = '6981df886e100cfe04f9c4ad';
 const GURU_SETU_VERSION_ID = '6981df886e100cfe04f9c4ae';
 
+// Course/version pairs allowed to use the Gurusetu feedback export
+// specifically (scoped separately from GURU_SETU_COURSE_ID/VERSION_ID above,
+// which gate unrelated Gurusetu-specific behavior elsewhere in this file).
+// Each entry must also be added to GURU_SETU_PILOT_COURSES in the frontend's
+// gurusetu-feedback-export.ts, or the download link won't show up at all.
+const GURU_SETU_FEEDBACK_EXPORT_COURSES: ReadonlyArray<{courseId: string; versionId: string}> = [
+  {courseId: GURU_SETU_COURSE_ID, versionId: GURU_SETU_VERSION_ID}, // Gurusetu Pilot (FDP for Faculty)
+  {courseId: '6a9a7eb5de600629c9fb9405', versionId: '6a9a7eb5de600629c9fb9406'}, // GuruSetu Psychological Literacy Special Pilot
+];
+
 @injectable()
 export class EnrollmentService extends BaseService {
   constructor(
@@ -1646,9 +1656,12 @@ export class EnrollmentService extends BaseService {
         throw new NotFoundError('Course version not found');
       }
 
-      if (courseId !== GURU_SETU_COURSE_ID || versionId !== GURU_SETU_VERSION_ID) {
+      const isAllowedPilotCourse = GURU_SETU_FEEDBACK_EXPORT_COURSES.some(
+        pair => pair.courseId === courseId && pair.versionId === versionId,
+      );
+      if (!isAllowedPilotCourse) {
         throw new BadRequestError(
-          'This export is available only for Gurusetu Pilot(FDP for Faculty).',
+          'This export is available only for Gurusetu pilot courses.',
         );
       }
 
