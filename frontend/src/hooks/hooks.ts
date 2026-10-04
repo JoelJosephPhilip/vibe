@@ -685,11 +685,11 @@ export function useStudentCurrentProgressPath(
 
 // GET /:userId/enrollments/courses/:courseId/versions/:versionId/progress-detail (API 2)
 export function useStudentProgressDetail(
-  userId?: string,
-  courseId?: string,
-  versionId?: string,
+  userId?: string | null,
+  courseId?: string | null,
+  versionId?: string | null,
   enabled?: boolean,
-  cohortId?: string
+  cohortId?: string | null
 ) {
   const result = api.useQuery(
     'get',
