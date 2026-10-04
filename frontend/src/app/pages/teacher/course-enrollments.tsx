@@ -85,15 +85,30 @@ interface IGradingResult {
 }
 
 // Courses that show a raw "completed items / total items" count in the
-// enrollments table instead of the usual completion-percentage bar. The bulk
-// enrollments-list endpoint doesn't return a per-course total-item count, so
-// each course's total is pinned here -- confirmed via /progress-detail for
-// one enrolled student in each course. Add an entry here (and nowhere else)
-// to extend this display to another course.
-const ITEM_COUNT_PROGRESS_COURSES: Record<string, number> = {
-  '6981df886e100cfe04f9c4ad': 30, // Gurusetu Pilot (FDP for Faculty)
-  '6a9a7eb5de600629c9fb9405': 37, // GuruSetu Psychological Literacy Special Pilot
-};
+// enrollments table instead of the usual completion-percentage bar. The real
+// total comes live from /progress-detail's completedItemsTotal, which the
+// backend pairs with the same formula used for completedItemsCount for that
+// course (plain item count for most courses; feedback-forms-submitted count
+// for the Guru-Setu-override courses) -- so the numerator and denominator can
+// never represent different things. fallbackTotal is only a loading-state
+// placeholder shown before that fetch resolves, or if the course has no
+// enrolled student yet to query; it is not kept in sync automatically. Add an
+// entry here (and nowhere else on the frontend) to extend this display to
+// another course -- matches #1441's course+version pair shape.
+const ITEM_COUNT_PROGRESS_COURSES: ReadonlyArray<{
+  courseId: string;
+  versionId: string;
+  fallbackTotal: number;
+}> = [
+  {courseId: '6981df886e100cfe04f9c4ad', versionId: '6981df886e100cfe04f9c4ae', fallbackTotal: 47}, // Gurusetu Pilot (FDP for Faculty) -- feedback forms, not all items
+  {courseId: '6a9a7eb5de600629c9fb9405', versionId: '6a9a7eb5de600629c9fb9406', fallbackTotal: 18}, // GuruSetu Psychological Literacy Special Pilot -- feedback forms, not all items (now on the same Guru Setu override as FDP)
+];
+
+function findItemCountProgressCourse(courseId?: string, versionId?: string) {
+  return ITEM_COUNT_PROGRESS_COURSES.find(
+    c => c.courseId === courseId && c.versionId === versionId,
+  );
+}
 
 // Helper function to generate default names for items with empty names
 function generateDefaultItemNames(items: any[]) {
@@ -673,24 +688,22 @@ function CourseEnrollments() {
   // const studentEnrollments = enrollmentsData?.enrollments || [];
   const studentEnrollments = enrollmentsData?.enrollments || []
 
-  // Dynamic total-item count for courses that show "Completed Items" (X/Y)
-  // instead of a percentage bar. Y comes from an enrolled student's live
-  // /progress-detail response (contentCounts.totalItems), which the backend
-  // computes from the course's actual current structure each time it's
-  // called -- so it updates automatically when an item is added to or
-  // removed from the course, instead of going stale like a hardcoded number.
-  // Falls back to ITEM_COUNT_PROGRESS_COURSES's pinned value only until this
-  // resolves, or if the course has no enrolled student yet to ask.
+  // Dynamic total for courses that show "Completed Items" (X/Y) instead of a
+  // percentage bar. Y comes from completedItemsTotal in an enrolled student's
+  // live /progress-detail response -- the backend pairs it with the same
+  // formula used for that student's completedItemsCount, so the two numbers
+  // always describe the same thing (see EnrollmentService.getStudentProgressDetail).
+  const itemCountProgressCourse = findItemCountProgressCourse(courseId, versionId);
   const itemCountDenominatorStudentId =
     studentEnrollments[0]?.user?._id || studentEnrollments[0]?.user?.id;
   const { data: itemCountProgressDetail } = useStudentProgressDetail(
     itemCountDenominatorStudentId,
     courseId,
     versionId,
-    courseId in ITEM_COUNT_PROGRESS_COURSES && !!itemCountDenominatorStudentId,
+    !!itemCountProgressCourse && !!itemCountDenominatorStudentId,
   );
   const itemCountTotal =
-    itemCountProgressDetail?.contentCounts?.totalItems ?? ITEM_COUNT_PROGRESS_COURSES[courseId];
+    itemCountProgressDetail?.completedItemsTotal ?? itemCountProgressCourse?.fallbackTotal;
   const cohortFilteredEnrollments = cohort
   ? studentEnrollments.filter((enrollment: any) => {
       return String(enrollment.cohortId) === String(cohort);
@@ -1800,6 +1813,7 @@ function CourseEnrollments() {
                   isExportingGuruSetuFeedback={isExportingGuruSetuFeedback}
                   onExportGuruSetuFeedback={handleExportGuruSetuFeedback}
                   isGuruSetuCourse={isGuruSetuCourse}
+                  itemCountTotal={itemCountTotal}
                   unenrollMutation={unenrollMutation}
                   changeStatusMutation={changeStatusMutation}
                   bulkChangeStatusMutation={bulkChangeStatusMutation}
@@ -1852,6 +1866,7 @@ function CourseEnrollments() {
                   isExportingGuruSetuFeedback={isExportingGuruSetuFeedback}
                   onExportGuruSetuFeedback={handleExportGuruSetuFeedback}
                   isGuruSetuCourse={isGuruSetuCourse}
+                  itemCountTotal={itemCountTotal}
                   unenrollMutation={unenrollMutation}
                   changeStatusMutation={changeStatusMutation}
                   bulkChangeStatusMutation={bulkChangeStatusMutation}
@@ -3204,6 +3219,10 @@ interface EnrollmentsTableProps {
   isExportingGuruSetuFeedback: boolean;
   onExportGuruSetuFeedback: () => void;
   isGuruSetuCourse: boolean;
+  // Present (and not undefined) only for courses in ITEM_COUNT_PROGRESS_COURSES --
+  // its mere presence, not a separate boolean, is what switches the Progress
+  // column from a percentage bar to "completed/total" item counts.
+  itemCountTotal?: number;
   quizExportOptions: ExcelExportOptions;
   setQuizExportOptions: Dispatch<SetStateAction<ExcelExportOptions>>;
   unenrollMutation: any;
@@ -3257,6 +3276,7 @@ function EnrollmentsTable({
   isExportingGuruSetuFeedback,
   onExportGuruSetuFeedback,
   isGuruSetuCourse,
+  itemCountTotal,
   quizExportOptions,
   setQuizExportOptions,
   unenrollMutation,
@@ -3582,13 +3602,13 @@ function EnrollmentsTable({
                         { key: "name", label: "Student", className: "pl-6 w-[300px]" },
                         { key: "enrollmentDate", label: "Enrolled", className: "w-[120px]" },
                         { key: "unenrolledAt", label: "Unenrolled", className: "w-[120px]" },
-                        { key: "progress", label: `${courseId in ITEM_COUNT_PROGRESS_COURSES ? "Completed Items" :"Completion Percentage"}`, className: "w-[200px]" },
+                        { key: "progress", label: `${itemCountTotal !== undefined ? "Completed Items" :"Completion Percentage"}`, className: "w-[200px]" },
                         { key: "assignedTimeSlot", label: "Assigned Time Slot", className: "w-[200px]" },
                       ]
                       : [
                         { key: "name", label: "Student", className: "pl-6 w-[300px]" },
                         { key: "enrollmentDate", label: "Enrolled", className: "w-[120px]" },
-                        { key: "progress", label: `${courseId in ITEM_COUNT_PROGRESS_COURSES ? "Completed Items" :"Completion Percentage"}`, className: "w-[200px]" },
+                        { key: "progress", label: `${itemCountTotal !== undefined ? "Completed Items" :"Completion Percentage"}`, className: "w-[200px]" },
                         { key: "assignedTimeSlot", label: "Assigned Time Slot", className: "w-[200px]" },
                       ];
                     return columns.map(({ key, label, className }) => (
@@ -3669,13 +3689,13 @@ function EnrollmentsTable({
                         { key: "name", label: "Student", className: "pl-6 w-[300px]" },
                         { key: "enrollmentDate", label: "Enrolled", className: "w-[120px]" },
                         { key: "unenrolledAt", label: "Unenrolled", className: "w-[120px]" },
-                        { key: "progress", label: `${courseId in ITEM_COUNT_PROGRESS_COURSES ? "Completed Items" :"Completion Percentage"}`, className: "w-[200px]" },
+                        { key: "progress", label: `${itemCountTotal !== undefined ? "Completed Items" :"Completion Percentage"}`, className: "w-[200px]" },
                         { key: "assignedTimeSlot", label: "Assigned Time Slot", className: "w-[200px]" },
                       ]
                       : [
                         { key: "name", label: "Student", className: "pl-6 w-[300px]" },
                         { key: "enrollmentDate", label: "Enrolled", className: "w-[120px]" },
-                        { key: "progress", label: `${courseId in ITEM_COUNT_PROGRESS_COURSES ? "Completed Items" :"Completion Percentage"}`, className: "w-[200px]" },
+                        { key: "progress", label: `${itemCountTotal !== undefined ? "Completed Items" :"Completion Percentage"}`, className: "w-[200px]" },
                         { key: "assignedTimeSlot", label: "Assigned Time Slot", className: "w-[200px]" },
                       ];
                     return columns.map(({ key, label, className }) => (
@@ -3815,7 +3835,7 @@ function EnrollmentsTable({
 
                       {/* Progress */}
                       <TableCell className="py-6">
-                        {courseId in ITEM_COUNT_PROGRESS_COURSES ? (`${enrollment.completedItemsCount}/${itemCountTotal}`) : <EnrollmentProgress progress={Math.min(enrollment.progress ?? 0, 100)} />}
+                        {itemCountTotal !== undefined ? (`${enrollment.completedItemsCount}/${itemCountTotal}`) : <EnrollmentProgress progress={Math.min(enrollment.progress ?? 0, 100)} />}
                       </TableCell>
 
                       {/* Assigned Time Slot */}

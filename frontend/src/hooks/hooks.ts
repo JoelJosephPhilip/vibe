@@ -716,6 +716,12 @@ export function useStudentProgressDetail(
       enrollmentDate: string;
       percentCompleted: number;
       completedItemsCount: number;
+      // Paired with completedItemsCount: the total that count is "out of",
+      // using whichever formula produced completedItemsCount (plain item
+      // count normally; feedback-forms-submitted count for Guru-Setu-override
+      // courses, where contentCounts.totalItems below would include items --
+      // like videos -- that formula doesn't count).
+      completedItemsTotal?: number;
       assignedTimeSlots?: any[];
       contentCounts: {
         totalItems: number;

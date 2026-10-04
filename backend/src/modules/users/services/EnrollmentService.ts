@@ -48,7 +48,11 @@ import { COHORT_SCOPED_ROLES } from '#root/shared/functions/cohortScope.js';
 import { SETTING_TYPES } from '#root/modules/setting/types.js';
 import { HP_SYSTEM_TYPES } from '#root/modules/hpSystem/types.js';
 import { LedgerRepository } from '#root/modules/hpSystem/repositories/index.js';
+import { isGuruSetuProgressCourse, GURU_SETU_PROGRESS_COURSES } from '#root/modules/users/constants.js';
 
+// Only used below to seed GURU_SETU_FEEDBACK_EXPORT_COURSES's first entry.
+// Progress-calculation gating in this file now goes through
+// isGuruSetuProgressCourse/GURU_SETU_PROGRESS_COURSES (constants.ts) instead.
 const GURU_SETU_COURSE_ID = '6981df886e100cfe04f9c4ad';
 const GURU_SETU_VERSION_ID = '6981df886e100cfe04f9c4ae';
 
@@ -1045,12 +1049,7 @@ export class EnrollmentService extends BaseService {
           let totalCompletedItemsCount = completedCount;
 
           // Guru Setu Override
-          // console.log(`Checking Guru Setu for course ${enr.courseId?.toString()} and version ${versionIdStr}`);
-          if (
-            enr.courseId?.toString() === GURU_SETU_COURSE_ID &&
-            versionIdStr === GURU_SETU_VERSION_ID
-          ) {
-            // console.log(`Guru Setu Match Found for user ${userId}`);
+          if (isGuruSetuProgressCourse(enr.courseId?.toString(), versionIdStr)) {
             const guruProgress =
               await this.progressService.calculateGuruSetuProgress(
                 userId,
@@ -1370,11 +1369,13 @@ export class EnrollmentService extends BaseService {
 
       let currentPercentCompleted = Number(detail?.percentCompleted ?? 0);
       let currentCompletedItemsCount = completedItemsCount;
+      // Paired with completedItemsCount so a caller never divides a
+      // Guru-Setu-override numerator (feedback forms submitted) by the
+      // general all-item-types total (videos included) -- defaults to the
+      // general total and is only overridden alongside the numerator below.
+      let currentCompletedItemsTotal = totalItems;
 
-      if (
-        courseId?.toString() === GURU_SETU_COURSE_ID &&
-        courseVersionId?.toString() === GURU_SETU_VERSION_ID
-      ) {
+      if (isGuruSetuProgressCourse(courseId, courseVersionId)) {
         const guruProgress =
           await this.progressService.calculateGuruSetuProgress(
             userId,
@@ -1382,6 +1383,7 @@ export class EnrollmentService extends BaseService {
           );
         currentPercentCompleted = guruProgress.percentCompleted;
         currentCompletedItemsCount = guruProgress.completedItemsCount;
+        currentCompletedItemsTotal = guruProgress.totalFeedbackItems;
       }
 
       return {
@@ -1391,6 +1393,7 @@ export class EnrollmentService extends BaseService {
           itemCounts: resolvedItemCounts,
         },
         completedItemsCount: currentCompletedItemsCount,
+        completedItemsTotal: currentCompletedItemsTotal,
         percentCompleted: currentPercentCompleted,
         totalQuizScore,
         totalQuizMaxScore,
@@ -1910,10 +1913,7 @@ export class EnrollmentService extends BaseService {
             );
 
             // Guru Setu Override
-            if (
-              courseVersion.courseId.toString() === GURU_SETU_COURSE_ID &&
-              courseVersion._id.toString() === GURU_SETU_VERSION_ID
-            ) {
+            if (isGuruSetuProgressCourse(courseVersion.courseId.toString(), courseVersion._id.toString())) {
               const guruProgress =
                 await this.progressService.calculateGuruSetuProgress(
                   enrollment.userId.toString(),
@@ -2110,8 +2110,15 @@ export class EnrollmentService extends BaseService {
     const MAX_CONCURRENCY = 4;
 
     if (versionId) {
-      if (versionId === GURU_SETU_VERSION_ID) {
-        return this.bulkUpdateGuruSetuProgress(courseId, versionId, userId);
+      const guruSetuMatch = GURU_SETU_PROGRESS_COURSES.find(
+        c => c.versionId === versionId,
+      );
+      if (guruSetuMatch) {
+        return this.bulkUpdateGuruSetuProgress(
+          guruSetuMatch.courseId,
+          guruSetuMatch.versionId,
+          userId,
+        );
       }
       const result =
         await this.enrollmentRepo.bulkUpdateCompletedItemsCountForCourseVersion(
@@ -2140,10 +2147,13 @@ export class EnrollmentService extends BaseService {
         const currentIndex = index++;
         const courseVersionId = courseVersionIds[currentIndex];
 
-        if (courseVersionId === GURU_SETU_VERSION_ID) {
+        const guruSetuMatch = GURU_SETU_PROGRESS_COURSES.find(
+          c => c.versionId === courseVersionId,
+        );
+        if (guruSetuMatch) {
           const result = await this.bulkUpdateGuruSetuProgress(
-            courseId,
-            courseVersionId,
+            guruSetuMatch.courseId,
+            guruSetuMatch.versionId,
             userId,
           );
           results.push(result);
@@ -2171,19 +2181,22 @@ export class EnrollmentService extends BaseService {
 
   /**
    * Bulk updates progress for Guru Setu students using feedback-based logic.
+   * courseId/versionId must be one of GURU_SETU_PROGRESS_COURSES -- callers
+   * resolve the matching pair themselves rather than this method assuming
+   * which pilot course it's running for.
    */
   private async bulkUpdateGuruSetuProgress(
-    courseId?: string,
-    versionId?: string,
+    courseId: string,
+    versionId: string,
     userId?: string,
   ): Promise<{ totalCount: number; updatedCount: number }> {
     const filter: any = {
-      courseVersionId: new ObjectId(GURU_SETU_VERSION_ID),
+      courseVersionId: new ObjectId(versionId),
+      courseId: new ObjectId(courseId),
       role: 'STUDENT',
       isDeleted: { $ne: true },
     };
     if (userId) filter.userId = new ObjectId(userId);
-    if (courseId) filter.courseId = new ObjectId(GURU_SETU_COURSE_ID);
 
     const enrollments = await this.enrollmentRepo.findEnrollments(filter);
 
@@ -2194,7 +2207,7 @@ export class EnrollmentService extends BaseService {
         const guruProgress =
           await this.progressService.calculateGuruSetuProgress(
             userIdStr,
-            GURU_SETU_VERSION_ID,
+            versionId,
           );
 
         await this.enrollmentRepo.updateProgressPercentById(

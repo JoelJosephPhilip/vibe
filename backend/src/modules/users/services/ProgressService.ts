@@ -51,7 +51,13 @@ import { getContainer } from '#root/bootstrap/loadModules.js';
 import { NOTIFICATIONS_TYPES } from '#root/modules/notifications/types.js';
 import type { InviteService } from '#root/modules/notifications/services/InviteService.js';
 import type { InviteRepository } from '#shared/database/providers/mongo/repositories/InviteRepository.js';
+import { isGuruSetuProgressCourse } from '#root/modules/users/constants.js';
 
+// Kept distinct from isGuruSetuProgressCourse: this is specifically about the
+// Gurusetu FDP course's own linearProgressionEnabled=false setting (see the
+// startItem usage below), not about which courses use the feedback-only
+// progress formula. Does not need to extend to other Guru-Setu-progress
+// courses that have linear progression enabled.
 const GURU_SETU_COURSE_ID = '6981df886e100cfe04f9c4ad';
 const GURU_SETU_VERSION_ID = '6981df886e100cfe04f9c4ae';
 
@@ -128,10 +134,7 @@ class ProgressService extends BaseService {
   }
 
   private isGuruSetu(courseId: string, versionId: string): boolean {
-    return (
-      courseId?.toString() === GURU_SETU_COURSE_ID &&
-      versionId?.toString() === GURU_SETU_VERSION_ID
-    );
+    return isGuruSetuProgressCourse(courseId, versionId);
   }
 
   /**
@@ -143,11 +146,11 @@ class ProgressService extends BaseService {
   private guruSetuProgressFrom(
     feedbackFormIds: string[],
     submittedFormIds: Set<string>,
-  ): { percentCompleted: number; completedItemsCount: number } {
+  ): { percentCompleted: number; completedItemsCount: number; totalFeedbackItems: number } {
     const totalFeedbackItems = feedbackFormIds.length;
 
     if (totalFeedbackItems === 0) {
-      return { percentCompleted: 0, completedItemsCount: 0 };
+      return { percentCompleted: 0, completedItemsCount: 0, totalFeedbackItems: 0 };
     }
 
     const completedCount = feedbackFormIds.filter(id =>
@@ -161,17 +164,18 @@ class ProgressService extends BaseService {
     return {
       percentCompleted,
       completedItemsCount: completedCount,
+      totalFeedbackItems,
     };
   }
 
   public async calculateGuruSetuProgress(
     userId: string,
     courseVersionId: string,
-  ): Promise<{ percentCompleted: number; completedItemsCount: number }> {
+  ): Promise<{ percentCompleted: number; completedItemsCount: number; totalFeedbackItems: number }> {
     const feedbackItems = await this.itemRepo.getFeedbackItems(courseVersionId);
 
     if (feedbackItems.length === 0) {
-      return { percentCompleted: 0, completedItemsCount: 0 };
+      return { percentCompleted: 0, completedItemsCount: 0, totalFeedbackItems: 0 };
     }
 
     const feedbackSubmissions = await this.feedbackRepository.getAllByUserAndVersionId(
@@ -524,7 +528,7 @@ class ProgressService extends BaseService {
     let totalCompletedItemsCount = 0;
 
     // Guru Setu Progress Override
-    if (courseId?.toString() === GURU_SETU_COURSE_ID && courseVersionId?.toString() === GURU_SETU_VERSION_ID) {
+    if (isGuruSetuProgressCourse(courseId, courseVersionId)) {
       const guruProgress = await this.calculateGuruSetuProgress(userId, courseVersionId);
       percentCompleted = guruProgress.percentCompleted;
       totalCompletedItemsCount = guruProgress.completedItemsCount;
@@ -1819,7 +1823,7 @@ class ProgressService extends BaseService {
     cohortId?: string,
   ): Promise<string> {
     // Guru Setu Progress Override
-    if (courseId?.toString() === GURU_SETU_COURSE_ID && courseVersionId?.toString() === GURU_SETU_VERSION_ID) {
+    if (isGuruSetuProgressCourse(courseId, courseVersionId)) {
       await this.updateEnrollmentProgressPercent(userId, courseId, courseVersionId, undefined, false, undefined, undefined, cohortId);
     }
 
@@ -2666,10 +2670,7 @@ class ProgressService extends BaseService {
       // ----------------------------------------------------
       // 9. GURU SETU OVERRIDE
       // ----------------------------------------------------
-      if (
-        courseId?.toString() === GURU_SETU_COURSE_ID &&
-        courseVersionId?.toString() === GURU_SETU_VERSION_ID
-      ) {
+      if (isGuruSetuProgressCourse(courseId, courseVersionId)) {
         const guruProgress = await this.calculateGuruSetuProgress(
           userId,
           courseVersionId,
@@ -5084,7 +5085,7 @@ class ProgressService extends BaseService {
     }
 
     // Guru Setu Progress Override
-    if (courseId?.toString() === GURU_SETU_COURSE_ID && versionId?.toString() === GURU_SETU_VERSION_ID) {
+    if (isGuruSetuProgressCourse(courseId, versionId)) {
       const guruProgress = await this.calculateGuruSetuProgress(userId, versionId);
       await this.enrollmentRepo.updateProgressPercentById(
         enrollment._id!.toString(),
