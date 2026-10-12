@@ -68,9 +68,14 @@ class JobsController {
     rejected: number;
     skipped: number;
   }> {
+    // @QueryParam hands back raw strings when the caller actually supplies
+    // the param over HTTP (only the `= 30`/`= 500` defaults are real
+    // numbers) -- findOrphanedWatchTimes passes this straight into Mongo's
+    // .limit(), which throws on a non-integer. Coerce explicitly rather than
+    // relying on the framework to infer the type from the default value.
     return await this.progressService.recoverOrphanedWatchTimes(
-      olderThanMinutes,
-      batchSize,
+      Number(olderThanMinutes),
+      Number(batchSize),
     );
   }
 }
