@@ -50,7 +50,7 @@ import { useCourseStore } from "@/store/course-store"
 import type { EnrolledUser, EnrollmentDetails } from "@/types/course.types"
 import { useAuthStore } from "@/store/auth-store"
 import { EnrollmentRole } from "@/types/invite.types"
-import { generateExcel, generateStudentContactsExcel, generateRegistrationDetailsCsv, generateStudentRegistrationDetailsCsv, type ExcelExportOptions, type RegistrationDetailData, type StudentRegistrationDetailData } from "@/lib/excel-export"
+import { generateExcel, generateStudentContactsExcel, generateStudentRegistrationDetailsCsv, type ExcelExportOptions, type StudentRegistrationDetailData } from "@/lib/excel-export"
 import {
   downloadGuruSetuFeedbackExport,
   isGuruSetuPilotCourse,
@@ -104,7 +104,7 @@ const ITEM_COUNT_PROGRESS_COURSES: ReadonlyArray<{
   {courseId: '6a9a7eb5de600629c9fb9405', versionId: '6a9a7eb5de600629c9fb9406', fallbackTotal: 18}, // GuruSetu Psychological Literacy Special Pilot -- feedback forms, not all items (now on the same Guru Setu override as FDP)
 ];
 
-function findItemCountProgressCourse(courseId?: string, versionId?: string) {
+function findItemCountProgressCourse(courseId?: string | null, versionId?: string | null) {
   return ITEM_COUNT_PROGRESS_COURSES.find(
     c => c.courseId === courseId && c.versionId === versionId,
   );
@@ -464,7 +464,6 @@ function CourseEnrollments() {
   const [isSearching, setIsSearching] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [isExportingStudentContacts, setIsExportingStudentContacts] = useState(false);
-  const [isExportingRegistrationDetails, setIsExportingRegistrationDetails] = useState(false);
   const [isExportingStudentRegistrationDetails, setIsExportingStudentRegistrationDetails] = useState(false);
   const [isExportingGuruSetuFeedback, setIsExportingGuruSetuFeedback] = useState(false);
   const [quizExportOptions, setQuizExportOptions] = useState<ExcelExportOptions>({
@@ -935,7 +934,7 @@ function CourseEnrollments() {
     debouncedSearch,
     sortBy,
     sortOrder,
-    isExportingStudentContacts || isExportingRegistrationDetails || isExportingStudentRegistrationDetails,
+    isExportingStudentContacts || isExportingStudentRegistrationDetails,
     'STUDENT',
     statusTab,
     cohort,
@@ -1017,72 +1016,6 @@ function CourseEnrollments() {
         error instanceof Error
           ? error.message
           : 'Failed to export student contacts',
-      );
-    }
-  };
-
-  const handleExportRegistrationDetails = async () => {
-    if (!courseId || !versionId) {
-      toast.error('Course ID or Version ID is missing');
-      return;
-    }
-
-    if (!totalDocuments) {
-      toast.warning('No students found to export');
-      return;
-    }
-
-    const enrollments = exportEnrollmentsData?.enrollments || [];
-
-    if (!enrollments.length) {
-      toast.warning('No students found to export');
-      return;
-    }
-
-    try {
-      const formattedData: RegistrationDetailData[] = enrollments.map((enrollment: any) => ({
-        name:
-          `${enrollment?.user?.firstName ?? ''} ${enrollment?.user?.lastName ?? ''}`.trim() ||
-          'Unknown User',
-        email: enrollment?.user?.email || '',
-        cohortName: enrollment.cohortName || null,
-        enrolledDate: enrollment.enrollmentDate || null,
-        status: statusTab,
-        unenrolledAt: enrollment.unenrolledAt || null,
-        progress: Math.min(enrollment.progress ?? 0, 100),
-        completedItems: enrollment.completedItemsCount || 0,
-        totalItems: enrollment.contentCounts?.total || 0,
-        completedVideos: enrollment.contentCounts?.completedItemCounts?.VIDEO || 0,
-        totalVideos: enrollment.contentCounts?.itemCounts?.VIDEO || 0,
-        completedQuizzes: enrollment.contentCounts?.completedItemCounts?.QUIZ || 0,
-        totalQuizzes: enrollment.contentCounts?.itemCounts?.QUIZ || 0,
-        completedArticles: enrollment.contentCounts?.completedItemCounts?.BLOG || 0,
-        totalArticles: enrollment.contentCounts?.itemCounts?.BLOG || 0,
-        completedProjects: enrollment.contentCounts?.completedItemCounts?.PROJECT || 0,
-        totalProjects: enrollment.contentCounts?.itemCounts?.PROJECT || 0,
-        totalQuizScore: enrollment.totalQuizScore || 0,
-        totalQuizMaxScore: enrollment.totalQuizMaxScore || 0,
-      }));
-
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '_');
-      const statusLabel = enrollmentTab === 'ACTIVE' ? 'active' : 'inactive';
-      const courseLabel = sanitizeFilenamePart(course?.name || 'course');
-      const cohortName = cohort
-        ? (version as any)?.cohortDetails?.find((item: any) => item.id === cohort)?.name
-        : null;
-      const cohortLabel = cohortName
-        ? `${sanitizeFilenamePart(cohortName)}_`
-        : '';
-      const filename = `${courseLabel}_${cohortLabel}${statusLabel}_registration_details_${timestamp}.csv`;
-
-      generateRegistrationDetailsCsv(formattedData, filename);
-      toast.success('Registration details exported successfully');
-    } catch (error) {
-      console.error('Error exporting registration details:', error);
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : 'Failed to export registration details',
       );
     }
   };
@@ -1204,12 +1137,6 @@ function CourseEnrollments() {
       handleExportStudentContacts().finally(() => setIsExportingStudentContacts(false));
     }
   }, [isExportingStudentContacts, isLoadingStudentContacts, exportEnrollmentsData]);
-
-  useEffect(() => {
-    if (isExportingRegistrationDetails && !isLoadingStudentContacts) {
-      handleExportRegistrationDetails().finally(() => setIsExportingRegistrationDetails(false));
-    }
-  }, [isExportingRegistrationDetails, isLoadingStudentContacts, exportEnrollmentsData]);
 
   useEffect(() => {
     if (isExportingStudentRegistrationDetails && !isLoadingStudentContacts) {
@@ -1805,11 +1732,8 @@ function CourseEnrollments() {
                   setIsExporting={setIsExporting}
                   isExportingStudentContacts={isExportingStudentContacts && isLoadingStudentContacts}
                   setIsExportingStudentContacts={setIsExportingStudentContacts}
-                  isExportingRegistrationDetails={isExportingRegistrationDetails && isLoadingStudentContacts}
-                  setIsExportingRegistrationDetails={setIsExportingRegistrationDetails}
                   isExportingStudentRegistrationDetails={isExportingStudentRegistrationDetails && isLoadingStudentContacts}
                   setIsExportingStudentRegistrationDetails={setIsExportingStudentRegistrationDetails}
-                  isAnyExporting={isExportingStudentContacts || isExportingRegistrationDetails || isExportingStudentRegistrationDetails}
                   isExportingGuruSetuFeedback={isExportingGuruSetuFeedback}
                   onExportGuruSetuFeedback={handleExportGuruSetuFeedback}
                   isGuruSetuCourse={isGuruSetuCourse}
@@ -1858,11 +1782,8 @@ function CourseEnrollments() {
                   setIsExporting={setIsExporting}
                   isExportingStudentContacts={isExportingStudentContacts && isLoadingStudentContacts}
                   setIsExportingStudentContacts={setIsExportingStudentContacts}
-                  isExportingRegistrationDetails={isExportingRegistrationDetails && isLoadingStudentContacts}
-                  setIsExportingRegistrationDetails={setIsExportingRegistrationDetails}
                   isExportingStudentRegistrationDetails={isExportingStudentRegistrationDetails && isLoadingStudentContacts}
                   setIsExportingStudentRegistrationDetails={setIsExportingStudentRegistrationDetails}
-                  isAnyExporting={isExportingStudentContacts || isExportingRegistrationDetails || isExportingStudentRegistrationDetails}
                   isExportingGuruSetuFeedback={isExportingGuruSetuFeedback}
                   onExportGuruSetuFeedback={handleExportGuruSetuFeedback}
                   isGuruSetuCourse={isGuruSetuCourse}
@@ -3211,11 +3132,8 @@ interface EnrollmentsTableProps {
   setIsExporting: (exporting: boolean) => void;
   isExportingStudentContacts: boolean;
   setIsExportingStudentContacts: (exporting: boolean) => void;
-  isExportingRegistrationDetails: boolean;
-  setIsExportingRegistrationDetails: (exporting: boolean) => void;
   isExportingStudentRegistrationDetails: boolean;
   setIsExportingStudentRegistrationDetails: (exporting: boolean) => void;
-  isAnyExporting: boolean;
   isExportingGuruSetuFeedback: boolean;
   onExportGuruSetuFeedback: () => void;
   isGuruSetuCourse: boolean;
@@ -3268,11 +3186,8 @@ function EnrollmentsTable({
   setIsExporting,
   isExportingStudentContacts,
   setIsExportingStudentContacts,
-  isExportingRegistrationDetails,
-  setIsExportingRegistrationDetails,
   isExportingStudentRegistrationDetails,
   setIsExportingStudentRegistrationDetails,
-  isAnyExporting,
   isExportingGuruSetuFeedback,
   onExportGuruSetuFeedback,
   isGuruSetuCourse,
@@ -3466,7 +3381,7 @@ function EnrollmentsTable({
                 )}
               </DropdownMenuItem>
 
-              <DropdownMenuItem onClick={() => setIsExportingStudentRegistrationDetails(true)} disabled={isAnyExporting || enrollmentsLoading || isSearching}>
+              <DropdownMenuItem onClick={() => setIsExportingStudentRegistrationDetails(true)} disabled={isExportingStudentContacts || isExportingStudentRegistrationDetails || enrollmentsLoading || isSearching}>
                 {isExportingStudentRegistrationDetails ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
@@ -3475,22 +3390,13 @@ function EnrollmentsTable({
                 <span>{isExportingStudentRegistrationDetails ? "Exporting..." : "Export Student Registration Details"}</span>
               </DropdownMenuItem>
 
-              <DropdownMenuItem onClick={() => setIsExportingStudentContacts(true)} disabled={isAnyExporting || enrollmentsLoading || isSearching}>
+              <DropdownMenuItem onClick={() => setIsExportingStudentContacts(true)} disabled={isExportingStudentContacts || isExportingStudentRegistrationDetails || enrollmentsLoading || isSearching}>
                 {isExportingStudentContacts ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   <Download className="h-4 w-4" />
                 )}
                 <span>{isExportingStudentContacts ? "Exporting..." : "Export Student Contacts"}</span>
-              </DropdownMenuItem>
-
-              <DropdownMenuItem onClick={() => setIsExportingRegistrationDetails(true)} disabled={isAnyExporting || enrollmentsLoading || isSearching}>
-                {isExportingRegistrationDetails ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Download className="h-4 w-4" />
-                )}
-                <span>{isExportingRegistrationDetails ? "Exporting..." : "Export Registration Details"}</span>
               </DropdownMenuItem>
 
               <DropdownMenuItem onClick={() => setIsExporting(true)} disabled={isLoadingQuizScores}>

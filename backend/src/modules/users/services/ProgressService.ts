@@ -1031,8 +1031,16 @@ class ProgressService extends BaseService {
     let isFirstSection = false;
     let isFirstModule = false;
 
+    // order is missing on some legacy/partially-migrated documents (#1402
+    // hit the same thing for a different sort in this file) -- `|| ''`
+    // matches CourseVersionService.sortItemsByOrder's canonical guard, so an
+    // undefined order sorts first instead of crashing
+    // ("Cannot read properties of undefined (reading 'localeCompare')").
+    // getPreviousItemInSequence is now reachable from startItem's hot path
+    // (#1393's whole point is unsticking deadlocked students), so a legacy
+    // course crashing here would 500 the exact students this fix exists for.
     const sortedModules = [...courseVersion.modules].sort((a, b) =>
-      a.order.localeCompare(b.order),
+      (a.order || '').localeCompare(b.order || ''),
     );
     const firstModule = sortedModules[0].moduleId;
     if (firstModule?.toString() === moduleId) {
@@ -1041,8 +1049,14 @@ class ProgressService extends BaseService {
 
     const sortedSections = courseVersion.modules
       .find(module => module.moduleId?.toString() === moduleId)
-      ?.sections.sort((a, b) => a.order.localeCompare(b.order));
-    const firstSection = sortedSections?.[0].sectionId;
+      ?.sections.sort((a, b) => (a.order || '').localeCompare(b.order || ''));
+    // A module can genuinely have zero sections (right after creation, before
+    // its first section is added -- ModuleService.createModule's own "previous
+    // module has no sections" guard confirms this is a real authoring-time
+    // state). sortedSections?.[0] is then undefined (a valid array index, not
+    // a nullish base), so the `?.` on sortedSections alone doesn't protect the
+    // .sectionId access after it -- needs its own `?.` too.
+    const firstSection = sortedSections?.[0]?.sectionId;
     if (firstSection?.toString() === sectionId) {
       isFirstSection = true;
     }
@@ -1061,7 +1075,7 @@ class ProgressService extends BaseService {
     // Same empty-section guard as getNextItemInSequence: nothing visible means
     // treat the item as first here, so we look to the previous section.
     const sortedItems = (itemsGroup?.items ?? []).sort((a, b) =>
-      a.order.localeCompare(b.order),
+      (a.order || '').localeCompare(b.order || ''),
     );
     const firstItem = sortedItems.length ? sortedItems[0]._id : undefined;
     if (!sortedItems.length || firstItem?.toString() === itemId) {
@@ -1078,7 +1092,7 @@ class ProgressService extends BaseService {
       );
       const prevModule = sortedModules[currentModuleIndex - 1];
       const lastSection = prevModule?.sections.sort((a, b) =>
-        a.order.localeCompare(b.order),
+        (a.order || '').localeCompare(b.order || ''),
       )[prevModule.sections.length - 1];
       const itemsGroup = await this.itemRepo.readItemsGroup(
         lastSection?.itemsGroupId.toString(),
@@ -1086,14 +1100,19 @@ class ProgressService extends BaseService {
       if (itemsGroup && itemsGroup.items) {
         itemsGroup.items = itemsGroup.items.filter((i: any) => !i.isHidden && !i.isDeleted);
       }
+      // Same as above: the previous module's last section can genuinely have
+      // zero items in its items group (a section created but not yet
+      // populated), leaving lastItem undefined -- matches the `?.`/`|| ''`
+      // guard the isFirstItem && !isFirstSection branch below already uses
+      // for the identical situation.
       const lastItem = itemsGroup.items.sort((a, b) =>
-        a.order.localeCompare(b.order),
+        (a.order || '').localeCompare(b.order || ''),
       )[itemsGroup.items.length - 1];
 
       return {
         moduleId: prevModule?.moduleId.toString(),
         sectionId: lastSection?.sectionId.toString(),
-        itemId: lastItem._id.toString(),
+        itemId: lastItem?._id?.toString() || '',
       };
     }
 
@@ -1109,7 +1128,7 @@ class ProgressService extends BaseService {
         itemsGroup.items = itemsGroup.items.filter((i: any) => !i.isHidden && !i.isDeleted);
       }
       const lastItem = itemsGroup?.items?.sort((a, b) =>
-        a.order.localeCompare(b.order),
+        (a.order || '').localeCompare(b.order || ''),
       )[itemsGroup.items.length - 1];
 
       return {
@@ -2492,20 +2511,37 @@ class ProgressService extends BaseService {
       // ----------------------------------------------------
       if (item.type !== 'QUIZ') {
         if (!isSkipped) {
-          /**
-           * IMPORTANT:
-           * stopItemTracking should ideally be idempotent.
-           * If already stopped, do not hard-fail unless your business logic requires it.
-           */
-          stoppedWatchTime = await this.progressRepository.stopItemTracking(
-            watchItemId,
-            session,
-          );
+          // Closes this student's open session for this item, falling back
+          // from a stale client watchItemId to the latest open one.
+          stoppedWatchTime =
+            await this.progressRepository.stopItemTrackingForItem(
+              watchItemId,
+              userId,
+              courseId,
+              courseVersionId,
+              itemId,
+              cohortId,
+              session,
+            );
 
           if (!stoppedWatchTime) {
-            // Record was already closed by a concurrent request (endTime already
-            // set). Treat as idempotent success — progress has already advanced.
-            return;
+            // A concurrent stop may have completed the item already, which is
+            // a genuine success. Otherwise nothing was completed, and saying
+            // so lets the client keep the student on this item instead of
+            // moving them on to a lesson the server will refuse to open.
+            const completedMeanwhile =
+              await this.progressRepository.isItemCompleted(
+                userId,
+                courseId,
+                courseVersionId,
+                itemId,
+                cohortId,
+                session,
+              );
+            if (completedMeanwhile) return;
+            throw new BadRequestError(
+              'Your progress on this lesson was not saved. Please reload the page and play it again.',
+            );
           }
 
           await this.validateItemStopEligibility(
@@ -2728,13 +2764,14 @@ class ProgressService extends BaseService {
         // write then silently overwrites the correct percentCompleted step
         // 10 just computed with a stale, too-low value.
         //
-        // This is a best-effort consistency pass on top of the authoritative
-        // update step 10 already committed to the transaction -- it must
-        // never be the reason the student's actual completion gets rolled
-        // back. recalculateStudentProgress throws NotFoundError/BadRequestError
-        // for edge cases (e.g. a course with no non-hidden items), which
-        // would otherwise abort this entire transaction over a step whose
-        // job is only to double-check, not to record, the completion.
+        // This is also a best-effort consistency pass on top of the
+        // authoritative update a few lines above, already part of this same
+        // transaction -- it must never be the reason the student's actual
+        // completion gets rolled back. recalculateStudentProgress throws
+        // NotFoundError/BadRequestError for edge cases (e.g. a course with
+        // no non-hidden items), which would otherwise abort this entire
+        // transaction over a step whose job is only to double-check, not to
+        // record, the completion.
         try {
           await this.recalculateStudentProgress(
             userId,
@@ -2744,6 +2781,23 @@ class ProgressService extends BaseService {
             session,
           );
         } catch (err) {
+          // Only swallow the specific validation-edge-case errors
+          // recalculateStudentProgress deliberately throws BEFORE any
+          // write (NotFoundError/BadRequestError, e.g. "no items found for
+          // this course version"). A genuine MongoDB-level error from one
+          // of its own now-session-threaded writes must NOT be swallowed
+          // here: by the time it's thrown, MongoDB has already marked
+          // this transaction dead server-side, so silently continuing
+          // doesn't "protect" step 10's write -- it just means the next
+          // operation (step 11, the actual completion write) throws a
+          // confusing NoSuchTransaction instead of the original, useful
+          // error, while step 10 survives as a stale, inconsistent
+          // partial write instead of a clean rollback. Let it propagate
+          // so _withTransaction's existing retry/abort handling does the
+          // right thing, the same as any other failure in this transaction.
+          if (!(err instanceof NotFoundError || err instanceof BadRequestError)) {
+            throw err;
+          }
           console.error(
             `recalculateStudentProgress failed as a post-completion consistency check for user ${userId}, course ${courseId}/${courseVersionId}:`,
             err,
@@ -3201,7 +3255,21 @@ class ProgressService extends BaseService {
             `(user ${userId}, item ${itemId}):`,
           err,
         );
-        summary.skipped++;
+        // A NotFoundError here means something this record depends on is
+        // permanently gone -- itemRepo.readItemById and courseRepo.readVersion
+        // both throw (not return null) when the item / course version can't
+        // be found, so their `if (!item)` / `if (!courseVersion)` guards above
+        // are unreachable and a deleted item or deleted course version ends
+        // up here instead. That's not transient: leaving it unmarked (like
+        // every other throw) means findOrphanedWatchTimes returns this exact
+        // record again next sweep, hits the identical NotFoundError, forever.
+        // Reject it like any other permanently-unrecoverable record instead.
+        if (err instanceof NotFoundError) {
+          rejectedIds.push(orphan._id);
+          summary.rejected++;
+        } else {
+          summary.skipped++;
+        }
       }
     }
 
@@ -4847,12 +4915,18 @@ class ProgressService extends BaseService {
     // "items up to the current one" could silently include items that are
     // actually later in the course and exclude ones that are earlier,
     // corrupting the missed-item backfill below.
+    // `order` is a required field on every module/section/item per the
+    // schema, but legacy or partially-migrated documents can still lack it
+    // at the DB level -- CourseVersionService.sortItemsByOrder (the
+    // codebase's canonical sort for this same data) defends against that
+    // with `a.order || ''` before comparing. Match that here so a missing
+    // `order` degrades to "sorts first", not a crash.
     const sortedModules = [...courseVersion.modules].sort((a, b) =>
-      a.order.localeCompare(b.order),
+      (a.order || '').localeCompare(b.order || ''),
     );
     for (const module of sortedModules) {
       const sortedSections = [...module.sections].sort((a, b) =>
-        a.order.localeCompare(b.order),
+        (a.order || '').localeCompare(b.order || ''),
       );
       for (const section of sortedSections) {
         const itemGroupId = section.itemsGroupId;
@@ -4877,7 +4951,7 @@ class ProgressService extends BaseService {
         // site against getHiddenOrDeletedItems, the way every current
         // consumer of this function's total already does.
         const sortedItems = [...itemGroup.items].sort((a, b) =>
-          a.order.localeCompare(b.order),
+          (a.order || '').localeCompare(b.order || ''),
         );
         for (const item of sortedItems) {
           if (!item._id) continue;
@@ -4919,12 +4993,15 @@ class ProgressService extends BaseService {
     // Same insertion-order-vs-display-order issue as getItemIdsUntilItem --
     // sort before walking so a drag-drop-reordered course still produces
     // its items in the order the student actually sees them.
+    // Same missing-order defensiveness as getItemIdsUntilItem above --
+    // matches CourseVersionService.sortItemsByOrder's `a.order || ''`
+    // fallback instead of crashing on a legacy/malformed document.
     const sortedModules = [...courseVersion.modules].sort((a, b) =>
-      a.order.localeCompare(b.order),
+      (a.order || '').localeCompare(b.order || ''),
     );
     for (const module of sortedModules) {
       const sortedSections = [...module.sections].sort((a, b) =>
-        a.order.localeCompare(b.order),
+        (a.order || '').localeCompare(b.order || ''),
       );
       for (const section of sortedSections) {
         const itemGroupId = section.itemsGroupId;
@@ -4939,7 +5016,7 @@ class ProgressService extends BaseService {
         // getItemIdsUntilItem above; this function has the same
         // double-subtraction hazard through computeCourseProgressPercent.
         const sortedItems = [...itemGroup.items].sort((a, b) =>
-          a.order.localeCompare(b.order),
+          (a.order || '').localeCompare(b.order || ''),
         );
         for (const item of sortedItems) {
           if (item._id) {

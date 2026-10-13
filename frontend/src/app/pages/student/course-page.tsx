@@ -9,6 +9,7 @@ import { useShareLinkStore } from "@/store/share-link-store";
 import { Link, Navigate, useRouter } from "@tanstack/react-router";
 import StudentProjectItem from "./components/StudentProjectItem";
 import { enterFullscreen, exitFullscreen } from "@/utils/fullscreen";
+import { classifyItemForbiddenError } from "@/utils/itemForbiddenError";
 const LazyStudentTimeslotModal = lazy(() => import("@/components/course/StudentTimeslotModal"));
 import type { Item, ItemContainerRef } from "@/types/item-container.types";
 import type { PendingStudentQuestionContext } from "@/types/student-question.types";
@@ -236,16 +237,6 @@ export default function CoursePage() {
   // floating control is used.
   const pauseVideoForControl = useCallback(() => setPauseSignal((n) => n + 1), []);
 
-  // Playback position, plus the moment the discussion panel was opened at — a
-  // doubt anchors to where the learner actually was, not where they end up.
-  const [currentVideoTime, setCurrentVideoTime] = useState(0);
-  const [askAtSeconds, setAskAtSeconds] = useState(0);
-  const [seekRequest, setSeekRequest] = useState<{ time: number; nonce: number }>();
-  const requestSeek = useCallback(
-    (time: number) => setSeekRequest((prev) => ({ time, nonce: (prev?.nonce ?? 0) + 1 })),
-    [],
-  );
-
   // Fullscreen is entered from the "Continue" click that brings the student here.
   // Exit it when they leave the learn page so fullscreen is scoped to this page only.
   useEffect(() => {
@@ -457,18 +448,31 @@ export default function CoursePage() {
 
     if (itemError && selectedItemId && itemErrorName === "ForbiddenError") {
 
-      // Three different 403s reach here: out-of-order progression, an
-      // archived course version, and the time-slot/study-window gate. Only
-      // the first is actually a locked lesson -- the other two were both
-      // rendering as "ViBe lessons unlock in order" regardless, which told
-      // a student outside their booked window (or looking at an archived
-      // version) the wrong thing entirely. The amber time-slot banner below
-      // already existed for this; it just never had this branch routing
-      // into it, so it was unreachable dead code.
-      if (/time slot|study window|book a slot|choose a slot/i.test(itemError)) {
+      // Several different 403s reach here from ItemService.readItem. Only
+      // the out-of-order-progression case is actually a locked lesson; the
+      // archived-course and time-slot cases were both rendering as "ViBe
+      // lessons unlock in order" regardless, which told a student outside
+      // their booked window (or looking at an archived version) the wrong
+      // thing entirely. The amber time-slot banner below already existed
+      // for this; it just never had this branch routing into it, so it was
+      // unreachable dead code. See classifyItemForbiddenError's own doc
+      // comment for the exact backend message strings this matches against,
+      // including the "not enrolled" gap that's a known, deliberately
+      // unfixed case (see there for why).
+      const forbiddenKind = classifyItemForbiddenError(itemError);
+      if (forbiddenKind === 'time-slot') {
         setTimeSlotBlock(itemError);
         setIsNavigatingToNext(false);
         return;
+      }
+      if (forbiddenKind === 'unrecognized') {
+        console.warn(
+          'Unrecognized ForbiddenError message reached the item-error handler -- ' +
+            'falling back to the generic "locked lesson" message. If this is actually ' +
+            'a time-slot or archived-course error with new wording, ' +
+            'classifyItemForbiddenError needs updating:',
+          itemError,
+        );
       }
 
       // toast.error(itemError);
@@ -1344,7 +1348,7 @@ export default function CoursePage() {
         );
         const isVideoToQuizTransition =
           justFinishedItem?.type?.toLowerCase() === 'video' &&
-          nextItem?.type?.toLowerCase() === 'quiz';
+          nextItem?.type === 'quiz';
         if (
           isVideoToQuizTransition &&
           proctoringData?.settings?.crowdsourcedQuestionSubmissionEnabled === true &&
@@ -2039,8 +2043,6 @@ return false;
                   pauseVid={pauseVid || showProctorDialog || alertVisible}
                   pauseSignal={pauseSignal}
                   awayPaused={awayPaused || drawerOpen || needsFullscreen}
-                  onTimeUpdate={setCurrentVideoTime}
-                  seekRequest={seekRequest}
                   displayNextLesson={false}
                   setQuizPassed={setQuizPassed}
                   anomalies={anomalies}
@@ -2097,8 +2099,6 @@ return false;
               }
               setIsFlagModalOpen(true);
             } else {
-              // Freeze the moment the panel opened — the composer anchors here.
-              if (id === "discussion") setAskAtSeconds(currentVideoTime);
               setAiSheet(id);
             }
           }}
@@ -2256,28 +2256,7 @@ return false;
       />
 
       {/* AI companion placeholder surfaces (chat / talk / discussion) */}
-      <AiActionSheet
-        active={aiSheet}
-        onClose={() => setAiSheet(null)}
-        doubtContext={
-          currentItem?.type === "VIDEO" && COURSE_ID && VERSION_ID
-            ? {
-                itemRef: {
-                  itemId: currentItem._id.toString(),
-                  courseId: COURSE_ID,
-                  courseVersionId: VERSION_ID,
-                },
-                cohortId: COHORT_ID || undefined,
-                moduleId: activeSectionInfo?.moduleId || undefined,
-                sectionId: sectionId || undefined,
-                askAtSeconds,
-                seekForwardEnabled: proctoringData?.settings.seekForwardEnabled || false,
-                currentTime: currentVideoTime,
-                onSeek: requestSeek,
-              }
-            : undefined
-        }
-      />
+      <AiActionSheet active={aiSheet} onClose={() => setAiSheet(null)} />
 
       {/* Report (flag) — real, existing feature */}
       <FlagModal

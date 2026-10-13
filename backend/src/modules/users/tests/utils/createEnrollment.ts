@@ -25,6 +25,7 @@ export async function createEnrollment(
     )
     .set('Authorization', 'Bearer test-token')
     .send({role: 'STUDENT'})
+    .set('Authorization', 'Bearer test-token')
     .expect(200);
 
   // Build up the expected “shape” of the response

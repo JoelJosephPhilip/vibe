@@ -33,6 +33,8 @@ import {CreateItemBody} from '#courses/classes/validators/index.js';
 import {Collection, ObjectId} from 'mongodb';
 import {faker} from '@faker-js/faker';
 import {FirebaseAuthService} from '#root/modules/auth/services/FirebaseAuthService.js';
+import {ProgressService} from '#users/services/ProgressService.js';
+import {HttpErrorHandler} from '#shared/middleware/errorHandler.js';
 import {appConfig} from '#root/config/app.js';
 import {describe, it, expect, beforeAll, beforeEach, afterEach, vi} from 'vitest';
 import {createEnrollment} from './utils/createEnrollment.js';
@@ -98,7 +100,15 @@ describe('JobsController POST /jobs/recover-orphaned-watchtimes (D-08)', {timeou
         ...(coursesModuleOptions.controllers as Function[]),
       ],
       authorizationChecker: async () => true,
+      middlewares: [HttpErrorHandler],
       defaultErrorHandler: true,
+      // routing-controllers' own defaultErrorHandler includes error.stack
+      // whenever developmentMode is on, which it infers from NODE_ENV !==
+      // 'production' -- true for this test run (NODE_ENV=test) even though
+      // it's false for the real deployment. Pin it to match production
+      // (appConfig.isDevelopment there) so the error-propagation test below
+      // exercises the actual no-stack-leak behavior, not test-mode's.
+      development: false,
       validation: true,
     });
 
@@ -153,13 +163,11 @@ describe('JobsController POST /jobs/recover-orphaned-watchtimes (D-08)', {timeou
       .set('Authorization', 'Bearer test-token')
       .expect(201);
     const courseId = courseRes.body._id;
-
-    const versionRes = await request(app)
-      .post(`/courses/${courseId}/versions`)
-      .send({version: '1.0', description: 'Initial version'})
-      .set('Authorization', 'Bearer test-token')
-      .expect(201);
-    const versionId = versionRes.body._id;
+    // Reuse the version POST /courses already created (and seeded course
+    // settings for), rather than POSTing a second one via
+    // /courses/:id/versions -- that path doesn't create a settings doc,
+    // which makes any later call that reads course settings 500.
+    const versionId = courseRes.body.versions[0];
 
     const moduleRes = await request(app)
       .post(`/courses/versions/${versionId}/modules`)
@@ -214,6 +222,10 @@ describe('JobsController POST /jobs/recover-orphaned-watchtimes (D-08)', {timeou
       courseVersionId: new ObjectId(versionId),
       itemId: new ObjectId(itemId),
       startTime: new Date(Date.now() - 60 * 60 * 1000),
+      // recoverOrphanedWatchTimes treats a never-seen-since row as no
+      // evidence of time spent and skips it -- a real orphan always has at
+      // least one heartbeat.
+      lastSeenAt: new Date(Date.now() - 55 * 60 * 1000),
     } as IWatchTime;
     const insertResult = await watchTimeCollection.insertOne(watchTimeDoc);
 
@@ -232,5 +244,134 @@ describe('JobsController POST /jobs/recover-orphaned-watchtimes (D-08)', {timeou
       _id: insertResult.insertedId,
     });
     expect(record?.endTime).toBeDefined();
+  });
+
+  it('is idempotent: running the sweep twice in a row does not double-close or double-count the same orphan', async () => {
+    const studentUserId = await userRepo.create({
+      firebaseUID: faker.string.uuid(),
+      email: faker.internet.email(),
+      firstName: faker.person.firstName(),
+      lastName: faker.person.lastName(),
+      roles: 'user',
+    });
+
+    const courseRes = await request(app)
+      .post('/courses')
+      .send({
+        name: faker.commerce.productName(),
+        description: faker.commerce.productDescription(),
+        versionName: 'Version 1',
+        versionDescription: 'Initial version',
+      })
+      .set('Authorization', 'Bearer test-token')
+      .expect(201);
+    const courseId = courseRes.body._id;
+    const versionId = courseRes.body.versions[0];
+
+    const moduleRes = await request(app)
+      .post(`/courses/versions/${versionId}/modules`)
+      .send({name: faker.commerce.productName(), description: 'module'})
+      .set('Authorization', 'Bearer test-token')
+      .expect(201);
+    const moduleId = moduleRes.body.version.modules[0].moduleId;
+
+    const sectionRes = await request(app)
+      .post(`/courses/versions/${versionId}/modules/${moduleId}/sections`)
+      .send({name: faker.commerce.productName(), description: 'section'})
+      .set('Authorization', 'Bearer test-token')
+      .expect(201);
+    const sectionId = sectionRes.body.version.modules[0].sections[0].sectionId;
+
+    const itemPayload: CreateItemBody = {
+      name: faker.commerce.productName(),
+      description: faker.commerce.productDescription(),
+      type: ItemType.BLOG,
+      blogDetails: {
+        content: 'Sample blog content for D-08 idempotency test.',
+        estimatedReadTimeInMinutes: 2,
+        tags: undefined as unknown as string[],
+        points: '10.00' as unknown as number,
+      },
+    } as CreateItemBody;
+
+    const itemRes = await request(app)
+      .post(
+        `/courses/versions/${versionId}/modules/${moduleId}/sections/${sectionId}/items`,
+      )
+      .send(itemPayload)
+      .set('Authorization', 'Bearer test-token')
+      .expect(201);
+    const itemId = itemRes.body.itemsGroup.items[0]._id;
+
+    await createEnrollment(
+      app,
+      studentUserId,
+      courseId,
+      versionId,
+      moduleId,
+      sectionId,
+      itemId,
+    );
+
+    const watchTimeDoc: IWatchTime = {
+      userId: new ObjectId(studentUserId),
+      courseId: new ObjectId(courseId),
+      courseVersionId: new ObjectId(versionId),
+      itemId: new ObjectId(itemId),
+      startTime: new Date(Date.now() - 60 * 60 * 1000),
+      // recoverOrphanedWatchTimes treats a never-seen-since row as no
+      // evidence of time spent and skips it -- a real orphan always has at
+      // least one heartbeat.
+      lastSeenAt: new Date(Date.now() - 55 * 60 * 1000),
+    } as IWatchTime;
+    const insertResult = await watchTimeCollection.insertOne(watchTimeDoc);
+
+    const firstRun = await request(app)
+      .post('/jobs/recover-orphaned-watchtimes')
+      .query({olderThanMinutes: 0, batchSize: 500})
+      .set('X-API-Key', TEST_API_KEY)
+      .expect(200);
+    expect(firstRun.body.closed).toBeGreaterThanOrEqual(1);
+
+    const recordAfterFirstRun = await watchTimeCollection.findOne({
+      _id: insertResult.insertedId,
+    });
+    expect(recordAfterFirstRun?.endTime).toBeDefined();
+    const endTimeAfterFirstRun = recordAfterFirstRun!.endTime;
+
+    // Same record is already closed -- a second sweep must not re-close it,
+    // change its endTime, or count it again.
+    const secondRun = await request(app)
+      .post('/jobs/recover-orphaned-watchtimes')
+      .query({olderThanMinutes: 0, batchSize: 500})
+      .set('X-API-Key', TEST_API_KEY)
+      .expect(200);
+
+    const recordAfterSecondRun = await watchTimeCollection.findOne({
+      _id: insertResult.insertedId,
+    });
+    expect(recordAfterSecondRun?.endTime).toEqual(endTimeAfterFirstRun);
+    expect(recordAfterSecondRun).toEqual(recordAfterFirstRun);
+    // findOrphanedWatchTimes excludes rows with endTime already set, so the
+    // now-closed record from the first run should not even be scanned again.
+    expect(secondRun.body.closed).toBe(0);
+  });
+
+  it('propagates a service-layer failure as a sanitized error response, not a raw stack trace', async () => {
+    const failure = new Error('simulated DB connection error');
+    const spy = vi
+      .spyOn(ProgressService.prototype, 'recoverOrphanedWatchTimes')
+      .mockRejectedValueOnce(failure);
+
+    const response = await request(app)
+      .post('/jobs/recover-orphaned-watchtimes')
+      .set('X-API-Key', TEST_API_KEY)
+      .expect(500);
+
+    expect(response.body.message).toBe('simulated DB connection error');
+    expect(response.body.stack).toBeUndefined();
+    expect(JSON.stringify(response.body)).not.toContain('at ProgressService');
+
+    spy.mockRestore();
   });
 });
