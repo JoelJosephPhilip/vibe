@@ -1207,6 +1207,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/users/progress/courses/{courseId}/versions/{versionId}/study-views": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Record that the caller studied a lesson in study mode
+         * @description Marks a video or article as studied by the calling student (study mode). Idempotent: a repeat keeps the first time. Never changes strict progress.<br/>
+         *     Rejected for quizzes and other lesson types (400), lessons outside the course version (404) and lessons where study mode is disabled (403 STUDY_MODE_DISABLED). Instructors get recorded: false.
+         */
+        post: operations["ProgressController.recordStudyView"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/progress/courses/{courseId}/versions/{versionId}/study-progress": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the caller's study progress in a course version
+         * @description Study-allowed videos and articles the caller studied in study mode or completed in strict mode, over all study-allowed videos and articles. Separate from (and never part of) strict progress.
+         */
+        get: operations["ProgressController.getStudyProgress"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/users/progress/courses/{courseId}/versions/{versionId}/": {
         parameters: {
             query?: never;
@@ -2679,6 +2720,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/courses/versions/{versionId}/items/{itemId}/study-mode": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set this item's study-mode setting
+         * @description Allows or disallows study mode for this item, overriding its section and module, or clears the setting (null) so it inherits again.<br/>
+         *     Accessible to:
+         *     - Instructors, managers, and teaching assistants of the course.
+         */
+        put: operations["ItemController.updateStudyMode"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/courses/{courseId}/versions/{versionId}/items/{itemId}/toggle-visibility": {
         parameters: {
             query?: never;
@@ -2795,6 +2858,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/courses/versions/{versionId}/modules/{moduleId}/study-mode": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set this module's study-mode setting
+         * @description Allows or disallows study mode for every section and item in the module that has no setting of its own, or clears the setting (null) so the module is open to study mode again.<br/>
+         *     Accessible to:
+         *     - Instructors or managers of the course.
+         */
+        put: operations["ModuleController.updateStudyMode"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/courses/versions/{versionId}/modules/{moduleId}/toggle-visibility": {
         parameters: {
             query?: never;
@@ -2855,6 +2940,28 @@ export interface paths {
          *     - Instructors or managers of the course.
          */
         post: operations["SectionController.create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/courses/versions/{versionId}/modules/{moduleId}/sections/{sectionId}/study-mode": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set this section's study-mode setting
+         * @description Allows or disallows study mode for every item in the section that has no setting of its own (overriding the module), or clears the setting (null) so the section inherits from its module again.<br/>
+         *     Accessible to:
+         *     - Instructors or managers of the course.
+         */
+        put: operations["SectionController.updateStudyMode"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -8938,6 +9045,8 @@ export interface components {
             order: string;
             isHidden?: boolean;
             isOptional?: boolean;
+            /** @description Study-mode setting: true allows, false disallows; absent or null inherits from the level above. */
+            studyModeEnabled?: boolean;
             /** @description Type-specific payload (video URL and offsets, blog content, quiz settings, ...). For QUIZ items questionBankRefs is lifted out into the sibling field below. */
             details?: Record<string, never>;
             questionBankRefs?: components["schemas"]["BundleQuestionBankRef"][];
@@ -8947,6 +9056,8 @@ export interface components {
             description?: string;
             order: string;
             isHidden?: boolean;
+            /** @description Study-mode setting: true allows, false disallows; absent or null inherits from the level above. */
+            studyModeEnabled?: boolean;
             items: components["schemas"]["BundleItem"][];
         };
         BundleModule: {
@@ -8954,6 +9065,8 @@ export interface components {
             description?: string;
             order: string;
             isHidden?: boolean;
+            /** @description Study-mode setting: true allows, false disallows; absent or null inherits from the level above. */
+            studyModeEnabled?: boolean;
             sections: components["schemas"]["BundleSection"][];
         };
         BundleCourse: {
@@ -8998,6 +9111,13 @@ export interface components {
             /** @description Name the course was created under */
             name: string;
             message: string;
+        };
+        StudyModeBody: {
+            /**
+             * Study mode setting
+             * @description true allows study mode here, false disallows it (students must use strict mode), null clears the setting so it inherits from the level above (item → section → module; allowed when nothing is set).
+             */
+            studyModeEnabled?: boolean | null;
         };
         InviteIdParams: {
             /** @description Unique identifier for the invite */
@@ -11038,6 +11158,14 @@ export interface components {
              * @example 60d5ec49b3f1c8e4a8f8b8c7
              */
             watchItemId: string;
+        };
+        StudyViewBody: {
+            /** @description The video or article studied */
+            itemId: string;
+            /** @description Module containing the item */
+            moduleId: string;
+            /** @description Section containing the item */
+            sectionId: string;
         };
         ContentCountsValidator: {
             /**
@@ -16392,6 +16520,70 @@ export interface operations {
             };
         };
     };
+    "ProgressController.recordStudyView": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                courseId: string;
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        /** @description StudyViewBody */
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["StudyViewBody"];
+            };
+        };
+        responses: {
+            /** @description Study view recorded (or not tracked for this role) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Not a video or article */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BadRequestErrorResponse"];
+                };
+            };
+        };
+    };
+    "ProgressController.getStudyProgress": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                courseId: string;
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Study progress */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
     "ProgressController.getUserProgress": {
         parameters: {
             query?: {
@@ -18993,6 +19185,7 @@ export interface operations {
         parameters: {
             query?: {
                 cohortId?: string;
+                mode?: string;
             };
             header?: never;
             path: {
@@ -19172,6 +19365,54 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ItemDataResponse"];
+                };
+            };
+            /** @description Bad Request Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BadRequestErrorResponse"];
+                };
+            };
+            /** @description Item not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ItemNotFoundErrorResponse"];
+                };
+            };
+        };
+    };
+    "ItemController.updateStudyMode": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+                itemId: string;
+            };
+            cookie?: never;
+        };
+        /** @description StudyModeBody */
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["StudyModeBody"];
+            };
+        };
+        responses: {
+            /** @description Item study-mode setting updated successfully */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Bad Request Error */
@@ -19469,6 +19710,52 @@ export interface operations {
             };
         };
     };
+    "ModuleController.updateStudyMode": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+                moduleId: string;
+            };
+            cookie?: never;
+        };
+        /** @description StudyModeBody */
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["StudyModeBody"];
+            };
+        };
+        responses: {
+            /** @description Module study-mode setting updated successfully */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModuleDataResponse"];
+                };
+            };
+            /** @description Bad Request Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BadRequestErrorResponse"];
+                };
+            };
+            /** @description Module not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModuleNotFoundErrorResponse"];
+                };
+            };
+        };
+    };
     "ModuleController.toggleVisibility": {
         parameters: {
             query?: never;
@@ -19580,6 +19867,53 @@ export interface operations {
         responses: {
             /** @description Section created successfully */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SectionDataResponse"];
+                };
+            };
+            /** @description Bad Request Error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BadRequestErrorResponse"];
+                };
+            };
+            /** @description Section not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SectionNotFoundErrorResponse"];
+                };
+            };
+        };
+    };
+    "SectionController.updateStudyMode": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+                moduleId: string;
+                sectionId: string;
+            };
+            cookie?: never;
+        };
+        /** @description StudyModeBody */
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["StudyModeBody"];
+            };
+        };
+        responses: {
+            /** @description Section study-mode setting updated successfully */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };

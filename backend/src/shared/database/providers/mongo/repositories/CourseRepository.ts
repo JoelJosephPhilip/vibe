@@ -649,6 +649,7 @@ export class CourseRepository implements ICourseRepository {
                 // pipeline) kept honouring the stored override and disabled
                 // proctoring for every item in that module.
                 proctoringDetectors: '$$mod.proctoringDetectors',
+                studyModeEnabled: '$$mod.studyModeEnabled',
                 sections: {
                   $filter: {
                     input: '$$mod.sections',
@@ -722,6 +723,7 @@ export class CourseRepository implements ICourseRepository {
                 // Same allowlist caveat as getActiveVersion above: omitting a
                 // field here silently drops it from every module.
                 proctoringDetectors: '$$mod.proctoringDetectors',
+                studyModeEnabled: '$$mod.studyModeEnabled',
                 sections: {
                   $filter: {
                     input: '$$mod.sections',
