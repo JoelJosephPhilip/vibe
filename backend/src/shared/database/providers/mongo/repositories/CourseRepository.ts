@@ -1495,6 +1495,7 @@ export class CourseRepository implements ICourseRepository {
     cohortId: string,
     registrationsAutoApproved: boolean,
     autoapproval_emails: string[],
+    autoApprovalMode: 'EVERYONE' | 'LIST',
     session?: ClientSession
   ): Promise<string> {
     try {
@@ -1504,7 +1505,8 @@ export class CourseRepository implements ICourseRepository {
           courseVersionId: new ObjectId(versionId),
           cohortId: new ObjectId(cohortId),
           registrationsAutoApproved,
-          autoapproval_emails
+          autoapproval_emails,
+          autoApprovalMode,
         },
         { session }
       );
@@ -1580,6 +1582,7 @@ export class CourseRepository implements ICourseRepository {
     settingId: string,
     registrationsAutoApproved: boolean,
     autoapproval_emails: string[],
+    autoApprovalMode: 'EVERYONE' | 'LIST',
     session?: ClientSession
   ): Promise<boolean> {
     try {
@@ -1590,6 +1593,7 @@ export class CourseRepository implements ICourseRepository {
           $set: {
             registrationsAutoApproved,
             autoapproval_emails,
+            autoApprovalMode,
             updatedAt: new Date()
           }
         },
