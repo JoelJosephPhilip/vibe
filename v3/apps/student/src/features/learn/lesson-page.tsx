@@ -4,13 +4,17 @@ import { ApiError, unwrap } from '@vibe/api';
 import {
   ArrowLeftIcon,
   ArrowRightIcon,
+  AudioLinesIcon,
   BadgeCheckIcon,
   CheckCircle2Icon,
   HandIcon,
   InfoIcon,
   LockIcon,
   MonitorIcon,
+  ScanFaceIcon,
   ShieldAlertIcon,
+  StethoscopeIcon,
+  UserCheckIcon,
   XIcon,
 } from 'lucide-react';
 import {
@@ -79,7 +83,7 @@ import { cn } from '@/lib/utils';
 
 import {
   CameraBubble,
-  CameraRequired,
+  CameraPreview,
   useCameraPresence,
 } from './camera-presence';
 import { ConsentGate } from './consent-gate';
@@ -120,6 +124,10 @@ import {
 import { QuizRunner } from './quiz';
 import { useIncidentReporter } from './incident-reporter';
 import { useAfterQuizSubmit } from './quiz-api';
+import { MODEL_CHECK_LABELS } from './proctoring/assets';
+import { DiagnosticsDialog } from './proctoring/diagnostics-view';
+import { fixActions } from './proctoring/fix-actions';
+import { deviceEntries, modelEntry, ProctoringSetup, type SetupEntry } from './proctoring/proctoring-setup';
 import { YouTubePlayer } from './youtube-player';
 import { useStudyViewRecorder } from './use-study-view-recorder';
 
@@ -407,23 +415,25 @@ function useProctoring(
   }, [camera.stream]);
 
   const isBlurry = useBlurDetector(captureRef, needsBlur && cameraReady);
-  const gesture = useGestureDetector(captureRef, needsGesture && cameraReady);
-  useThumbsUpChallenge(gesture, needsGesture && cameraReady);
-  const isSpeaking = useVoiceDetector(camera.stream, needsVoice && cameraReady);
-  const faceCount = useFaceCountDetector(
-    captureRef,
-    needsFaceCount && cameraReady,
-  );
+  // Model downloads start as soon as a check is on, alongside the camera prompt;
+  // each check only analyses frames once the camera is live.
+  const gestureCheck = useGestureDetector(captureRef, needsGesture);
+  useThumbsUpChallenge(gestureCheck.gesture, needsGesture && cameraReady);
+  const voice = useVoiceDetector(cameraReady ? camera.stream : null, needsVoice);
+  const isSpeaking = voice.isSpeaking;
+  const faceCountCheck = useFaceCountDetector(captureRef, needsFaceCount);
+  const faceCount = cameraReady ? faceCountCheck.faceCount : null;
 
   const faceReference = useFaceReference(courseId, versionId);
   const referenceEmbedding = needsFaceRecognition
     ? faceReference.data?.faceEmbedding
     : undefined;
-  const recognitionStatus = useFaceRecognition(
+  const faceRecognition = useFaceRecognition(
     captureRef,
     referenceEmbedding,
-    needsFaceRecognition && cameraReady,
+    needsFaceRecognition,
   );
+  const recognitionStatus = faceRecognition.status;
 
   // Record incidents for the course team (with a still photo, as the consent form says).
   useIncidentReporter(
@@ -517,8 +527,45 @@ function useProctoring(
           };
   }
 
+  // The setup checklist: camera, microphone and every model the lesson's checks need.
+  const modelChecks = [
+    { on: needsFaceCount, id: 'faceCount', check: faceCountCheck, icon: <ScanFaceIcon /> },
+    { on: needsFaceRecognition, id: 'faceRecognition', check: faceRecognition, icon: <UserCheckIcon /> },
+    { on: needsGesture, id: 'gesture', check: gestureCheck, icon: <HandIcon /> },
+    { on: needsVoice, id: 'voice', check: voice, icon: <AudioLinesIcon /> },
+  ] as const;
+  const setupEntries: SetupEntry[] = needsCameraStream
+    ? [
+        ...deviceEntries(camera, true),
+        ...modelChecks
+          .filter((m) => m.on)
+          .map((m) => ({
+            ...modelEntry(m.id, MODEL_CHECK_LABELS[m.id], m.check.readiness, m.check.retry),
+            icon: m.icon,
+          })),
+      ]
+    : [];
+  const setupReady = setupEntries.every((e) => e.state === 'ready');
+  // A short "You're all set" moment when a checklist that was shown completes.
+  const setupWasShown = useRef(false);
+  const [allSet, setAllSet] = useState(false);
+  useEffect(() => {
+    if (!setupReady) {
+      setupWasShown.current = true;
+      return undefined;
+    }
+    if (!setupWasShown.current) return undefined;
+    setupWasShown.current = false;
+    setAllSet(true);
+    const id = window.setTimeout(() => setAllSet(false), 900);
+    return () => window.clearTimeout(id);
+  }, [setupReady]);
+  const restartChecks = () => modelChecks.forEach((m) => m.on && m.check.retry());
+  const [diagnosing, setDiagnosing] = useState(false);
+
   const blocked =
     (needsCameraStream && !cameraReady) ||
+    !setupReady ||
     showEnrollment ||
     blockNotice !== null;
 
@@ -536,14 +583,19 @@ function useProctoring(
             aria-hidden="true"
           />
           <CameraBubble stream={camera.stream} />
-          <CameraRequired
-            state={camera.state}
-            onRetry={camera.retry}
-            idleHint="This lesson is proctored and needs your camera and microphone on. Nothing is recorded unless a check flags something; then a still photo is saved for your course team, as in the consent form."
-          />
+          {(!setupReady || allSet) && !diagnosing && (
+            <ProctoringSetup
+              allSet={setupReady && allSet}
+              entries={setupEntries}
+              hint="This lesson is proctored and needs your camera and microphone on. Nothing is recorded unless a check flags something; then a still photo is saved for your course team, as in the consent form."
+              actions={fixActions(restartChecks)}
+              onRunDiagnostics={() => setDiagnosing(true)}
+            />
+          )}
+          <DiagnosticsDialog open={diagnosing} onOpenChange={setDiagnosing} restartChecks={restartChecks} />
         </>
       )}
-      {cameraReady && showEnrollment && (
+      {setupReady && showEnrollment && (
         <Dialog open>
           <DialogContent
             showCloseButton={false}
@@ -563,10 +615,11 @@ function useProctoring(
           </DialogContent>
         </Dialog>
       )}
-      {cameraReady && !showEnrollment && blockNotice && (
+      {setupReady && !showEnrollment && blockNotice && (
         <BlockingNotice
           title={blockNotice.title}
           message={blockNotice.message}
+          stream={camera.stream}
           action={
             blockNotice.showRetake
               ? {
@@ -583,19 +636,22 @@ function useProctoring(
   return { blocked, overlay };
 }
 
-/** Blocking notice for a proctoring block that isn't "camera is off" (that's CameraRequired). */
+/** Blocking notice for a proctoring block once setup is done (setup problems are ProctoringSetup's). */
 function BlockingNotice({
   title,
   message,
   action,
+  stream,
 }: {
   title: string;
   message: string;
   action?: { label: string; onClick: () => void };
+  /** Shown as a clear live preview, so the student can see and fix how they appear. */
+  stream?: MediaStream | null;
 }) {
   return (
     <AlertDialog open>
-      <AlertDialogContent size="sm">
+      <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogMedia className="text-amber-600">
             <ShieldAlertIcon />
@@ -603,6 +659,7 @@ function BlockingNotice({
           <AlertDialogTitle>{title}</AlertDialogTitle>
           <AlertDialogDescription>{message}</AlertDialogDescription>
         </AlertDialogHeader>
+        <CameraPreview stream={stream ?? null} />
         {action && (
           <AlertDialogFooter>
             <AlertDialogAction variant="outline" onClick={action.onClick}>
@@ -833,7 +890,7 @@ function GreenFeedback({
               <span className="text-destructive">{error}</span>
             ) : alreadyDone ? (
               <span className="inline-flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400">
-                <CheckCircle2Icon className="size-4" aria-hidden /> Completed
+                <CheckCircle2Icon className="size-4 animate-in zoom-in-50 duration-300" aria-hidden /> Completed
               </span>
             ) : fields.length > 0 ? (
               `${fields.filter((f) => isAnswered(f, values[fieldName(f)])).length} of ${fields.length} answered`
@@ -1059,7 +1116,7 @@ function GreenLesson({
           >
             {alreadyDone ? (
               <span className="inline-flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400">
-                <CheckCircle2Icon className="size-4" aria-hidden /> Completed
+                <CheckCircle2Icon className="size-4 animate-in zoom-in-50 duration-300" aria-hidden /> Completed
               </span>
             ) : startError ? (
               <span className="text-destructive">{startError}</span>
@@ -1305,6 +1362,7 @@ function LessonFrame({
   const other: Track = track === 'blue' ? 'green' : 'blue';
   const navigate = useNavigate();
   const [confirmExit, setConfirmExit] = useState(false);
+  const [checkingDevice, setCheckingDevice] = useState(false);
   const course = {
     to: '/courses/$courseId/$versionId' as const,
     params: { courseId: ref.courseId, versionId: ref.versionId },
@@ -1346,6 +1404,17 @@ function LessonFrame({
             {title}
           </span>
           <TrackBadge track={track} />
+          {track === 'green' && (
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Check my device"
+              title="Check my device"
+              onClick={() => setCheckingDevice(true)}
+            >
+              <StethoscopeIcon />
+            </Button>
+          )}
           {!hideTrackSwitch && (
             <Link
               to="/learn/$courseId/$versionId/$moduleId/$sectionId/$itemId"
@@ -1358,6 +1427,7 @@ function LessonFrame({
           )}
         </div>
       </header>
+      <DiagnosticsDialog open={checkingDevice} onOpenChange={setCheckingDevice} />
       <main
         id="main"
         className={cn(
