@@ -263,6 +263,9 @@ export default function CoursePage() {
   // Only gate once past the consent + proctoring-declaration dialogs (they run
   // their own flow); then fullscreen is required for the focused learn stage.
   const needsFullscreen = consentSatisfied && !showProctorDialog && !isPageFullscreen;
+  // firstName isn't always populated on the backend profile — fall back to the
+  // first word of the display name (set from Firebase on signup) before giving up.
+  const firstNameForGreeting = user?.firstName || user?.name?.trim().split(/\s+/)[0] || "";
 
   // Debounced "blocking anomaly" (no person / multiple people / identity / etc.).
   // Face detection is noisy, so require the anomaly to persist briefly before we
@@ -2364,12 +2367,12 @@ return false;
           </div>
           <div className="max-w-sm space-y-2">
             <h2 className="text-2xl font-semibold text-white">
-              {user?.firstName ? `Hold on, ${user.firstName}!` : "Hold on!"}
+              {firstNameForGreeting ? `Hold on, ${firstNameForGreeting}!` : "Hold on!"}
             </h2>
             <p className="text-sm text-white/70">
               {(courseVersionData as any)?.name
-                ? `"${(courseVersionData as any).name}" pauses outside fullscreen — re-enter it to keep going, or head out below.`
-                : "This lesson pauses outside fullscreen — re-enter it to keep going, or head out below."}
+                ? `"${(courseVersionData as any).name}" pauses outside fullscreen. Re-enter it to keep going, or head out below.`
+                : "This lesson pauses outside fullscreen. Re-enter it to keep going, or head out below."}
             </p>
           </div>
           <button
