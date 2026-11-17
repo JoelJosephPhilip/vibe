@@ -16,6 +16,7 @@ import { useState, lazy, useEffect } from "react";
 import { bufferToHex } from "@/utils/helpers";
 import { enterFullscreen, exitFullscreen } from "@/utils/fullscreen";
 import { setLaunchOrigin } from "@/lib/page-transition";
+import { prefetchCourseLaunch } from "@/lib/course-prefetch";
 import { cn } from "@/utils/utils";
 import type { CourseCardProps } from '@/types/course.types';
 import { StudentPolicyModal } from "@/app/pages/student/components/policies/StudentPolicyModal";
@@ -121,6 +122,14 @@ export const CourseCard = ({ enrollment, index, isLoading, variant = 'dashboard'
   const isStart = progress === 0 && variant !== 'available';
   const isRankVisible = variant !== 'available' && isNotGuruSetu;
   const isTimeslotActive = variant !== 'available' && isNotGuruSetu;
+
+  // Warm the course page's caches as soon as this card is on screen, not
+  // when Continue is clicked — by then it's too late to hide the wait.
+  // 'available' cards go to course-registration instead, so skip those.
+  useEffect(() => {
+    if (variant === 'available') return;
+    void prefetchCourseLaunch({ courseId, versionId, cohortId: cohortId || undefined });
+  }, [courseId, versionId, cohortId, variant]);
 
   // const supportLink = enrollment?.course?.supportLink || "";
 

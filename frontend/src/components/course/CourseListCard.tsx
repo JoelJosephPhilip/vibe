@@ -7,10 +7,11 @@ import { useCourseVersionById, useLeaderboard, useCheckTimeSlotAccessOnDemand } 
 import { toast } from "sonner";
 import { useCourseStore } from "@/store/course-store";
 import { useNavigate } from "@tanstack/react-router";
-import { useState, lazy, Suspense } from "react";
+import { useState, useEffect, lazy, Suspense } from "react";
 import { bufferToHex } from "@/utils/helpers";
 import { enterFullscreen, exitFullscreen } from "@/utils/fullscreen";
 import { setLaunchOrigin } from "@/lib/page-transition";
+import { prefetchCourseLaunch } from "@/lib/course-prefetch";
 import { cn } from "@/utils/utils";
 import type { CourseCardProps } from '@/types/course.types';
 import { EnrollmentDetailsDialog } from "@/components/course/EnrollmentDetailsDialog";
@@ -55,6 +56,14 @@ export const CourseListCard = ({ enrollment, index, isLoading: _isLoading, varia
   const isNotGuruSetu = versionId !== GURU_SETU_VERSION_ID;
   const supportLink = (courseVersionData as any)?.supportLink;
   const supportEmail = enrollment.courseId === MERN_CASE_STUDY_ID ? "vibe-support@vicharanashala.zohodesk" : "internship-support@vicharanashala.zohodesk";
+
+  // Warm the course page's caches as soon as this card is on screen, not
+  // when Continue is clicked — by then it's too late to hide the wait.
+  // 'available' cards go to course-registration instead, so skip those.
+  useEffect(() => {
+    if (variant === 'available') return;
+    void prefetchCourseLaunch({ courseId, versionId, cohortId: cohortId || undefined });
+  }, [courseId, versionId, cohortId, variant]);
 
   const contentCounts = enrollment.contentCounts || {};
   const itemCounts = (contentCounts as any).itemCounts || {};
