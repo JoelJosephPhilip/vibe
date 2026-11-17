@@ -40,6 +40,29 @@ const getItemIcon = (type: string) => {
 const sortItemsByOrder = (items: any[]) =>
   [...items].sort((a, b) => (a.order || "").localeCompare(b.order || ""));
 
+// A subtle, consistent color per item type — gives the eye something to
+// pattern-match on in a long list, beyond the type label text alone.
+const typeAccent = (type: string): string => {
+  switch ((type || "").toLowerCase()) {
+    case "video":
+      return "text-sky-600 dark:text-sky-400";
+    case "blog":
+    case "article":
+      return "text-amber-600 dark:text-amber-400";
+    case "quiz":
+      return "text-violet-600 dark:text-violet-400";
+    case "form":
+    case "feedback":
+      return "text-teal-600 dark:text-teal-400";
+    case "project":
+      return "text-pink-600 dark:text-pink-400";
+    case "case_study":
+      return "text-indigo-600 dark:text-indigo-400";
+    default:
+      return "text-muted-foreground";
+  }
+};
+
 const typeLabel = (type: string) => {
   switch ((type || "").toLowerCase()) {
     case "video":
@@ -233,7 +256,7 @@ export function CourseDrawer({
 
         {/* Module / section / item tree — scrollable, gets the most room */}
         <ScrollArea className="min-h-0 flex-1">
-          <div className="space-y-1 p-3" data-testid="course-drawer-tree">
+          <div className="space-y-2.5 p-3" data-testid="course-drawer-tree">
             {modules.map((module: any) => {
               const moduleId = module.moduleId;
               const progress = moduleProgressMap.get(moduleId);
@@ -243,31 +266,38 @@ export function CourseDrawer({
                 progress?.completedItems === progress?.totalItems && progress?.totalItems > 0;
 
               return (
-                <div key={moduleId} data-testid="course-module" data-module-id={moduleId}>
+                <div
+                  key={moduleId}
+                  data-testid="course-module"
+                  data-module-id={moduleId}
+                  className={`overflow-hidden rounded-2xl border transition-colors duration-200 ${
+                    isCurrentModule ? "border-warm/40 bg-warm/[0.04]" : "border-border bg-foreground/[0.02]"
+                  }`}
+                >
                   <button
                     data-testid="course-module-toggle"
                     data-module-id={moduleId}
                     onClick={() => onToggleModule(moduleId)}
                     aria-expanded={isModuleExpanded}
                     aria-current={isCurrentModule ? "true" : undefined}
-                    className={`group flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left ${rowBase} hover:bg-foreground/[0.06] ${
-                      isCurrentModule ? "bg-foreground/[0.08] text-foreground" : "text-foreground/80"
+                    className={`group flex w-full items-center gap-2.5 px-3.5 py-3 text-left ${rowBase} hover:bg-foreground/[0.05] ${
+                      isCurrentModule ? "text-foreground" : "text-foreground/90"
                     }`}
                   >
                     <span
-                      className={`grid h-5 w-5 shrink-0 place-items-center rounded-md transition-colors duration-200 ${
-                        isCurrentModule ? "bg-foreground/10" : "bg-foreground/[0.06]"
+                      className={`grid h-6 w-6 shrink-0 place-items-center rounded-lg transition-colors duration-200 ${
+                        isCurrentModule ? "bg-warm/20 text-warm" : "bg-foreground/[0.07] text-muted-foreground"
                       }`}
                     >
                       <ChevronRight
-                        className={`h-3 w-3 text-muted-foreground transition-transform duration-200 ease-out ${isModuleExpanded ? "rotate-90" : ""}`}
+                        className={`h-3.5 w-3.5 transition-transform duration-200 ease-out ${isModuleExpanded ? "rotate-90" : ""}`}
                       />
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="flex items-center justify-between gap-3">
-                        <span className="truncate text-xs font-medium">{module.name}</span>
+                        <span className="truncate text-sm font-semibold">{module.name}</span>
                         <span
-                          className={`inline-flex shrink-0 items-center gap-1 text-[10px] tabular-nums ${done ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}`}
+                          className={`inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium tabular-nums ${done ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}`}
                         >
                           {done && <Check className="h-2.5 w-2.5" />}
                           {moduleProgressLoading
@@ -275,7 +305,7 @@ export function CourseDrawer({
                             : `${progress?.completedItems ?? 0}/${progress?.totalItems ?? 0}`}
                         </span>
                       </span>
-                      <span className="block text-[10px] text-muted-foreground/70">
+                      <span className="block text-[10px] text-muted-foreground">
                         {module.sections?.length || 0} sections
                       </span>
                     </span>
@@ -286,7 +316,7 @@ export function CourseDrawer({
                   >
                     <div className="overflow-hidden">
                       {module.sections && (
-                        <div className="ml-3 mt-1 space-y-1 border-l border-border pl-2">
+                        <div className="space-y-2 border-t border-border/70 px-3.5 pb-3 pt-2.5">
                           {module.sections.map((section: any) => {
                             const sectionId = section.sectionId;
                             const isSectionExpanded = expandedSections[sectionId];
@@ -300,6 +330,7 @@ export function CourseDrawer({
                                 data-testid="course-section"
                                 data-section-id={sectionId}
                                 data-module-id={moduleId}
+                                className="border-l-2 border-border pl-2.5"
                               >
                                 <button
                                   data-testid="course-section-toggle"
@@ -308,18 +339,20 @@ export function CourseDrawer({
                                   onClick={() => onToggleSection(moduleId, sectionId)}
                                   aria-expanded={isSectionExpanded}
                                   aria-current={isCurrentSection ? "true" : undefined}
-                                  className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs ${rowBase} hover:bg-foreground/[0.06] ${
-                                    isCurrentSection ? "font-medium text-foreground" : "text-muted-foreground"
+                                  className={`flex w-full items-center gap-1.5 rounded-md py-1 text-left ${rowBase} ${
+                                    isCurrentSection ? "text-foreground" : "text-muted-foreground hover:text-foreground/80"
                                   }`}
                                 >
                                   <ChevronRight
-                                    className={`h-3 w-3 shrink-0 text-muted-foreground transition-transform duration-200 ease-out ${isSectionExpanded ? "rotate-90" : ""}`}
+                                    className={`h-3 w-3 shrink-0 transition-transform duration-200 ease-out ${isSectionExpanded ? "rotate-90" : ""}`}
                                   />
-                                  <span className="truncate font-medium">{section.name}</span>
+                                  <span className="truncate text-[11px] font-semibold uppercase tracking-wide">
+                                    {section.name}
+                                  </span>
                                 </button>
 
                                 {isSectionExpanded && (
-                                  <div className="ml-3 mt-0.5 space-y-0.5 animate-vibe-fade-in">
+                                  <div className="mt-1.5 space-y-1 animate-vibe-fade-in">
                                     {isLoadingItems ? (
                                       <div className="space-y-1 p-2">
                                         <Skeleton className="h-4 w-full rounded" />
@@ -362,7 +395,7 @@ export function CourseDrawer({
                                             )}
                                             {/* Completion indicator — check (done) · pulsing dot (current) · ring (next) · empty (todo) */}
                                             <span
-                                              className={`mt-px grid h-5 w-5 shrink-0 place-items-center rounded-full border transition-colors duration-200 ${
+                                              className={`mt-px grid h-6 w-6 shrink-0 place-items-center rounded-full border-2 transition-colors duration-200 ${
                                                 completed
                                                   ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
                                                   : isCurrentItem
@@ -373,30 +406,30 @@ export function CourseDrawer({
                                               }`}
                                             >
                                               {locked ? (
-                                                <Lock className="h-2.5 w-2.5 text-muted-foreground" />
+                                                <Lock className="h-3 w-3 text-muted-foreground" />
                                               ) : completed ? (
-                                                <Check className="h-3 w-3 animate-vibe-fade-in" />
+                                                <Check className="h-3.5 w-3.5 animate-vibe-fade-in" />
                                               ) : isCurrentItem ? (
-                                                <span className="h-1.5 w-1.5 rounded-full bg-foreground animate-pulse" />
+                                                <span className="h-2 w-2 rounded-full bg-foreground animate-pulse" />
                                               ) : null}
                                             </span>
                                             {/* Title + type */}
                                             <span className="min-w-0 flex-1">
                                               <span
-                                                className={`block truncate text-xs ${
+                                                className={`block truncate text-sm ${
                                                   isCurrentItem || isNext
                                                     ? "font-semibold text-foreground"
                                                     : completed
                                                       ? "font-medium text-muted-foreground"
-                                                      : "font-medium text-foreground/85"
+                                                      : "font-medium text-foreground/90"
                                                 }`}
                                               >
                                                 {isCurrentItem && itemLoading
                                                   ? "Loading…"
                                                   : item?.name || item?.title || "Untitled"}
                                               </span>
-                                              <span className="mt-0.5 flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                                                <span className="opacity-80">{getItemIcon(item.type)}</span>
+                                              <span className={`mt-1 flex items-center gap-1.5 text-[11px] font-medium ${locked ? "text-muted-foreground" : typeAccent(item.type)}`}>
+                                                {getItemIcon(item.type)}
                                                 <span>{typeLabel(item.type)}</span>
                                                 {isNext && (
                                                   <span className="ml-0.5 rounded-full bg-warm/15 px-1.5 py-px text-[9px] font-medium text-warm">
@@ -415,7 +448,7 @@ export function CourseDrawer({
                                         );
                                       })
                                     ) : (
-                                      <div className="p-2 text-center text-[11px] text-muted-foreground/70">
+                                      <div className="p-2 text-center text-[11px] text-muted-foreground">
                                         No items found
                                       </div>
                                     )}
