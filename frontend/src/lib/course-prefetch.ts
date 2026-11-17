@@ -16,65 +16,75 @@ type PrefetchArgs = { courseId: string; versionId: string; cohortId?: string };
  * [method, path, init], hashed by exact shape (a present-but-empty `query`
  * is a different key than no `query` at all), so any drift from the real
  * hook's shape here is a silent cache miss, not a type error.
+ *
+ * The returned promise resolves only once every one of these has settled
+ * (success or failure) — callers that just want to warm the cache in the
+ * background can call this without awaiting it; the dashboard's "fully
+ * preload the last-visited course before unlocking its card" flow awaits
+ * it specifically because it needs to know when there's truly nothing left
+ * to wait on.
  */
-export async function prefetchCourseLaunch({ courseId, versionId, cohortId }: PrefetchArgs) {
+export async function prefetchCourseLaunch({ courseId, versionId, cohortId }: PrefetchArgs): Promise<void> {
   if (!courseId || !versionId) return;
 
-  // Fire-and-forget: course version + module progress + ethics consent.
-  // prefetchQuery swallows errors on its own, which is what we want for a
-  // best-effort warm-up triggered just from a card being on screen.
-  void queryClient.prefetchQuery(
+  const versionPromise = queryClient.prefetchQuery(
     api.queryOptions("get", "/courses/versions/{id}", {
       params: { path: { id: versionId }, ...(cohortId ? { query: { cohortId } } : {}) },
     } as any),
   );
-  void queryClient.prefetchQuery(
+  const moduleProgressPromise = queryClient.prefetchQuery(
     api.queryOptions("get", `/users/progress/courses/${courseId}/versions/${versionId}/modules` as any, {
       params: { path: { courseId, versionId }, query: { cohortId } },
     } as any),
   );
-  void queryClient.prefetchQuery(
+  const ethicsPromise = queryClient.prefetchQuery(
     api.queryOptions("get", "/users/enrollments/courses/{courseId}/versions/{versionId}/ethics-consent" as any, {
       params: { path: { courseId, versionId } },
     } as any),
   );
 
-  // The progress call tells us *which* item the student left off on, so it's
-  // awaited (fetchQuery returns the data; prefetchQuery doesn't) while
-  // everything else here is fire-and-forget.
-  try {
-    const progress: any = await queryClient.fetchQuery(
-      api.queryOptions("get", "/users/progress/courses/{courseId}/versions/{courseVersionId}", {
-        params: { path: { courseId, courseVersionId: versionId }, query: { cohortId } },
-      } as any),
-    );
-
-    const moduleId = progress?.currentModule;
-    const sectionId = progress?.currentSection;
-    const itemId = progress?.currentItem;
-    if (!moduleId || !sectionId) return;
-
-    void queryClient.prefetchQuery(
-      api.queryOptions("get", "/courses/versions/{versionId}/modules/{moduleId}/sections/{sectionId}/items", {
-        params: { path: { versionId, moduleId, sectionId }, ...(cohortId ? { query: { cohortId } } : {}) },
-      } as any),
-    );
-
-    if (itemId) {
-      void queryClient.prefetchQuery(
-        api.queryOptions(
-          "get",
-          "/courses/{courseId}/versions/{versionId}/modules/{moduleId}/sections/{sectionId}/item/{itemId}",
-          {
-            params: {
-              path: { courseId, versionId, itemId, moduleId, sectionId },
-              ...(cohortId ? { query: { cohortId } } : {}),
-            },
-          } as any,
-        ),
+  // The progress call tells us *which* item the student left off on, so its
+  // data is read (fetchQuery returns it; prefetchQuery doesn't) before the
+  // item-level prefetches it feeds into can be kicked off.
+  const progressChain = (async () => {
+    try {
+      const progress: any = await queryClient.fetchQuery(
+        api.queryOptions("get", "/users/progress/courses/{courseId}/versions/{courseVersionId}", {
+          params: { path: { courseId, courseVersionId: versionId }, query: { cohortId } },
+        } as any),
       );
+
+      const moduleId = progress?.currentModule;
+      const sectionId = progress?.currentSection;
+      const itemId = progress?.currentItem;
+      if (!moduleId || !sectionId) return;
+
+      const itemsPromise = queryClient.prefetchQuery(
+        api.queryOptions("get", "/courses/versions/{versionId}/modules/{moduleId}/sections/{sectionId}/items", {
+          params: { path: { versionId, moduleId, sectionId }, ...(cohortId ? { query: { cohortId } } : {}) },
+        } as any),
+      );
+
+      const itemPromise = itemId
+        ? queryClient.prefetchQuery(
+            api.queryOptions(
+              "get",
+              "/courses/{courseId}/versions/{versionId}/modules/{moduleId}/sections/{sectionId}/item/{itemId}",
+              {
+                params: {
+                  path: { courseId, versionId, itemId, moduleId, sectionId },
+                  ...(cohortId ? { query: { cohortId } } : {}),
+                },
+              } as any,
+            ),
+          )
+        : Promise.resolve();
+
+      await Promise.allSettled([itemsPromise, itemPromise]);
+    } catch {
+      // Best-effort warm-up only — course-page's own hooks fetch normally if this failed.
     }
-  } catch {
-    // Best-effort warm-up only — course-page's own hooks fetch normally if this failed.
-  }
+  })();
+
+  await Promise.allSettled([versionPromise, moduleProgressPromise, ethicsPromise, progressChain]);
 }
