@@ -2241,19 +2241,22 @@ const Video = forwardRef<VideoRef, VideoProps>(function Video({ URL, source, ass
             Always a dark "glass" bar regardless of site theme: like any video player's chrome
             (YouTube, Netflix, VLC), it sits over arbitrary video content, so it can't rely on
             theme tokens that flip light in light mode — hardcoded dark + white is what keeps
-            every icon readable no matter what's playing behind it. */}
+            every icon readable no matter what's playing behind it. Single slim row: the seek
+            bar fills the space between the transport cluster and the extra-controls cluster,
+            so the bar's height never grows past one row of buttons. */}
 
         <div
           style={{
-            padding: '10px 14px',
+            padding: '6px 10px',
             userSelect: 'none',
             WebkitUserSelect: 'none',
             MozUserSelect: 'none',
             msUserSelect: 'none',
             flexShrink: 0,
             display: 'flex',
-            flexDirection: 'column',
-            gap: 8,
+            alignItems: 'center',
+            gap: 10,
+            flexWrap: 'wrap',
             background: 'linear-gradient(to top, rgba(10,10,14,0.92), rgba(10,10,14,0.75))',
             backdropFilter: 'blur(14px)',
             WebkitBackdropFilter: 'blur(14px)',
@@ -2282,226 +2285,227 @@ const Video = forwardRef<VideoRef, VideoProps>(function Video({ URL, source, ass
           onMouseEnter={() => { pointerOverControlsRef.current = true; clearControlsHideTimer(); setControlsVisible(true); }}
           onMouseLeave={() => { pointerOverControlsRef.current = false; scheduleControlsHide(); }}
         >
-          {/* Scrubber row — full-width seek bar */}
-          <Slider
-            value={[currentTime]}
-            min={startTimeSeconds}
-            max={endTimeSeconds > 0 ? endTimeSeconds : duration}
-            step={0.1}
-            onValueChange={(value) => {
-              const newTime = value[0];
-              const currentTimeStr = formatSecondsToTime(currentTime);
-              const newTimeStr = formatSecondsToTime(newTime);
+          {/* Transport cluster */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0, order: 1 }}>
+            <Button
+              onClick={(e) => {
+                e.stopPropagation();
+                handlePlayPause();
+              }}
+              size="icon"
+              className="rounded-full w-8 h-8 flex-shrink-0 bg-primary text-primary-foreground hover:bg-primary/90"
+              aria-label={playing ? 'Pause' : 'Play'}
+            >
+              {playing ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5 ml-0.5" />}
+            </Button>
 
-              // Record seek time
-              lastSeekTimeRef.current = Date.now();
+            <Button
+              onClick={(e) => {
+                e.stopPropagation();
+                handleBackward();
+              }}
+              size="icon"
+              variant="ghost"
+              className="rounded-full w-8 h-8 flex-shrink-0 bg-white/10 text-white hover:bg-white/20 hover:text-white"
+              aria-label="Back 10 seconds"
+            >
+              <SkipBack className="h-3.5 w-3.5" />
+            </Button>
 
-              // Track seek as rewind or fast forward
-              if (newTime < currentTime) {
-                setWatchTimeTrack(prev => ({
-                  ...prev,
-                  rewinds: prev.rewinds + 1,
-                  rewindData: [...prev.rewindData, {
-                    from: currentTimeStr,
-                    to: newTimeStr,
-                    createdAt: new Date().toISOString()
-                  }]
-                }));
-              } else if (newTime > currentTime) {
-                // Fast forward
-                setWatchTimeTrack(prev => ({
-                  ...prev,
-                  fastForwards: prev.fastForwards + 1,
-                  fastForwardData: [...prev.fastForwardData, {
-                    from: currentTimeStr,
-                    to: newTimeStr,
-                    createdAt: new Date().toISOString()
-                  }]
-                }));
-              }
-
-              // If seekForward is disabled and user tries to seek forward
-              if (!seekForwardEnabled && newTime > currentTime) {
-                // Throttle toast to prevent spam (max once every 2 seconds)
-                const now = Date.now();
-                if (now - lastSeekErrorToastRef.current > 2000) {
-                  toast.error('You are not allowed to seek forward');
-                  lastSeekErrorToastRef.current = now;
-                }
-                return;
-              }
-
-              // Allow seeking (backward always, forward only if enabled)
-              if (playerRef.current && typeof playerRef.current.seekTo === 'function') {
-                playerRef.current.seekTo(newTime, true);
-              } else {
-                console.log('⚠️ [DEBUG] Player not ready or seekTo not available');
-              }
-
-              // Cancel any pending stop request when user is actively seeking
-              if (stopTimeoutRef.current) {
-                clearTimeout(stopTimeoutRef.current);
-                stopTimeoutRef.current = null;
-              }
-            }}
-            className="w-full"
-          />
-
-          {/* Button row — transport + time on the left, extras on the right */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
-            {/* Left Controls */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
+            {/* Forward seek button - shown when seekForwardEnabled is true */}
+            {seekForwardEnabled && (
               <Button
                 onClick={(e) => {
                   e.stopPropagation();
-                  handlePlayPause();
-                }}
-                size="icon"
-                className="rounded-full w-9 h-9 flex-shrink-0 bg-primary text-primary-foreground hover:bg-primary/90"
-                aria-label={playing ? 'Pause' : 'Play'}
-              >
-                {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 ml-0.5" />}
-              </Button>
-
-              <Button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleBackward();
+                  handleForward();
                 }}
                 size="icon"
                 variant="ghost"
-                className="rounded-full w-9 h-9 flex-shrink-0 bg-white/10 text-white hover:bg-white/20 hover:text-white"
-                aria-label="Back 10 seconds"
+                className="rounded-full w-8 h-8 flex-shrink-0 bg-white/10 text-white hover:bg-white/20 hover:text-white"
+                aria-label="Forward 10 seconds"
+                title="Forward 10 seconds"
               >
-                <SkipBack className="h-4 w-4" />
+                <SkipForward className="h-3.5 w-3.5" />
               </Button>
+            )}
 
-              {/* Forward seek button - shown when seekForwardEnabled is true */}
-              {seekForwardEnabled && (
-                <Button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleForward();
-                  }}
-                  size="icon"
-                  variant="ghost"
-                  className="rounded-full w-9 h-9 flex-shrink-0 bg-white/10 text-white hover:bg-white/20 hover:text-white"
-                  aria-label="Forward 10 seconds"
-                  title="Forward 10 seconds"
-                >
-                  <SkipForward className="h-4 w-4" />
-                </Button>
+            <span className="tabular-nums text-[11px] font-semibold text-white/80 ml-1 whitespace-nowrap" style={{ flexShrink: 0 }}>
+              {formatTime(Math.max(startTimeSeconds, currentTime))} / {formatTime(endTimeSeconds > 0 ? endTimeSeconds : duration)}
+            </span>
+          </div>
+
+          {/* Seek bar — fills whatever room is left between the two clusters */}
+          <div style={{ order: 2, flex: 1, minWidth: 100 }}>
+            <Slider
+              value={[currentTime]}
+              min={startTimeSeconds}
+              max={endTimeSeconds > 0 ? endTimeSeconds : duration}
+              step={0.1}
+              onValueChange={(value) => {
+                const newTime = value[0];
+                const currentTimeStr = formatSecondsToTime(currentTime);
+                const newTimeStr = formatSecondsToTime(newTime);
+
+                // Record seek time
+                lastSeekTimeRef.current = Date.now();
+
+                // Track seek as rewind or fast forward
+                if (newTime < currentTime) {
+                  setWatchTimeTrack(prev => ({
+                    ...prev,
+                    rewinds: prev.rewinds + 1,
+                    rewindData: [...prev.rewindData, {
+                      from: currentTimeStr,
+                      to: newTimeStr,
+                      createdAt: new Date().toISOString()
+                    }]
+                  }));
+                } else if (newTime > currentTime) {
+                  // Fast forward
+                  setWatchTimeTrack(prev => ({
+                    ...prev,
+                    fastForwards: prev.fastForwards + 1,
+                    fastForwardData: [...prev.fastForwardData, {
+                      from: currentTimeStr,
+                      to: newTimeStr,
+                      createdAt: new Date().toISOString()
+                    }]
+                  }));
+                }
+
+                // If seekForward is disabled and user tries to seek forward
+                if (!seekForwardEnabled && newTime > currentTime) {
+                  // Throttle toast to prevent spam (max once every 2 seconds)
+                  const now = Date.now();
+                  if (now - lastSeekErrorToastRef.current > 2000) {
+                    toast.error('You are not allowed to seek forward');
+                    lastSeekErrorToastRef.current = now;
+                  }
+                  return;
+                }
+
+                // Allow seeking (backward always, forward only if enabled)
+                if (playerRef.current && typeof playerRef.current.seekTo === 'function') {
+                  playerRef.current.seekTo(newTime, true);
+                } else {
+                  console.log('⚠️ [DEBUG] Player not ready or seekTo not available');
+                }
+
+                // Cancel any pending stop request when user is actively seeking
+                if (stopTimeoutRef.current) {
+                  clearTimeout(stopTimeoutRef.current);
+                  stopTimeoutRef.current = null;
+                }
+              }}
+              className="w-full [&_[data-slot=slider-track]]:bg-white/25 [&_[data-slot=slider-thumb]]:border-white [&_[data-slot=slider-thumb]]:bg-white"
+            />
+          </div>
+
+          {/* Extra-controls cluster */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0, order: 3 }}>
+            <TooltipProvider>
+              {/* Subtitles — hidden entirely for players that cannot show any. */}
+              {subtitlesSupported && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      onClick={handleToggleSubtitles}
+                      variant="ghost"
+                      size="icon"
+                      className={`relative h-8 w-8 rounded-full transition-colors duration-200 ${subtitlesEnabled ? "bg-white/25 text-white hover:bg-white/30" : "bg-white/10 text-white hover:bg-white/20"
+                        }`}
+                    >
+                      <Captions className="h-4 w-4" strokeWidth={2.25} />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>Toggle Subtitles</p>
+                  </TooltipContent>
+                </Tooltip>
               )}
 
-              <span className="tabular-nums text-xs font-semibold text-white/80 ml-1" style={{ flexShrink: 0 }}>
-                {formatTime(Math.max(startTimeSeconds, currentTime))} / {formatTime(endTimeSeconds > 0 ? endTimeSeconds : duration)}
-              </span>
-            </div>
+              {/* Speed — a short, tappable preset list beats a cramped drag slider. */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    onClick={(e) => e.stopPropagation()}
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 gap-1 rounded-full bg-white/10 px-2.5 text-[11px] font-semibold text-white hover:bg-white/20 hover:text-white"
+                    aria-label="Playback speed"
+                  >
+                    {`${parseFloat(playbackRate.toFixed(2))}x`}
+                    <ChevronDown className="h-3 w-3 opacity-70" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="center" className="min-w-24" onClick={(e) => e.stopPropagation()}>
+                  <DropdownMenuRadioGroup
+                    value={String(parseFloat(playbackRate.toFixed(2)))}
+                    onValueChange={(val) => {
+                      const rate = parseFloat(val);
+                      const player = playerRef.current;
+                      if (player && typeof player.getAvailablePlaybackRates === 'function') {
+                        const availableRates = player.getAvailablePlaybackRates!();
+                        let closest = availableRates[0];
+                        for (const r of availableRates) {
+                          if (Math.abs(r - rate) < Math.abs(closest - rate)) closest = r;
+                        }
+                        player.setPlaybackRate(closest);
+                        setPlaybackRate(closest);
+                      } else {
+                        playerRef.current?.setPlaybackRate(rate);
+                        setPlaybackRate(rate);
+                      }
+                    }}
+                  >
+                    {SPEED_PRESETS.map((rate) => (
+                      <DropdownMenuRadioItem key={rate} value={String(rate)}>
+                        {rate}x
+                      </DropdownMenuRadioItem>
+                    ))}
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
 
-            {/* Right Controls */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
-              <TooltipProvider>
-                {/* Subtitles — hidden entirely for players that cannot show any. */}
-                {subtitlesSupported && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        onClick={handleToggleSubtitles}
-                        variant="ghost"
-                        size="icon"
-                        className={`relative h-9 w-9 rounded-full transition-colors duration-200 ${subtitlesEnabled ? "bg-white/25 text-white hover:bg-white/30" : "bg-white/10 text-white hover:bg-white/20"
-                          }`}
-                      >
-                        <Captions className="h-[18px] w-[18px]" strokeWidth={2.25} />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>Toggle Subtitles</p>
-                    </TooltipContent>
-                  </Tooltip>
-                )}
-
-                {/* Speed — a short, tappable preset list beats a cramped drag slider. */}
+              {/*
+                * Quality selector. Rendered only when the active player reports
+                * renditions, so it appears for uploaded video (HLS ladder) and
+                * stays hidden where there is nothing to choose between.
+                */}
+              {qualityLevels.length > 1 && (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button
                       onClick={(e) => e.stopPropagation()}
                       variant="ghost"
                       size="sm"
-                      className="h-9 gap-1 rounded-full bg-white/10 px-3 text-xs font-semibold text-white hover:bg-white/20 hover:text-white"
-                      aria-label="Playback speed"
+                      className="h-8 gap-1 rounded-full bg-white/10 px-2.5 text-[11px] font-semibold text-white hover:bg-white/20 hover:text-white"
+                      aria-label="Video quality"
                     >
-                      {`${parseFloat(playbackRate.toFixed(2))}x`}
+                      {selectedQuality === 'auto' ? 'Auto' : selectedQuality}
                       <ChevronDown className="h-3 w-3 opacity-70" />
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="center" className="min-w-24" onClick={(e) => e.stopPropagation()}>
                     <DropdownMenuRadioGroup
-                      value={String(parseFloat(playbackRate.toFixed(2)))}
-                      onValueChange={(val) => {
-                        const rate = parseFloat(val);
-                        const player = playerRef.current;
-                        if (player && typeof player.getAvailablePlaybackRates === 'function') {
-                          const availableRates = player.getAvailablePlaybackRates!();
-                          let closest = availableRates[0];
-                          for (const r of availableRates) {
-                            if (Math.abs(r - rate) < Math.abs(closest - rate)) closest = r;
-                          }
-                          player.setPlaybackRate(closest);
-                          setPlaybackRate(closest);
-                        } else {
-                          playerRef.current?.setPlaybackRate(rate);
-                          setPlaybackRate(rate);
-                        }
+                      value={selectedQuality}
+                      onValueChange={(level) => {
+                        setSelectedQuality(level);
+                        playerRef.current?.setPlaybackQuality?.(level);
                       }}
                     >
-                      {SPEED_PRESETS.map((rate) => (
-                        <DropdownMenuRadioItem key={rate} value={String(rate)}>
-                          {rate}x
+                      {qualityLevels.map(level => (
+                        <DropdownMenuRadioItem key={level} value={level}>
+                          {level === 'auto' ? 'Auto' : level}
                         </DropdownMenuRadioItem>
                       ))}
                     </DropdownMenuRadioGroup>
                   </DropdownMenuContent>
                 </DropdownMenu>
+              )}
 
-                {/*
-                  * Quality selector. Rendered only when the active player reports
-                  * renditions, so it appears for uploaded video (HLS ladder) and
-                  * stays hidden where there is nothing to choose between.
-                  */}
-                {qualityLevels.length > 1 && (
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button
-                        onClick={(e) => e.stopPropagation()}
-                        variant="ghost"
-                        size="sm"
-                        className="h-9 gap-1 rounded-full bg-white/10 px-3 text-xs font-semibold text-white hover:bg-white/20 hover:text-white"
-                        aria-label="Video quality"
-                      >
-                        {selectedQuality === 'auto' ? 'Auto' : selectedQuality}
-                        <ChevronDown className="h-3 w-3 opacity-70" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="center" className="min-w-24" onClick={(e) => e.stopPropagation()}>
-                      <DropdownMenuRadioGroup
-                        value={selectedQuality}
-                        onValueChange={(level) => {
-                          setSelectedQuality(level);
-                          playerRef.current?.setPlaybackQuality?.(level);
-                        }}
-                      >
-                        {qualityLevels.map(level => (
-                          <DropdownMenuRadioItem key={level} value={level}>
-                            {level === 'auto' ? 'Auto' : level}
-                          </DropdownMenuRadioItem>
-                        ))}
-                      </DropdownMenuRadioGroup>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                )}
-
-                {/* Mute toggle — remembers the pre-mute level so a second click restores it */}
+              {/* Volume — click the speaker to mute/unmute, drag the slider to set a level */}
+              <div className="flex items-center gap-1 pl-0.5">
                 <Button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -2517,66 +2521,73 @@ const Video = forwardRef<VideoRef, VideoProps>(function Video({ URL, source, ass
                   }}
                   variant="ghost"
                   size="icon"
-                  className="h-9 w-9 flex-shrink-0 rounded-full bg-white/10 text-white hover:bg-white/20 hover:text-white"
+                  className="h-8 w-8 flex-shrink-0 rounded-full bg-white/10 text-white hover:bg-white/20 hover:text-white"
                   aria-label={volume === 0 ? 'Unmute' : 'Mute'}
                 >
-                  {volume === 0 ? <VolumeX className="h-[18px] w-[18px]" /> : <Volume2 className="h-[18px] w-[18px]" />}
+                  {volume === 0 ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
                 </Button>
+                <Slider
+                  value={[volume]}
+                  min={0}
+                  max={100}
+                  onValueChange={(value) => {
+                    const v = value[0];
+                    setVolume(v);
+                    playerRef.current?.setVolume(v);
+                  }}
+                  className="w-14 [&_[data-slot=slider-track]]:bg-white/25 [&_[data-slot=slider-thumb]]:border-white [&_[data-slot=slider-thumb]]:bg-white"
+                  aria-label="Volume"
+                />
+              </div>
 
-                {/* Fullscreen Toggle */}
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        toggleFullscreen();
-                      }}
-                      variant="ghost"
-                      size="icon"
-                      className="h-9 w-9 rounded-full bg-white/10 text-white transition-colors duration-200 hover:bg-white/20 hover:text-white"
-                      aria-label={isFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
-                    >
-                      {isFullscreen ? (
-                        <Minimize className="h-[18px] w-[18px]" strokeWidth={2.25} />
-                      ) : (
-                        <Maximize className="h-[18px] w-[18px]" strokeWidth={2.25} />
-                      )}
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p>{isFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}</p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            </div>
+              {/* Fullscreen Toggle */}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleFullscreen();
+                    }}
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 rounded-full bg-white/10 text-white transition-colors duration-200 hover:bg-white/20 hover:text-white"
+                    aria-label={isFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
+                  >
+                    {isFullscreen ? (
+                      <Minimize className="h-4 w-4" strokeWidth={2.25} />
+                    ) : (
+                      <Maximize className="h-4 w-4" strokeWidth={2.25} />
+                    )}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>{isFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}</p>
+                </TooltipContent>
+              </Tooltip>
+
+              {/* Next Lesson — part of the same row/cluster, not a separate strip */}
+              {onNext && (
+                <Button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onNext();
+                  }}
+                  disabled={isProgressUpdating}
+                  size="sm"
+                  className="ml-1 h-8 flex-shrink-0 rounded-full bg-primary px-3 text-[11px] font-semibold text-primary-foreground hover:bg-primary/90"
+                >
+                  {isProgressUpdating ? (
+                    <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground" />
+                  ) : (
+                    <>
+                      Next
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    </>
+                  )}
+                </Button>
+              )}
+            </TooltipProvider>
           </div>
-
-          {/* Next Lesson Button */}
-          {onNext && (
-            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-              <Button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onNext();
-                }}
-                disabled={isProgressUpdating}
-                className="shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105 bg-gradient-to-r from-primary to-primary/90 hover:from-primary/90 hover:to-primary text-primary-foreground border-0"
-                size="lg"
-              >
-                {isProgressUpdating ? (
-                  <>
-                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-primary-foreground/30 border-t-primary-foreground mr-2" />
-                    Processing
-                  </>
-                ) : (
-                  <>
-                    Next Lesson
-                    <ChevronRight className="h-4 w-4 ml-2" />
-                  </>
-                )}
-              </Button>
-            </div>
-          )}
         </div>
       </div>
 
