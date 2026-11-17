@@ -1,15 +1,21 @@
 import { queryClient } from "@/lib/client";
 import { api } from "@/lib/openapi";
+import { prefetchProctoringSettings } from "@/lib/proctoring-settings-cache";
 
 type PrefetchArgs = { courseId: string; versionId: string; cohortId?: string };
 
 /**
  * Warms the exact same React Query cache entries course-page.tsx's hooks
  * read from (useCourseVersionById, useUserProgress, useModuleProgress,
- * useGetEthicsConsent, useItemsBySectionId, useItemById), so a dashboard
- * card mounting ahead of time means clicking its Continue button finds
- * everything already cached instead of waterfalling through loading states
- * after the navigation.
+ * useGetEthicsConsent, useItemsBySectionId, useItemById) plus the one that
+ * isn't React Query — useGetProcotoringSettings's getSettings(), covered
+ * via lib/proctoring-settings-cache.ts — so a dashboard card mounting ahead
+ * of time means clicking its Continue button finds everything already
+ * cached instead of waterfalling through loading states after the
+ * navigation. Proctoring settings matter here as much as the rest: that
+ * fetch is what actually clears the component's loading gate, so leaving
+ * it un-warmed meant the skeleton still flashed back in after a fully
+ * "preloaded" course's video/quiz had already started rendering.
  *
  * Every init object below is copied verbatim from the corresponding hook in
  * hooks.ts / system-notification-hooks.ts — queryOptions()'s queryKey is
@@ -40,6 +46,16 @@ export async function prefetchCourseLaunch({ courseId, versionId, cohortId }: Pr
   const ethicsPromise = queryClient.prefetchQuery(
     api.queryOptions("get", "/users/enrollments/courses/{courseId}/versions/{versionId}/ethics-consent" as any, {
       params: { path: { courseId, versionId } },
+    } as any),
+  );
+  const proctoringPromise = prefetchProctoringSettings(courseId, versionId);
+  // Same cache useCheckTimeSlotAccessOnDemand's check() reads via fetchQuery
+  // — warming it here means the time-slot gate on the dashboard's own click
+  // handler (awaited *before* navigate() even fires) resolves instantly
+  // too, instead of making the whole click-to-navigate step wait on it.
+  const timeSlotPromise = queryClient.prefetchQuery(
+    api.queryOptions("get", "/timeslots/check-access/{courseId}/{courseVersionId}", {
+      params: { path: { courseId, courseVersionId: versionId } },
     } as any),
   );
 
@@ -86,5 +102,12 @@ export async function prefetchCourseLaunch({ courseId, versionId, cohortId }: Pr
     }
   })();
 
-  await Promise.allSettled([versionPromise, moduleProgressPromise, ethicsPromise, progressChain]);
+  await Promise.allSettled([
+    versionPromise,
+    moduleProgressPromise,
+    ethicsPromise,
+    proctoringPromise,
+    timeSlotPromise,
+    progressChain,
+  ]);
 }
