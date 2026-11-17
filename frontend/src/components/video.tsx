@@ -3,7 +3,14 @@ import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import { Card, CardContent } from '@/components/ui/card';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip';
-import { Play, Pause, SkipBack, SkipForward, Volume2, Captions, Loader2, XCircle, Maximize, Minimize, FastForward, ChevronRight } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Play, Pause, SkipBack, SkipForward, Volume2, Volume1, VolumeX, Captions, Loader2, XCircle, Maximize, Minimize, ChevronDown, ChevronRight } from 'lucide-react';
 import { useSkipOptionalItem, useStartItem, useStopItem, useStoreWatchTimeTrack, useUpsertWatchTime } from '../hooks/hooks';
 import { fetchClient } from '@/lib/openapi';
 
@@ -27,6 +34,11 @@ function formatSecondsToTime(seconds: number): string {
   const secs = Math.floor(seconds % 60);
   return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
 }
+
+// Standard playback-speed presets offered in the speed menu. Selecting one
+// still snaps to the active player's nearest actually-supported rate (see
+// the speed dropdown's onValueChange) — HLS, for instance, has no 0.25x.
+const SPEED_PRESETS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 
 // Short, encouraging lines shown while the player + proctoring environment load.
 const LOADING_QUOTES: string[] = [
@@ -85,6 +97,8 @@ const Video = forwardRef<VideoRef, VideoProps>(function Video({ URL, source, ass
   // const [volume, setVolume] = useState(100);
   // Use the stored playback rate from the player store
   const { playbackRate, setPlaybackRate, volume, setVolume, subtitlesEnabled, setSubtitlesEnabled } = usePlayerStore();
+  // Remembers the pre-mute level so clicking the speaker icon again restores it.
+  const preMuteVolumeRef = useRef(volume || 50);
   const [maxTime, setMaxTime] = useState(0);
   const [videoEnded, setVideoEnded] = useState(false);
   /**
@@ -2227,7 +2241,7 @@ const Video = forwardRef<VideoRef, VideoProps>(function Video({ URL, source, ass
 
         <div
           style={{
-            padding: '3px 10px',
+            padding: '10px 14px 8px',
             borderTop: '1px solid hsl(var(--primary) / 0.2)',
             userSelect: 'none',
             WebkitUserSelect: 'none',
@@ -2235,9 +2249,8 @@ const Video = forwardRef<VideoRef, VideoProps>(function Video({ URL, source, ass
             msUserSelect: 'none',
             flexShrink: 0,
             display: 'flex',
-            alignItems: 'center',
-            gap: 10,
-            flexWrap: 'wrap',
+            flexDirection: 'column',
+            gap: 6,
             ...(controlsOverlaid
               ? {
                   // Float the bar over the bottom of the video, and let it slide
@@ -2267,8 +2280,11 @@ const Video = forwardRef<VideoRef, VideoProps>(function Video({ URL, source, ass
           onMouseEnter={() => { pointerOverControlsRef.current = true; clearControlsHideTimer(); setControlsVisible(true); }}
           onMouseLeave={() => { pointerOverControlsRef.current = false; scheduleControlsHide(); }}
         >
-          {/* Progress Bar - Seeking controlled by seekForwardEnabled (fills the row middle) */}
-          <div style={{ order: 2, flex: 1, minWidth: 140 }}>
+          {/* Scrubber row — current / total time flank the seek bar */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span className="tabular-nums text-[11px] font-semibold text-foreground/70" style={{ minWidth: 38 }}>
+              {formatTime(Math.max(startTimeSeconds, currentTime))}
+            </span>
             <Slider
               value={[currentTime]}
               min={startTimeSeconds}
@@ -2279,7 +2295,7 @@ const Video = forwardRef<VideoRef, VideoProps>(function Video({ URL, source, ass
                 const currentTimeStr = formatSecondsToTime(currentTime);
                 const newTimeStr = formatSecondsToTime(newTime);
 
-                // Record seek time 
+                // Record seek time
                 lastSeekTimeRef.current = Date.now();
 
                 // Track seek as rewind or fast forward
@@ -2332,10 +2348,15 @@ const Video = forwardRef<VideoRef, VideoProps>(function Video({ URL, source, ass
               }}
               className="w-full"
             />
+            <span className="tabular-nums text-[11px] font-semibold text-foreground/70" style={{ minWidth: 38, textAlign: 'right' }}>
+              {formatTime(endTimeSeconds > 0 ? endTimeSeconds : duration)}
+            </span>
           </div>
 
+          {/* Button row — playback on the left, extra controls on the right */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
             {/* Left Controls */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, order: 1 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
               <Button
                 onClick={(e) => {
                   e.stopPropagation();
@@ -2343,7 +2364,7 @@ const Video = forwardRef<VideoRef, VideoProps>(function Video({ URL, source, ass
                 }}
                 size="icon"
                 variant={playing ? "default" : "secondary"}
-                className="rounded-full w-8 h-8 flex-shrink-0"
+                className="rounded-full w-9 h-9 flex-shrink-0"
                 aria-label={playing ? 'Pause' : 'Play'}
               >
                 {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
@@ -2355,8 +2376,8 @@ const Video = forwardRef<VideoRef, VideoProps>(function Video({ URL, source, ass
                   handleBackward();
                 }}
                 size="icon"
-                variant="secondary"
-                className="rounded-full w-8 h-8 flex-shrink-0"
+                variant="ghost"
+                className="rounded-full w-9 h-9 flex-shrink-0 text-foreground/70 hover:bg-foreground/10 hover:text-foreground"
                 aria-label="Back 10 seconds"
               >
                 <SkipBack className="h-4 w-4" />
@@ -2370,96 +2391,84 @@ const Video = forwardRef<VideoRef, VideoProps>(function Video({ URL, source, ass
                     handleForward();
                   }}
                   size="icon"
-                  variant="secondary"
-                  className="rounded-full w-8 h-8 flex-shrink-0"
+                  variant="ghost"
+                  className="rounded-full w-9 h-9 flex-shrink-0 text-foreground/70 hover:bg-foreground/10 hover:text-foreground"
                   aria-label="Forward 10 seconds"
                   title="Forward 10 seconds"
                 >
                   <SkipForward className="h-4 w-4" />
                 </Button>
               )}
-
-              <span style={{
-                color: 'hsl(var(--foreground))',
-                fontFamily: 'var(--font-sans)',
-                fontSize: 12,
-                fontWeight: 600,
-                minWidth: 62,
-                textShadow: '0 1px 3px hsl(var(--background) / 0.5)',
-                flexShrink: 0
-              }}>
-                {formatTime(Math.max(startTimeSeconds, currentTime))} / {formatTime(endTimeSeconds > 0 ? endTimeSeconds : duration)}
-              </span>
             </div>
 
             {/* Right Controls */}
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, order: 3 }}>
-
+            <div style={{ display: 'flex', alignItems: 'center', gap: 2, minWidth: 0 }}>
               <TooltipProvider>
                 {/* Subtitles — hidden entirely for players that cannot show any. */}
                 {subtitlesSupported && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      onClick={handleToggleSubtitles}
-                      variant="ghost"
-                      size="icon"
-                      className={`rounded-sm relative group h-8 w-8 transition-colors duration-200 ${subtitlesEnabled
-                        ? "text-black dark:text-white"
-                        : "text-gray-700 dark:text-gray-300 hover:text-black dark:hover:text-white"
-                        }`}
-                    >
-                      <span className="flex items-center justify-center">
-                        <Captions className="h-5 w-5" strokeWidth={2.25} />
-                      </span>
-
-                      {subtitlesEnabled && (
-                        <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-5 h-[2px] bg-red-500 rounded-full"></span>
-                      )}
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p>Toggle Subtitles</p>
-                  </TooltipContent>
-                </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        onClick={handleToggleSubtitles}
+                        variant="ghost"
+                        size="icon"
+                        className={`relative h-9 w-9 rounded-full transition-colors duration-200 hover:bg-foreground/10 ${subtitlesEnabled ? "text-foreground" : "text-foreground/60 hover:text-foreground"
+                          }`}
+                      >
+                        <Captions className="h-[18px] w-[18px]" strokeWidth={2.25} />
+                        {subtitlesEnabled && (
+                          <span className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 w-4 h-[2px] rounded-full bg-primary" />
+                        )}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>Toggle Subtitles</p>
+                    </TooltipContent>
+                  </Tooltip>
                 )}
 
-                {/* Speed Control */}
-                <Card className="flex flex-row items-center gap-1.5 px-2 py-0.5 bg-accent/15 flex-shrink-0">
-                  <span className="hidden md:block text-xs font-semibold text-foreground min-w-[24px]">
-                    Speed
-                  </span>
-                  <FastForward className="flex md:hidden h-3.5 w-3.5 text-accent flex-shrink-0" />
-                  <Slider
-                    value={[playbackRate]}
-                    min={0.25}
-                    max={2}
-                    step={0.05}
-                    onValueChange={(value) => {
-                      const rate = value[0];
-                      const player = playerRef.current;
-                      if (player && typeof player.getAvailablePlaybackRates === 'function') {
-                        const availableRates = player.getAvailablePlaybackRates!();
-                        let closest = availableRates[0];
-                        for (const r of availableRates) {
-                          if (Math.abs(r - rate) < Math.abs(closest - rate)) closest = r;
+                {/* Speed — a short, tappable preset list beats a cramped drag slider. */}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      onClick={(e) => e.stopPropagation()}
+                      variant="ghost"
+                      size="sm"
+                      className="h-9 gap-1 rounded-full px-2.5 text-xs font-semibold text-foreground/70 hover:bg-foreground/10 hover:text-foreground"
+                      aria-label="Playback speed"
+                    >
+                      {`${parseFloat(playbackRate.toFixed(2))}x`}
+                      <ChevronDown className="h-3 w-3 opacity-60" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="center" className="min-w-24" onClick={(e) => e.stopPropagation()}>
+                    <DropdownMenuRadioGroup
+                      value={String(parseFloat(playbackRate.toFixed(2)))}
+                      onValueChange={(val) => {
+                        const rate = parseFloat(val);
+                        const player = playerRef.current;
+                        if (player && typeof player.getAvailablePlaybackRates === 'function') {
+                          const availableRates = player.getAvailablePlaybackRates!();
+                          let closest = availableRates[0];
+                          for (const r of availableRates) {
+                            if (Math.abs(r - rate) < Math.abs(closest - rate)) closest = r;
+                          }
+                          player.setPlaybackRate(closest);
+                          setPlaybackRate(closest);
+                        } else {
+                          playerRef.current?.setPlaybackRate(rate);
+                          setPlaybackRate(rate);
                         }
-                        player.setPlaybackRate(closest);
-                        // Update both local state and global store
-                        setPlaybackRate(closest);
-                      } else {
-                        playerRef.current?.setPlaybackRate(rate);
-                        // Update both local state and global store
-                        setPlaybackRate(rate);
-                      }
-                    }}
-                    className="w-[80px]"
-                  />
-                  <span className="text-xs font-semibold text-primary min-w-[24px] text-center">
-                    {playbackRate.toFixed(2)}x
-                  </span>
-                </Card>
+                      }}
+                    >
+                      {SPEED_PRESETS.map((rate) => (
+                        <DropdownMenuRadioItem key={rate} value={String(rate)}>
+                          {rate}x
+                        </DropdownMenuRadioItem>
+                      ))}
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuContent>
+                </DropdownMenu>
 
                 {/*
                   * Quality selector. Rendered only when the active player reports
@@ -2467,33 +2476,65 @@ const Video = forwardRef<VideoRef, VideoProps>(function Video({ URL, source, ass
                   * stays hidden where there is nothing to choose between.
                   */}
                 {qualityLevels.length > 1 && (
-                  <Card className="flex flex-row items-center gap-1.5 px-2 py-0.5 bg-accent/15 flex-shrink-0">
-                    <span className="hidden md:block text-xs font-semibold text-foreground">
-                      Quality
-                    </span>
-                    <select
-                      value={selectedQuality}
-                      onChange={e => {
-                        const next = e.target.value;
-                        setSelectedQuality(next);
-                        playerRef.current?.setPlaybackQuality?.(next);
-                      }}
-                      aria-label="Video quality"
-                      className="bg-transparent text-xs font-semibold text-primary
-                        outline-none cursor-pointer"
-                    >
-                      {qualityLevels.map(level => (
-                        <option key={level} value={level}>
-                          {level === 'auto' ? 'Auto' : level}
-                        </option>
-                      ))}
-                    </select>
-                  </Card>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        onClick={(e) => e.stopPropagation()}
+                        variant="ghost"
+                        size="sm"
+                        className="h-9 gap-1 rounded-full px-2.5 text-xs font-semibold text-foreground/70 hover:bg-foreground/10 hover:text-foreground"
+                        aria-label="Video quality"
+                      >
+                        {selectedQuality === 'auto' ? 'Auto' : selectedQuality}
+                        <ChevronDown className="h-3 w-3 opacity-60" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="center" className="min-w-24" onClick={(e) => e.stopPropagation()}>
+                      <DropdownMenuRadioGroup
+                        value={selectedQuality}
+                        onValueChange={(level) => {
+                          setSelectedQuality(level);
+                          playerRef.current?.setPlaybackQuality?.(level);
+                        }}
+                      >
+                        {qualityLevels.map(level => (
+                          <DropdownMenuRadioItem key={level} value={level}>
+                            {level === 'auto' ? 'Auto' : level}
+                          </DropdownMenuRadioItem>
+                        ))}
+                      </DropdownMenuRadioGroup>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 )}
 
-                {/* Volume Control */}
-                <Card className="flex flex-row items-center gap-1.5 px-2 py-0.5 bg-accent/15 flex-shrink-0">
-                  <Volume2 className="h-3.5 w-3.5 text-accent flex-shrink-0" />
+                {/* Volume — click the speaker to mute/unmute, drag to set a level */}
+                <div className="flex items-center gap-1.5 pl-1">
+                  <Button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (volume > 0) {
+                        preMuteVolumeRef.current = volume;
+                        setVolume(0);
+                        playerRef.current?.setVolume(0);
+                      } else {
+                        const restored = preMuteVolumeRef.current || 50;
+                        setVolume(restored);
+                        playerRef.current?.setVolume(restored);
+                      }
+                    }}
+                    variant="ghost"
+                    size="icon"
+                    className="h-9 w-9 flex-shrink-0 rounded-full text-foreground/70 hover:bg-foreground/10 hover:text-foreground"
+                    aria-label={volume === 0 ? 'Unmute' : 'Mute'}
+                  >
+                    {volume === 0 ? (
+                      <VolumeX className="h-[18px] w-[18px]" />
+                    ) : volume < 50 ? (
+                      <Volume1 className="h-[18px] w-[18px]" />
+                    ) : (
+                      <Volume2 className="h-[18px] w-[18px]" />
+                    )}
+                  </Button>
                   <Slider
                     value={[volume]}
                     min={0}
@@ -2503,12 +2544,10 @@ const Video = forwardRef<VideoRef, VideoProps>(function Video({ URL, source, ass
                       setVolume(v);
                       playerRef.current?.setVolume(v);
                     }}
-                    className="w-[80px]"
+                    className="w-16"
+                    aria-label="Volume"
                   />
-                  <span className="text-xs font-semibold text-foreground min-w-[24px] text-center">
-                    {Math.round(volume)}%
-                  </span>
-                </Card>
+                </div>
 
                 {/* Fullscreen Toggle */}
                 <Tooltip>
@@ -2520,16 +2559,14 @@ const Video = forwardRef<VideoRef, VideoProps>(function Video({ URL, source, ass
                       }}
                       variant="ghost"
                       size="icon"
-                      className="rounded-sm relative group h-8 w-8 transition-colors duration-200 text-gray-700 dark:text-gray-300 hover:text-black dark:hover:text-white"
+                      className="h-9 w-9 rounded-full text-foreground/70 transition-colors duration-200 hover:bg-foreground/10 hover:text-foreground"
                       aria-label={isFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
                     >
-                      <span className="flex items-center justify-center">
-                        {isFullscreen ? (
-                          <Minimize className="h-5 w-5" strokeWidth={2.25} />
-                        ) : (
-                          <Maximize className="h-5 w-5" strokeWidth={2.25} />
-                        )}
-                      </span>
+                      {isFullscreen ? (
+                        <Minimize className="h-[18px] w-[18px]" strokeWidth={2.25} />
+                      ) : (
+                        <Maximize className="h-[18px] w-[18px]" strokeWidth={2.25} />
+                      )}
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent>
@@ -2538,13 +2575,14 @@ const Video = forwardRef<VideoRef, VideoProps>(function Video({ URL, source, ass
                 </Tooltip>
               </TooltipProvider>
             </div>
+          </div>
 
           {/* Next Lesson Button */}
           {onNext && (
             <div style={{
               borderTop: '1px solid hsl(var(--border))',
-              paddingTop: '12px',
-              marginTop: '12px',
+              paddingTop: '10px',
+              marginTop: '2px',
               display: 'flex',
               justifyContent: 'flex-end'
             }}>
