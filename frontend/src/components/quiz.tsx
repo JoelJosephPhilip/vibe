@@ -1162,17 +1162,26 @@ const Quiz = forwardRef<QuizRef, QuizProps>(({
       if (submissionResults?.gradingStatus === "PASSED") {
         setQuizPassed?.(1);
         setFailedRedirectCountdown(null); // Clear any countdown
-      } else if (submissionResults?.gradingStatus === "FAILED") {
-        setQuizPassed?.(0);
-        setFailedRedirectCountdown(10);
-      } else {
-        // Handle edge case where grading status is not available
-        // Default to failed if we can't determine the status
-        setQuizPassed?.(0);
-        setFailedRedirectCountdown(10);
+        return;
       }
+
+      // Failed (or indeterminate grading status, treated as failed below).
+      // This attempt used up the last one allowed -- there's no rewatch to
+      // send the student back for, since they can't retake anyway. Move on
+      // like a passed item instead of redirecting to the previous video.
+      if (maxAttempts !== -1 && attempts >= maxAttempts) {
+        setQuizPassed?.(3);
+        setTimeout(() => {
+          setQuizCompleted(false);
+          onNext?.();
+        }, 1000);
+        return;
+      }
+
+      setQuizPassed?.(0);
+      setFailedRedirectCountdown(10);
     }
-  }, [quizCompleted, quizType, submissionResults?.gradingStatus, setQuizPassed, onNext, onPrevVideo, noAttemptsLeft, isEmptyQuiz, passThreshold]);
+  }, [quizCompleted, quizType, submissionResults?.gradingStatus, setQuizPassed, onNext, onPrevVideo, noAttemptsLeft, isEmptyQuiz, passThreshold, maxAttempts, attempts]);
 
   useEffect(() => {
     if (failedRedirectCountdown === null) return;
