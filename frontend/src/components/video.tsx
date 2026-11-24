@@ -126,6 +126,23 @@ const Video = forwardRef<VideoRef, VideoProps>(function Video({ URL, source, ass
   const stopError = stopItem.error;
   const { mutateAsync: storeWatchTimeTrack } = useStoreWatchTimeTrack();
 
+  /**
+   * The server decides whether this viewing counts. After a failed quiz in a
+   * linear course the student is sent back to the video before it, and the
+   * server reports that video as not watched (isAlreadyWatched=false) until
+   * they watch it again; the quiz can't be retaken before then. So a video the
+   * server wants watched is tracked even if this visit already saw it finish
+   * (completedItemIdsRef) or the section list marks it complete — trusting
+   * those instead skipped the rewatch and looped the student between the video
+   * and a quiz that refused to start.
+   */
+  const itemIdForTracking = currentCourse?.itemId;
+  useEffect(() => {
+    if (!isAlreadyWatched && itemIdForTracking) {
+      completedItemIdsRef.current.delete(itemIdForTracking);
+    }
+  }, [isAlreadyWatched, itemIdForTracking, completedItemIdsRef]);
+
   // Parse start and end times
   const startTimeSeconds = parseTimeToSeconds(startTime || '0');
   const endTimeSeconds = parseTimeToSeconds(endTime || '');
@@ -545,7 +562,7 @@ const Video = forwardRef<VideoRef, VideoProps>(function Video({ URL, source, ass
       const executeStop = async () => {
         stopInFlightRef.current = true;
         try {
-          if (watchItemId && !isAlreadyWatched && !(currentCourse!.itemId && completedItemIdsRef.current.has(currentCourse!.itemId)) && !isCompleted) {
+          if (watchItemId && !isAlreadyWatched && !(currentCourse!.itemId && completedItemIdsRef.current.has(currentCourse!.itemId))) {
             await stopItem.mutateAsync({
               params: {
                 path: {
@@ -906,7 +923,7 @@ const Video = forwardRef<VideoRef, VideoProps>(function Video({ URL, source, ass
   function handleSendStartItem() {
 
     if (!currentCourse?.itemId) return;
-    if (!isAlreadyWatched && !completedItemIdsRef.current.has(currentCourse!.itemId) && !isCompleted) {
+    if (!isAlreadyWatched && !completedItemIdsRef.current.has(currentCourse!.itemId)) {
       startItem.mutate({
         params: {
           path: {

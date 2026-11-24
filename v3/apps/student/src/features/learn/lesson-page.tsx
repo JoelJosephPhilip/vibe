@@ -39,7 +39,9 @@ import {
 } from '@/components/ui/alert-dialog';
 import { RichContent } from '@/components/rich-content';
 import { FeedbackFormFields } from '@/features/feedback/feedback-form';
+import { StudyFeedbackForm, type PreviousLessonLink } from '@/features/feedback/study-feedback';
 import {
+  answerable,
   fieldName,
   isAnswered,
   schemaToFields,
@@ -117,6 +119,7 @@ import {
   type LockedLevel,
 } from '@/features/content-lock/content-lock';
 import {
+  itemsForTrack,
   studyModeLevel,
   studyModeRefusal,
   type StudyModeSource,
@@ -124,8 +127,14 @@ import {
 import { QuizRunner } from './quiz';
 import { useIncidentReporter } from './incident-reporter';
 import { useAfterQuizSubmit } from './quiz-api';
+import { isLinearCourse, isOrderLocked } from './linear-progression';
 import { MODEL_CHECK_LABELS } from './proctoring/assets';
 import { DiagnosticsDialog } from './proctoring/diagnostics-view';
+import {
+  answeredOn,
+  myFeedbackKey,
+  useMyFeedback,
+} from '@/features/feedback/my-feedback';
 import { fixActions } from './proctoring/fix-actions';
 import { deviceEntries, modelEntry, ProctoringSetup, type SetupEntry } from './proctoring/proctoring-setup';
 import { YouTubePlayer } from './youtube-player';
@@ -285,8 +294,9 @@ export function LessonPage({ track, ...ref }: LessonProps) {
 }
 
 /**
- * Green track: one lesson at a time, in order. Enforced here too, so it holds
- * even in courses whose backend linear-progression setting is off.
+ * Green track: in a linear course, one lesson at a time, in order (the same
+ * rule the backend applies). When the course turns linear progression off,
+ * any lesson opens.
  */
 function GreenGate({
   lessonRef: ref,
@@ -298,12 +308,17 @@ function GreenGate({
   progress: number;
 }) {
   const path = useCurrentPath(ref.courseId, ref.versionId);
-  const isCurrent = path.data?.item?.id === ref.itemId;
+  const settings = useCourseSettings(ref.courseId, ref.versionId);
+  // Wait for both, so neither the lesson nor the locked screen flashes first.
+  const pending = path.isPending || settings.isPending;
   const isLocked =
-    !path.isPending &&
-    !item.isAlreadyWatched &&
-    !!path.data?.item &&
-    !isCurrent;
+    !pending &&
+    isOrderLocked({
+      linear: isLinearCourse(settings.data),
+      alreadyDone: Boolean(item.isAlreadyWatched),
+      itemId: ref.itemId,
+      currentItemId: path.data?.item?.id,
+    });
   // Hooks must run unconditionally — don't gate this call behind the early
   // returns below. Instead it takes its own `enabled` flag, so a lesson that's
   // still loading or locked never opens the camera for content it isn't showing.
@@ -311,11 +326,11 @@ function GreenGate({
     item.proctoringDetectors,
     ref.courseId,
     ref.versionId,
-    !path.isPending && !isLocked,
+    !pending && !isLocked,
     ref.itemId,
   );
 
-  if (path.isPending)
+  if (pending)
     return (
       <LessonFrame
         lessonRef={ref}
@@ -424,7 +439,7 @@ function useProctoring(
   const faceCountCheck = useFaceCountDetector(captureRef, needsFaceCount);
   const faceCount = cameraReady ? faceCountCheck.faceCount : null;
 
-  const faceReference = useFaceReference(courseId, versionId);
+  const faceReference = useFaceReference(courseId, versionId, itemId);
   const referenceEmbedding = needsFaceRecognition
     ? faceReference.data?.faceEmbedding
     : undefined;
@@ -801,7 +816,21 @@ function GreenFeedback({
   );
   const alreadyDone = Boolean(item.isAlreadyWatched);
   const watchItem = useRef<Promise<string> | null>(null);
+  const queryClient = useQueryClient();
+  const mine = useMyFeedback(ref.itemId);
+  const answered = mine.data ?? null;
   const [values, setValues] = useState<FormValues>({});
+  // Whether the student changed anything since their earlier answer was filled in.
+  const [edited, setEdited] = useState(false);
+  const prefilled = useRef(false);
+  useEffect(() => {
+    if (answered && !prefilled.current) {
+      prefilled.current = true;
+      setValues(answered.details);
+    }
+  }, [answered]);
+  const previousLesson = usePreviousLesson(ref);
+  const [refusal, setRefusal] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -820,6 +849,7 @@ function GreenFeedback({
   const sent = useRef(false);
 
   async function finish(submit: boolean) {
+    setRefusal(null);
     if (submit && !sent.current) {
       const problems = validate(fields, values);
       setErrors(problems);
@@ -844,10 +874,12 @@ function GreenFeedback({
               courseId: ref.courseId,
               courseVersionId: ref.versionId,
               sectionId: ref.sectionId,
+              mode: 'strict',
             } as never,
           }),
         );
         sent.current = true;
+        void queryClient.invalidateQueries({ queryKey: myFeedbackKey(ref.itemId) });
       }
       if (!alreadyDone) {
         const id = await (watchItem.current ??= startItem(ref));
@@ -861,11 +893,17 @@ function GreenFeedback({
       await goToNext();
     } catch (e) {
       showLockIfLocked(e);
+      const message = (e as Error).message;
+      // The form is about the lesson before it: point there when that's the problem.
+      if (!sent.current && /previous video/i.test(message ?? '')) {
+        setRefusal(message);
+        setError(null);
+        return;
+      }
       setError(
         sent.current
           ? 'Your feedback was sent, but we couldn’t save your progress. Press Continue to try again.'
-          : (e as Error).message ||
-              'Couldn’t send your feedback. Please try again.',
+          : message || 'Couldn’t send your feedback. Please try again.',
       );
     } finally {
       setSending(false);
@@ -892,31 +930,50 @@ function GreenFeedback({
               <span className="inline-flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400">
                 <CheckCircle2Icon className="size-4 animate-in zoom-in-50 duration-300" aria-hidden /> Completed
               </span>
-            ) : fields.length > 0 ? (
-              `${fields.filter((f) => isAnswered(f, values[fieldName(f)])).length} of ${fields.length} answered`
+            ) : answerable(fields).length > 0 ? (
+              `${fields.filter((f) => isAnswered(f, values[fieldName(f)])).length} of ${answerable(fields).length} answered`
             ) : null}
           </p>
           <div className="flex w-full gap-2 sm:ml-auto sm:w-auto">
-            {(canSkip || alreadyDone) && !sent.current && (
+            {answered && !edited && !sent.current ? (
+              // Already answered and unchanged: move on without sending it again.
               <Button
-                variant="ghost"
                 size="lg"
                 className="h-11 flex-1 sm:h-10 sm:flex-none"
                 onClick={() => void finish(false)}
                 disabled={sending}
               >
-                {alreadyDone ? 'Continue' : 'Skip'}
+                {sending && <Spinner />}
+                Continue
               </Button>
+            ) : (
+              <>
+                {(canSkip || alreadyDone || answered) && !sent.current && (
+                  <Button
+                    variant="ghost"
+                    size="lg"
+                    className="h-11 flex-1 sm:h-10 sm:flex-none"
+                    onClick={() => void finish(false)}
+                    disabled={sending}
+                  >
+                    {alreadyDone || answered ? 'Continue' : 'Skip'}
+                  </Button>
+                )}
+                <Button
+                  size="lg"
+                  className="h-11 flex-1 sm:h-10 sm:flex-none"
+                  onClick={() => void finish(true)}
+                  disabled={sending || fields.length === 0}
+                >
+                  {sending && <Spinner />}
+                  {sent.current
+                    ? 'Continue'
+                    : answered
+                      ? 'Update feedback'
+                      : 'Send feedback'}
+                </Button>
+              </>
             )}
-            <Button
-              size="lg"
-              className="h-11 flex-1 sm:h-10 sm:flex-none"
-              onClick={() => void finish(true)}
-              disabled={sending || fields.length === 0}
-            >
-              {sending && <Spinner />}
-              {sent.current ? 'Continue' : 'Send feedback'}
-            </Button>
           </div>
         </>
       }
@@ -930,6 +987,33 @@ function GreenFeedback({
         </h1>
         {item.description && item.description !== item.name && (
           <p className="mt-2 text-muted-foreground">{item.description}</p>
+        )}
+        {answered && (
+          <Alert className="mt-6">
+            <CheckCircle2Icon />
+            <AlertDescription>
+              You answered this on {answeredOn(answered.createdAt)}. Change any
+              answer and press Update feedback to replace it.
+            </AlertDescription>
+          </Alert>
+        )}
+        {refusal && (
+          <Alert variant="destructive" className="mt-6">
+            <InfoIcon />
+            <AlertDescription>
+              <p>{refusal} Your answers are kept.</p>
+              {previousLesson && (
+                <Link
+                  to="/learn/$courseId/$versionId/$moduleId/$sectionId/$itemId"
+                  params={previousLesson}
+                  search={{ track: 'green' }}
+                  className="font-medium underline underline-offset-4"
+                >
+                  Go to the previous lesson
+                </Link>
+              )}
+            </AlertDescription>
+          </Alert>
         )}
         <form
           className="mt-8"
@@ -951,6 +1035,7 @@ function GreenFeedback({
               errors={errors}
               disabled={sending}
               onChange={(name, v) => {
+                setEdited(true);
                 setValues((prev) => ({ ...prev, [name]: v }));
                 setErrors((prev) => {
                   if (!prev[name]) return prev;
@@ -1169,7 +1254,8 @@ function BlueLesson({
   // It does record study views (not strict progress) for study progress.
   const onPlayingChange = useStudyViewRecorder(ref, item);
   const version = useCourseVersion(ref.versionId);
-  const { items } = useFlatSyllabus(version.data);
+  // Study mode's Previous/Next skip quizzes: they're taken in strict mode only.
+  const items = itemsForTrack(useFlatSyllabus(version.data).items, 'blue');
   const index = items.findIndex((i) => i._id === ref.itemId);
   const prev = index > 0 ? items[index - 1] : undefined;
   const next = index >= 0 ? items[index + 1] : undefined;
@@ -1223,7 +1309,23 @@ function BlueLesson({
         </>
       }
     >
-      <LessonContent item={item} allowSeekForward onPlayingChange={onPlayingChange} />
+      <LessonContent
+        item={item}
+        allowSeekForward
+        onPlayingChange={onPlayingChange}
+        studyFeedback={{
+          lessonRef: ref,
+          previous: prev
+            ? {
+                courseId: ref.courseId,
+                versionId: ref.versionId,
+                moduleId: prev.moduleId,
+                sectionId: prev.sectionId,
+                itemId: prev._id,
+              }
+            : null,
+        }}
+      />
     </LessonFrame>
   );
 }
@@ -1234,12 +1336,15 @@ function LessonContent({
   paused,
   onPlayingChange,
   onEnded,
+  studyFeedback,
 }: {
   item: LessonItem;
   allowSeekForward: boolean;
   paused?: boolean;
   onPlayingChange?: (playing: boolean) => void;
   onEnded?: () => void;
+  /** Study mode: what a feedback form needs to be answered there. */
+  studyFeedback?: { lessonRef: LessonRef; previous: PreviousLessonLink | null };
 }) {
   const videoId = item.type === 'VIDEO' ? youtubeId(item.details.URL) : null;
   return (
@@ -1274,25 +1379,13 @@ function LessonContent({
               </AlertDescription>
             </Alert>
           ))}
-        {item.type === 'FEEDBACK' && (
-          <div className="grid gap-6">
-            <Alert>
-              <InfoIcon />
-              <AlertDescription>
-                This is the feedback form for the previous lesson. Answers are
-                sent only in strict mode.
-              </AlertDescription>
-            </Alert>
-            <FeedbackFormFields
-              fields={schemaToFields(
-                item.details.jsonSchema,
-                item.details.uiSchema,
-              )}
-              values={{}}
-              onChange={() => undefined}
-              disabled
-            />
-          </div>
+        {item.type === 'FEEDBACK' && studyFeedback && (
+          <StudyFeedbackForm
+            lessonRef={studyFeedback.lessonRef}
+            jsonSchema={item.details.jsonSchema}
+            uiSchema={item.details.uiSchema}
+            previous={studyFeedback.previous}
+          />
         )}
         {item.type === 'BLOG' && (
           <div>
@@ -1750,4 +1843,21 @@ function Notice({
       {children}
     </LessonEmpty>
   );
+}
+
+/** Route params of the lesson just before this one in the syllabus, if any. */
+function usePreviousLesson(ref: LessonRef) {
+  const version = useCourseVersion(ref.versionId);
+  const { items } = useFlatSyllabus(version.data);
+  const index = items.findIndex((i) => i._id === ref.itemId);
+  const prev = index > 0 ? items[index - 1] : undefined;
+  return prev
+    ? {
+        courseId: ref.courseId,
+        versionId: ref.versionId,
+        moduleId: prev.moduleId,
+        sectionId: prev.sectionId,
+        itemId: prev._id,
+      }
+    : null;
 }
