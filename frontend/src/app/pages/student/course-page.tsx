@@ -336,6 +336,13 @@ export default function CoursePage() {
     sectionId: string;
   } | null>(null);
 
+  // A section clicked in the drawer while another section's fetch is still
+  // in flight -- reassigning activeSectionInfo right away would abandon that
+  // fetch (nothing is left observing its query once activeSectionInfo moves
+  // on), so its row never gets its items and is stuck showing "No items
+  // found". Queue it and let the loading-done effect below pick it up.
+  const pendingSectionRef = useRef<{ moduleId: string; sectionId: string } | null>(null);
+
   // Fetch course version data
   const { data: courseVersionData, isLoading: versionLoading, error: versionError, refetch: refetchVersion } =
     useCourseVersionById(VERSION_ID, undefined, COHORT_ID);
@@ -1088,13 +1095,28 @@ export default function CoursePage() {
 
   // Toggle section expansion
   const toggleSection = (moduleId: string, sectionId: string) => {
+    setExpandedSections(prev => ({ ...prev, [sectionId]: !prev[sectionId] }));
+
+    if (itemsLoading && activeSectionInfo?.sectionId !== sectionId) {
+      pendingSectionRef.current = { moduleId, sectionId };
+      return;
+    }
+
     setActiveSectionInfo({
       moduleId,
       sectionId
     });
-
-    setExpandedSections(prev => ({ ...prev, [sectionId]: !prev[sectionId] }));
   };
+
+  // Once the in-flight fetch finishes, move on to whichever section was
+  // clicked (last one wins) while it was busy.
+  useEffect(() => {
+    if (!itemsLoading && pendingSectionRef.current) {
+      const next = pendingSectionRef.current;
+      pendingSectionRef.current = null;
+      setActiveSectionInfo(next);
+    }
+  }, [itemsLoading]);
 
   // Helper function to find the next item in the course structure
   const findNextItem = useCallback((): {
