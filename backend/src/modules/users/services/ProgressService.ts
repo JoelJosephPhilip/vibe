@@ -4207,6 +4207,23 @@ class ProgressService extends BaseService {
             resolvedWatchItemId,
             session,
           );
+          // Unlike VIDEO/BLOG items (completed via stopItem, which already
+          // recomputes this as its own last step), a quiz completes here --
+          // without this call, enrollment.percentCompleted/completedItemsCount
+          // never account for the quiz, undercounting by one for every quiz
+          // that isn't immediately followed by another item's stopItem call
+          // (most visibly: the course's very last item being a quiz leaves
+          // the dashboard permanently short by exactly that one item).
+          await this.updateEnrollmentProgressPercent(
+            userId.toString(),
+            courseId,
+            courseVersionId,
+            session,
+            false,
+            undefined,
+            undefined,
+            cohortId,
+          );
         }
       }
     }); // close transaction

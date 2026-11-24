@@ -737,10 +737,23 @@ const Quiz = forwardRef<QuizRef, QuizProps>(({
         return;
       }
 
+      // The rewatch gate (ProgressService.assertNoRewatchPending) refused
+      // this attempt. Resetting quizAttemptedRef below would let the
+      // NO_DEADLINE auto-start effect immediately retry -- same rejection,
+      // same reset -- showing a new toast every render and leaving this
+      // screen stuck on "Loading quiz..." forever. Send the student back to
+      // rewatch instead of retrying, the same destination the quiz's own
+      // failed-attempt countdown already uses.
+      if (errorMessage && errorMessage.includes('before retaking this quiz')) {
+        toast.info('Rewatch the previous video before retaking this quiz.');
+        onPrevVideo?.();
+        return;
+      }
+
       quizAttemptedRef.current = false;
       toast.error('Failed to start quiz: ' + errorMessage);
     }
-  }, [attemptQuiz, processedQuizId, setAttemptId, convertBackendQuestions, handleSendStartItem, stopItem, currentCourse, attemptId, nextItemId, quizStarted, isPending, clearPendingStudentQuestionContext]);
+  }, [attemptQuiz, processedQuizId, setAttemptId, convertBackendQuestions, handleSendStartItem, stopItem, currentCourse, attemptId, nextItemId, quizStarted, isPending, clearPendingStudentQuestionContext, onPrevVideo]);
 
   const completeQuiz = useCallback(async (isSkipped?: boolean) => {
     if (!attemptId) {
