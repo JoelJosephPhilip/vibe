@@ -4047,6 +4047,7 @@ class ProgressService extends BaseService {
     cohortId?: string,
     quizModuleId?: string,
     quizSectionId?: string,
+    attemptsExhausted?: boolean,
   ) {
     return this._withTransaction(async session => {
       // Fetch progress and course version in parallel
@@ -4061,7 +4062,16 @@ class ProgressService extends BaseService {
 
     // const courseVersion = await this.courseRepo.readVersion(courseVersionId);
 
-      if (isPassed) {
+      // A failed attempt normally sends the student back to rewatch the
+      // previous video before retaking the quiz. If this was the student's
+      // last available attempt, there's no retake to rewatch for -- sending
+      // the pointer backward would be a dead end (the frontend has nowhere
+      // useful to send them either). Treat it like a pass instead: advance
+      // past the quiz and mark it completed, the same as any other
+      // exhausted/resolved item.
+      const shouldAdvance = isPassed || !!attemptsExhausted;
+
+      if (shouldAdvance) {
         // Prefer the quiz's actual module/section over the cursor's current
         // position — the cursor can be stale if it drifted ahead via optimistic
         // UI, which would make getNextItemInSequence check "is this the last
@@ -4155,8 +4165,11 @@ class ProgressService extends BaseService {
     }
     // if we refresh the quiz page after passing then the student will land on next item
     //  and as the stop item is not called for that quiz endtime will never be created
-    // Only mark quiz as completed (set endTime) if it was actually passed
-    if (isPassed) {
+    // Mark quiz as completed (set endTime) if it was passed, or if attempts
+    // are exhausted (shouldAdvance) -- leaving it uncompleted would make
+    // verifyProgress block the next item's immediate-predecessor check even
+    // though the student has correctly been moved past this quiz above.
+    if (shouldAdvance) {
       let resolvedWatchItemId = watchItemId;
 
       if (!resolvedWatchItemId) {

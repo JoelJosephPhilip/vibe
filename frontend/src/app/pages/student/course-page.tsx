@@ -1795,8 +1795,11 @@ export default function CoursePage() {
   // re-fetched from the server), so a quiz pass needs the same local patch a
   // finished video already gets. Without it the drawer (and the counts
   // derived from it) kept showing the pre-pass snapshot until a full reload.
+  // quizPassed === 3 covers both "no attempts left to start a new one" and a
+  // failed attempt that was the student's last -- the backend marks the quiz
+  // completed (endTime set) in both cases too, see handleQuizeProgressAfterSubmission.
   useEffect(() => {
-    if (quizPassed !== 1) return;
+    if (quizPassed !== 1 && quizPassed !== 3) return;
     if (!selectedSectionId || !selectedItemId) return;
     setSectionItems(prev => {
       const items = prev[selectedSectionId];
