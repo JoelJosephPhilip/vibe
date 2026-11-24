@@ -687,6 +687,7 @@ class AttemptService extends BaseService {
     let submissionId: string | undefined;
     let gradingResult: IGradingResult | undefined;
     let isFirst: Boolean;
+    let attemptsExhausted = false;
     await this._withTransaction(async session => {
       // Save answers (this method should NOT start its own transaction anymore)
       const saveResult = await this.save(
@@ -716,6 +717,12 @@ class AttemptService extends BaseService {
           `UserQuizMetrics for user ${userId} and quiz ${quizId} not found`,
         );
       }
+
+      // remainingAttempts is already decremented at attempt-creation time
+      // (see attempt() above), so for the attempt being submitted right now
+      // this reflects whether a retry is still possible.
+      attemptsExhausted =
+        quiz.details.maxAttempts !== -1 && metrics.remainingAttempts <= 0;
 
       if (metrics.attempts.length === 0) {
         console.log("Metrices lenght is: ", metrics.attempts.length);
@@ -836,7 +843,7 @@ class AttemptService extends BaseService {
           }
         }
       }
-      await this.progressService.handleQuizeProgressAfterSubmission(userId, quizId, courseId, courseVersionId, isPassed, watchItemId, cohortId, quizModuleId, quizSectionId);
+      await this.progressService.handleQuizeProgressAfterSubmission(userId, quizId, courseId, courseVersionId, isPassed, watchItemId, cohortId, quizModuleId, quizSectionId, attemptsExhausted);
     }
 
     /* -------------------- RETURN BASED ON QUIZ SETTINGS -------------------- */
