@@ -261,7 +261,14 @@ const FaceRecognitionComponent: React.FC<FaceRecognitionComponentProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [enabled, fetchFaceReference, navigate, onMissingEmbedding, updateDebugInfo]);
+  // onMissingEmbedding deliberately excluded: floating-video.tsx passes it as
+  // a fresh inline arrow function every render, so including it here refired
+  // this effect (and its fetch of /face-reference-human) on every one of
+  // FloatingVideo's renders -- which happen at the camera's capture rate --
+  // compounding into ERR_INSUFFICIENT_RESOURCES within seconds. Only
+  // enabled/fetchFaceReference actually changing should re-run this.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, fetchFaceReference, navigate, updateDebugInfo]);
 
   // Reacts to each fresh detection from the shared humanFaceWorker.js pass
   // (~4fps, via CameraProcessor) instead of running its own separate

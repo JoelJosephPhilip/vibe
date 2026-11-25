@@ -72,7 +72,12 @@ async function initializeModel(isTesting) {
     const backend = isTesting ? "cpu" : "webgl";
 
     async function createHuman(useBackend) {
-      const instance = new self.Human(buildConfig(useBackend));
+      // dist/human.js's "script" build assigns an esbuild CJS-namespace
+      // object to the global `Human` (confirmed by inspecting the deployed
+      // file directly), not the class itself -- the real constructor is at
+      // Human.Human (same object as Human.default).
+      const HumanCtor = self.Human.Human || self.Human.default || self.Human;
+      const instance = new HumanCtor(buildConfig(useBackend));
       await instance.load();
       await instance.warmup();
       return instance;
