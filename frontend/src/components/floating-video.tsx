@@ -313,7 +313,12 @@ const reportImageAnomaly = useCallback(async (reportAnomalyType: AnomalyType) =>
   } catch (error) {
     console.log("Error while reporting image anomaly:", error);
   }
-}, [reportImage, courseStore.currentCourse]);
+// reportImage.mutateAsync, not reportImage itself: useReportAnomalyImage()
+// returns a brand-new wrapper object every render, so depending on the
+// whole object would recreate this callback (and everything chained off
+// it, including the main detection interval below) on every render.
+// mutateAsync is the one part of it react-query keeps referentially stable.
+}, [reportImage.mutateAsync, courseStore.currentCourse]);
 
 // Called once per detection tick for each image-reportable anomaly tag,
 // with whether it's currently active -- decides transition-vs-cooldown and
@@ -601,10 +606,18 @@ const maybeReportImageAnomaly = useCallback((tag: string, isActive: boolean, rep
       // -- the interval below (the only place that clears it) won't run
       // again until readyToDetect etc. flip back, so leaving this stale would
       // freeze a stuck "no face"/pause state exactly like the bug this guard
-      // is meant to prevent.
-      setAnomalies([]);
-      setPauseVid(false);
-      setRewindVid(false);
+      // is meant to prevent. Guarded (not unconditional) because pauseVid/
+      // rewindVid are themselves in this effect's dependency array below --
+      // setting them to a value they already hold must stay a no-op, or a
+      // fresh [] array (never reference-equal to the last one) re-triggering
+      // this same effect on every run becomes an infinite render loop.
+      if (anomalies && anomalies.length > 0) {
+        setAnomalies([]);
+      }
+      if (pauseVid || rewindVid) {
+        setPauseVid(false);
+        setRewindVid(false);
+      }
       return;
     }
 
