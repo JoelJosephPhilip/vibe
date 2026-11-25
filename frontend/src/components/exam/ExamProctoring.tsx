@@ -119,7 +119,13 @@ export default function ExamProctoring({ examId, settings, onEvent, onBlockingCh
   const isFaceRecognitionEnabled = isDetectorEnabled(detectors, "faceRecognition");
   const isRightClickDisabled = isDetectorEnabled(detectors, "rightClickDisabled");
 
-  const { videoRef, modelReady, faces } = useCameraProcessor(4);
+  const { videoRef, modelReady, faces, setRecognitionEnabled } = useCameraProcessor(4);
+
+  // humanFaceWorker.js only extracts embeddings (the extra, costlier part of
+  // its one-pass detect() call) while recognition is actually needed.
+  useEffect(() => {
+    setRecognitionEnabled(isFaceRecognitionEnabled);
+  }, [isFaceRecognitionEnabled, setRecognitionEnabled]);
 
   const [isBlur, setIsBlur] = useState("No");
   const [isSpeaking, setIsSpeaking] = useState("No");
