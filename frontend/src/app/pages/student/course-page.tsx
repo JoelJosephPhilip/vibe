@@ -57,7 +57,6 @@ import { FloatingBackButton } from "@/components/learn/FloatingBackButton";
 import { FloatingCameraButton } from "@/components/learn/FloatingCameraButton";
 import { AiCompanion } from "@/components/learn/AiCompanion";
 import { AiActionSheet } from "@/components/learn/AiActionSheet";
-import { InitialWebcamPopup } from "@/components/learn/InitialWebcamPopup";
 import { ProctorAlertOverlay } from "@/components/learn/ProctorAlertOverlay";
 import { NoiseIndicator } from "@/components/learn/NoiseIndicator";
 import { AwayOverlay } from "@/components/learn/AwayOverlay";
@@ -2419,9 +2418,6 @@ return false;
             )}
           </div>
         )}
-
-        {/* Initial webcam popup — first ~11s while the camera sets up */}
-        {!allProctorsDisabled && !showProctorDialog && <InitialWebcamPopup seconds={15} />}
 
         {/* Transient notifications */}
         <div className="top-4 left-1/2 z-90 fixed flex flex-col gap-2 w-[min(92vw,420px)] -translate-x-1/2 pointer-events-none">
