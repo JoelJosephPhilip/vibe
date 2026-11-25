@@ -113,6 +113,19 @@ export default function CoursePage() {
   const [proctoringDeclarationAckedLocal, setProctoringDeclarationAckedLocal] = useState(false);
   const declarationAcked = proctoringDeclarationAcked || proctoringDeclarationAckedLocal;
   const signProctoringDeclaration = useSignProctoringDeclaration();
+  // showProctorDialog defaults to true (so a genuinely first-time student
+  // sees the dialog) and only ever gets set false by the ACCEPT handler
+  // below -- which never fires if the declaration was already acked in a
+  // previous session, since the Dialog's own `open` check already hides it.
+  // Without this sync, showProctorDialog (which also gates FloatingVideo's
+  // mount, fullscreen enforcement, etc. -- not just the dialog's visibility)
+  // would stay stuck true forever for a returning student, never arming
+  // proctoring at all.
+  useEffect(() => {
+    if (!proctoringDeclarationLoading && declarationAcked) {
+      setShowProctorDialog(false);
+    }
+  }, [proctoringDeclarationLoading, declarationAcked]);
   const { getSettings, settingLoading: proctoringLoading } = useGetProcotoringSettings();
 
   const [isFlagModalOpen, setIsFlagModalOpen] = useState(false);
