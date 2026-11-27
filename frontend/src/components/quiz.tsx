@@ -799,6 +799,9 @@ const Quiz = forwardRef<QuizRef, QuizProps>(({
           cohortId: currentCourse?.cohortId??'',
           moduleId: currentCourse?.moduleId ?? '',
           sectionId: currentCourse?.sectionId ?? '',
+          // Old-vibe only -- gates exhausted-attempt/progress-percent fixes
+          // on the shared backend so v3 (same endpoint) is unaffected.
+          isOldVibeClient: true,
         }
       };
 

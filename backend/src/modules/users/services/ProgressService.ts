@@ -4060,6 +4060,11 @@ class ProgressService extends BaseService {
     quizModuleId?: string,
     quizSectionId?: string,
     attemptsExhausted?: boolean,
+    // Old-vibe only -- v3 shares this exact method via the same submit
+    // endpoint. Gates both the exhausted-attempt-advances behavior below and
+    // the enrollment-percent recalculation further down so v3's behavior is
+    // unchanged unless it explicitly opts in too.
+    isOldVibeClient?: boolean,
   ) {
     return this._withTransaction(async session => {
       // Fetch progress and course version in parallel
@@ -4080,8 +4085,9 @@ class ProgressService extends BaseService {
       // the pointer backward would be a dead end (the frontend has nowhere
       // useful to send them either). Treat it like a pass instead: advance
       // past the quiz and mark it completed, the same as any other
-      // exhausted/resolved item.
-      const shouldAdvance = isPassed || !!attemptsExhausted;
+      // exhausted/resolved item. Old-vibe only (see isOldVibeClient above) --
+      // v3 keeps its original isPassed-only behavior unless it opts in too.
+      const shouldAdvance = isPassed || (!!isOldVibeClient && !!attemptsExhausted);
 
       if (shouldAdvance) {
         // Prefer the quiz's actual module/section over the cursor's current
@@ -4239,16 +4245,21 @@ class ProgressService extends BaseService {
           // that isn't immediately followed by another item's stopItem call
           // (most visibly: the course's very last item being a quiz leaves
           // the dashboard permanently short by exactly that one item).
-          await this.updateEnrollmentProgressPercent(
-            userId.toString(),
-            courseId,
-            courseVersionId,
-            session,
-            false,
-            undefined,
-            undefined,
-            cohortId,
-          );
+          // Old-vibe only (see isOldVibeClient above) -- this pre-existing
+          // undercount also affects v3, but fixing it there is a separate,
+          // deliberate decision v3 hasn't opted into yet.
+          if (isOldVibeClient) {
+            await this.updateEnrollmentProgressPercent(
+              userId.toString(),
+              courseId,
+              courseVersionId,
+              session,
+              false,
+              undefined,
+              undefined,
+              cohortId,
+            );
+          }
         }
       }
     }); // close transaction

@@ -659,6 +659,7 @@ class AttemptService extends BaseService {
     cohortId?: string,
     moduleId?: string,
     sectionId?: string,
+    isOldVibeClient?: boolean,
   ): Promise<Partial<IGradingResult> | null> {
     /* -------------------- READS OUTSIDE TRANSACTION -------------------- */
 
@@ -851,7 +852,7 @@ class AttemptService extends BaseService {
           }
         }
       }
-      await this.progressService.handleQuizeProgressAfterSubmission(userId, quizId, courseId, courseVersionId, isPassed, watchItemId, cohortId, quizModuleId, quizSectionId, attemptsExhausted);
+      await this.progressService.handleQuizeProgressAfterSubmission(userId, quizId, courseId, courseVersionId, isPassed, watchItemId, cohortId, quizModuleId, quizSectionId, attemptsExhausted, isOldVibeClient);
     }
 
     /* -------------------- RETURN BASED ON QUIZ SETTINGS -------------------- */
