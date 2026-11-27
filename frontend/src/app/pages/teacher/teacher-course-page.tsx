@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, ChangeEvent, use } from "react";
+import { ItemEmotionStats } from "./components/ItemEmotionStats";
+
 import * as Papa from 'papaparse';
 import { useAddQuestionBankToQuiz, useAddQuestionToBank, useCreateQuestion, useCreateQuestionBank, useOverallVideoAnalytics, userParseCSVtoItems, useUpdateItemOptional, useUpdateItemProctoring, useUpdateModuleProctoring, useUpdateModuleStudyMode, useUpdateSectionStudyMode, useUpdateItemStudyMode, useVideoUserAnalytics } from '@/hooks/hooks';
 import { StudyModePanel } from '@/components/StudyModePanel';
@@ -2112,6 +2114,7 @@ function TeacherCourseContent() {
                                                   }}
                                                 >
                                                   <SidebarMenuSubItem key={item._id}>
+                                                    <div className="flex flex-col w-full relative group/menu-sub-item">
                                                     <SidebarMenuSubButton
                                                       className={`justify-start ${selectedItem.name === getItemLabel({
                                                         itemId: item._id,
@@ -2181,6 +2184,10 @@ function TeacherCourseContent() {
                                                         })}
                                                       </span>
                                                     </SidebarMenuSubButton>
+                                                    <div className="pl-6 w-full mb-2">
+                                                      <ItemEmotionStats itemId={item._id} itemName={item.name} />
+                                                    </div>
+
                                                     <Button className="absolute  top-0 right-0" size="icon" variant="ghost" onClick={(e) => handleHideItem(item._id, !item.isHidden)} disabled={section.isHidden || module.isHidden || hidingItemId === item._id}>
                                                       {hidingItemId === item._id ? (
                                                         <Loader2 className="h-4 w-4 animate-spin" />
@@ -2217,6 +2224,7 @@ function TeacherCourseContent() {
                                                         <span className="sr-only">View student questions</span>
                                                       </Button>
                                                     )}
+                                                    </div>
                                                   </SidebarMenuSubItem>
                                                 </Reorder.Item>
                                               ))}
